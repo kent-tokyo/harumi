@@ -1,11 +1,13 @@
 # harumi
 
-**スキャンPDFを3行で「検索可能」にする、純Rust製ライブラリ。**  
+**テキスト注入・抽出、ページ操作、図形描画まで — 純Rust製PDF操作ライブラリ。**  
 日本語・中国語・韓国語（CJK）フォント完全対応。C依存ゼロ。WASM対応。
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+
+[English](README.md) | [中文](README_zh.md) | [한국어](README_kr.md)
 
 ---
 

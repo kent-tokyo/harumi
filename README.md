@@ -1,11 +1,13 @@
 # harumi
 
-**Make a scanned PDF searchable in 3 lines of Rust.**  
+**Overlay text, extract content, merge/split pages, draw shapes — all in pure Rust.**  
 Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-ready.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+
+[日本語](README_ja.md) | [中文](README_zh.md) | [한국어](README_kr.md)
 
 ---
 

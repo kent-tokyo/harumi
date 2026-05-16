@@ -1,11 +1,13 @@
 # harumi
 
-**用 3 行 Rust 代码让扫描 PDF 变为可搜索文档。**  
+**纯 Rust 实现的 PDF 操作库 — 文本叠加、内容提取、页面操作、图形绘制一站搞定。**  
 完整支持中文/日文/韩文（CJK）字体。零 C 依赖。原生 WASM 支持。
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+
+[English](README.md) | [日本語](README_ja.md) | [한국어](README_kr.md)
 
 ---
 
