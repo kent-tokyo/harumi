@@ -1,11 +1,12 @@
 [package]
 name = "harumi"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Overlay searchable CJK text on PDFs, extract text, merge/split pages — pure Rust, zero C dependencies"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kent-tokyo/harumi"
+homepage = "https://github.com/kent-tokyo/harumi"
 readme = "README.md"
 keywords = ["pdf", "cjk", "japanese", "ocr", "font"]
 categories = ["encoding", "text-processing"]
