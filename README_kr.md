@@ -1,11 +1,13 @@
 # harumi
 
-**Rust 코드 3줄로 스캔 PDF를 검색 가능하게 만드세요.**  
+**텍스트 삽입·추출, 페이지 조작, 도형 그리기까지 — 순수 Rust PDF 조작 라이브러리.**  
 한국어/일본어/중국어(CJK) 폰트 완전 지원. C 의존성 없음. WASM 네이티브.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+
+[English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
 ---
 
