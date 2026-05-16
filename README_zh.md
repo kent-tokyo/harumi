@@ -1,0 +1,391 @@
+# harumi
+
+**用 3 行 Rust 代码让扫描 PDF 变为可搜索文档。**  
+完整支持中文/日文/韩文（CJK）字体。零 C 依赖。原生 WASM 支持。
+
+[![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
+[![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+
+---
+
+## harumi 解决了什么
+
+**使用前（没有 harumi）：**  
+对照 PDF 规范手动组装 CID 字体对象，自行实现 CMap 生成、GID 映射和字体子集化，写几百行代码，还要与乱码问题反复较劲。
+
+**使用后（有了 harumi）：**
+
+```rust
+let mut doc = Document::from_file("scanned.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
+doc.page(1)?.add_invisible_text("可搜索的文本", font, [72.0, 700.0], 12.0)?;
+doc.save("searchable.pdf")?;
+```
+
+字体子集化、CID 编码、ToUnicode CMap 生成、GID 重新编号——全部自动完成，对调用者完全透明。
+
+---
+
+## 你能得到什么
+
+| 挑战 | harumi 的答案 |
+|---|---|
+| CJK 字体子集化复杂 | 一次 `embed_font()` 调用——只包含实际使用的字形，GID 正确重新编号 |
+| 不想破坏原有 PDF 结构 | 仅追加；harumi 从不修改原始对象图 |
+| 需要在 WASM / Lambda / 交叉编译环境运行 | 纯 Rust——零 C/C++ 依赖 |
+| 需要将 OCR 文本写入指定坐标 | `add_invisible_text` / 批量版 `add_invisible_text_runs` |
+| 需要在 PDF 上盖章或加水印 | `add_text(color)` 以任意 RGB 颜色叠加可见文本 |
+| 需要根据页面尺寸定位文本 | `page.size()` 读取 MediaBox |
+| 需要 Tauri / WASM 内存输出 | `save_to_bytes()` 直接返回 `Vec<u8>` |
+| 需要绘制高亮矩形或线段 | `add_rect` / `add_line`（`draw` feature，无额外依赖） |
+| 需要绘制边框矩形或多边形（标注箭头） | `add_rect_stroke` / `add_polygon`（`draw` feature） |
+| 需要在矩形内自动换行显示文本 | `add_text_box`（无需 feature gate） |
+| 需要嵌入 JPEG / PNG 图像 | `add_image` / `add_image_with_opacity`（`image` feature） |
+| 需要保留 PNG 透明度（签名、水印） | 透明背景 PNG 通过 PDF SMask 自动处理，无白色背景 |
+| 需要旋转、删除或重新排序页面 | `rotate_page` / `remove_page` / `insert_blank_page` / `reorder_pages`（无需 feature gate） |
+| 需要将两个 PDF 合并为一个 | `merge_from` 将另一个文档的所有页面追加到末尾；保留内容和字体 |
+| 需要从零开始创建 PDF（无现有文件） | `Document::new(size)` 创建一个空白单页 PDF；使用 `insert_blank_page` 添加更多页面 |
+| 需要将 PDF 拆分为单独的文件 | `extract_pages` 以任意顺序返回包含指定页面的新 `Document` |
+| 需要从现有 PDF 中提取文本位置信息 | `extract_text_runs` 可解码 CID 字体和标准简单字体（Type1、TrueType、WinAnsi 等） |
+| 需要读写 PDF 元数据（标题、作者等） | `doc.metadata()` 读取 `/Info`；`doc.set_metadata(&meta)` 写入 |
+
+---
+
+## 为什么这个空白一直存在
+
+JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理字体子集化、CMap 生成和文本层合成。而 Rust 的现有工具让你只能在以下方案中选择：
+
+- **`lopdf`** — 低级别的二进制操作；需要按照 PDF 规范手动组装 CID 字体对象
+- **`printpdf`** — 仅支持创建新 PDF；无法修改现有 PDF
+- **`pdfium-render`** — 依赖 C++ 绑定，在 WASM、交叉编译和 Lambda 环境中构建失败
+
+`harumi` 填补了这一空白。
+
+---
+
+## 快速开始
+
+```toml
+[dependencies]
+harumi = "0.1"
+```
+
+### 不可见 OCR 文本层
+
+```rust
+use harumi::{Document, TextRun};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut doc = Document::from_file("scanned.pdf")?;
+
+    // 嵌入字体 — 子集化、CMap 生成和 GID 重新编号在 save() 时自动完成
+    let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
+
+    // 在第 1 页叠加不可见的 OCR 文本
+    doc.page(1)?.add_invisible_text(
+        "这里是 OCR 识别的中文文本",
+        font,
+        [100.0, 250.0],
+        12.0,
+    )?;
+
+    doc.save("searchable_chinese.pdf")?;
+    Ok(())
+}
+```
+
+### 可见文本叠加
+
+```rust
+let (w, h) = doc.page(1)?.size()?;
+doc.page(1)?.add_text("机密文件", font, [w / 2.0 - 30.0, h / 2.0], 24.0, [0.8, 0.0, 0.0])?;
+```
+
+### 内存输出
+
+```rust
+// 适用于 Tauri 命令、WASM 或任何内存流水线
+let pdf_bytes: Vec<u8> = doc.save_to_bytes()?;
+```
+
+### 多行文本框（无需 feature gate）
+
+```rust
+// 在指定矩形内自动换行（Latin 按词换行，CJK 任意位置换行）
+doc.page(1)?.add_text_box(
+    "这是一段需要在窄框内自动换行的长文本。",
+    font,
+    [72.0, 400.0, 200.0, 120.0], // [x, y, 宽, 高]
+    12.0,
+    [0.0, 0.0, 0.0],              // 黑色
+    0.0,                          // 0.0 = 使用 font_size * 1.2 作为行高
+)?;
+```
+
+### 页面操作
+
+```rust
+// 将所有页面顺时针旋转 90°
+for page_num in 1..=doc.page_count() {
+    doc.rotate_page(page_num, 90)?;
+}
+
+// 删除空白封面页
+doc.remove_page(1)?;
+
+// 在第 1 页之前插入空白 A4 标题页
+doc.insert_blank_page(0, (595.0, 842.0))?;
+
+// 将 3 页文档的页面顺序反转
+doc.reorder_pages(&[3, 2, 1])?;
+
+doc.save("output.pdf")?;
+```
+
+### 合并 PDF
+
+```rust
+let mut base = Document::from_file("a.pdf")?;
+let appendix = Document::from_file("b.pdf")?;
+base.merge_from(appendix)?;
+base.save("merged.pdf")?;
+```
+
+保留的内容：所有页面内容、嵌入字体、图像、资源。  
+不保留的内容：书签/大纲、AcroForm、`/Info` 元数据（作者、创建日期等）。
+
+> **前提条件**：`other` 不能有未刷新的待处理操作（刚加载完毕，或在 `save_to_bytes()` 后重新加载的状态）。
+
+### 创建空白 PDF
+
+```rust
+let mut doc = Document::new((595.0, 842.0))?;   // 空白 A4
+let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
+doc.page(1)?.add_text("Hello, world!", font, [72.0, 700.0], 24.0, [0.0, 0.0, 0.0])?;
+doc.save("output.pdf")?;
+```
+
+### 提取页面
+
+```rust
+let doc = Document::from_file("large.pdf")?;
+let mut excerpt = doc.extract_pages(&[3, 5, 7])?;  // 按此顺序提取第 3、5、7 页
+excerpt.save("excerpt.pdf")?;
+```
+
+### 从现有 PDF 提取文本
+
+```rust
+let doc = Document::from_file("existing.pdf")?;
+let runs = doc.extract_text_runs(1)?;
+for fragment in &runs {
+    println!("{:?} at ({:.1}, {:.1})", fragment.text, fragment.x, fragment.y);
+}
+```
+
+不仅适用于 harumi 生成的 PDF（Identity-H CID 字体），也适用于任意现有 PDF。支持标准简单字体（Type1、TrueType）及 WinAnsiEncoding、MacRomanEncoding、StandardEncoding 或 `/Differences` 编码字典。
+
+### 读写 PDF 元数据
+
+```rust
+use harumi::{Document, PdfMetadata};
+
+let mut doc = Document::from_file("report.pdf")?;
+
+// 读取元数据
+let meta = doc.metadata()?;
+println!("标题: {:?}", meta.title);
+
+// 写入元数据（None 字段不会写入 /Info）
+doc.set_metadata(&PdfMetadata {
+    title: Some("2026 年度报告".into()),
+    author: Some("Harumi Team".into()),
+    subject: None,
+    keywords: None,
+    creator: None,
+})?;
+doc.save("report_with_meta.pdf")?;
+```
+
+### 绘制图形（`draw` feature）
+
+```toml
+harumi = { version = "0.1", features = ["draw"] }
+```
+
+```rust
+// 黄色填充矩形（x, y, 宽, 高，单位：PDF 点）
+doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
+
+// 蓝色边框矩形（仅描边，不填充）
+doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
+
+// 填充三角形（标注箭头尖端）
+doc.page(1)?.add_polygon(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    [1.0, 0.5, 0.0], 1.0, true,
+)?;
+
+// 黑色下划线
+doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?;
+```
+
+### 嵌入图像（`image` feature）
+
+```toml
+harumi = { version = "0.1", features = ["image"] }
+```
+
+```rust
+let jpeg = std::fs::read("stamp.jpg")?;
+// 支持 JPEG（直接嵌入，无需解码）和 PNG
+doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
+
+// 带透明度（0.0 = 完全透明，1.0 = 不透明）
+doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
+```
+
+---
+
+## API 概览
+
+```rust
+let mut doc = Document::from_file("path/to/file.pdf")?;
+let mut doc = Document::from_bytes(&bytes)?;
+
+let font: FontHandle = doc.embed_font(ttf_bytes)?;
+let (width, height) = doc.page(1)?.size()?;
+
+doc.page(1)?.add_invisible_text(text, font, [x, y], size)?;
+doc.page(1)?.add_text(text, font, [x, y], size, [r, g, b])?;
+doc.page(1)?.add_invisible_text_runs(&[
+    TextRun { text: "第一行".into(), font, x: 72.0, y: 700.0, font_size: 11.0, render_mode: 3, color: [0.0; 3] },
+    TextRun { text: "第二行".into(), font, x: 72.0, y: 685.0, font_size: 11.0, render_mode: 3, color: [0.0; 3] },
+])?;
+
+// 页面结构（无需 feature gate）
+doc.page_count()                          // u32
+doc.rotate_page(n, degrees)?;             // 90 的倍数；可累积
+doc.remove_page(n)?;                      // 不能删除最后一页
+doc.insert_blank_page(after, (w, h))?;    // after=0 表示在开头插入
+doc.reorder_pages(&[new_order...])?;      // 使用从 1 开始的旧页码
+doc.extract_pages(&[n1, n2, ...])?;       // 返回仅含指定页面的新 Document
+
+// 从零创建
+Document::new((w, h))?;                   // 空白单页 PDF
+
+// 合并文档（other 不能有待处理操作）
+doc.merge_from(other)?;             // 将 other 的所有页面追加到末尾
+
+doc.save("output.pdf")?;
+doc.save_to_bytes()?;   // 内存版本
+
+// 从现有 PDF 提取文本（CID 字体 + 标准简单字体）
+let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
+
+// PDF 元数据（/Info 字典）
+let meta: PdfMetadata = doc.metadata()?;
+doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
+```
+
+### 坐标系
+
+坐标以 **PDF 点**（1pt = 1/72 英寸）为单位，原点在页面**左下角**。如需转换 OCR 像素坐标：
+
+```toml
+harumi = { version = "0.1", features = ["ocr"] }
+```
+
+### 功能标志
+
+| 标志 | 启用的功能 | 额外依赖 |
+|---|---|---|
+| *(默认)* | 文本叠加、字体嵌入 | lopdf, allsorts, ttf-parser |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon` — 图形绘制 | 无 |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像（自动启用 `draw`） | `image` crate |
+| `ocr` | `ocr::hocr_y_to_pdf` 等 Tesseract 坐标转换工具 | 无 |
+
+```rust
+let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
+let pdf_x = harumi::ocr::hocr_x_to_pdf(pixel_x, image_dpi);
+```
+
+---
+
+## 支持的字体格式
+
+| 字体格式 | 支持状态 |
+|---|---|
+| TrueType (`.ttf`) | 支持，已验证 |
+| OpenType CFF (`.otf`) | 接受，依赖 allsorts（见下文） |
+| TTC 字体集合 | 已支持（使用 index 0） |
+
+推荐使用 [Noto Sans CJK](https://github.com/notofonts/noto-cjk) 的 **TrueType** 版本（已端到端验证）：
+
+```
+NotoSansCJKsc-Regular.ttf  （简体中文）
+NotoSansCJKtc-Regular.ttf  （繁体中文）
+NotoSansCJKjp-Regular.ttf  （日语）
+NotoSansCJKkr-Regular.ttf  （韩语）
+```
+
+> **OTF 说明**：harumi 接受 `.otf` 文件并通过 `FontFile3 /OpenType` 嵌入。但 allsorts v0.17 无法子集化所有 CFF 变体（如 CFF2 可变字体），此时 `save()` 会返回 `FontParse` 错误。如需确保兼容，请使用 TTF 变体。
+
+---
+
+## 内部实现
+
+```
+harumi
+├── lopdf v0.40          — 解析和修改现有 PDF 对象图
+├── allsorts v0.17+      — TrueType 字体子集化（在 Prince 排版软件中经过生产验证）
+└── ttf-parser           — 字体元数据读取（bbox、units_per_em、ascender）
+```
+
+字体处理流程：
+
+1. 收集已使用字符 → 建立 Unicode 码点集合
+2. 通过字体 `cmap` 表将码点映射为原始 GID（ttf-parser）
+3. 使用 allsorts 仅对已使用字形进行 TTF 子集化（GID **重新编号为 0..N**）
+4. 将 `gid_to_char` 和字形宽度从原始 GID **重新映射到新 GID**（防止乱码）
+5. 构建 CID 字体对象图：`Type0 → CIDFontType2 → FontDescriptor → FontFile2`
+6. 生成 `/ToUnicode` CMap 流（使查看器能够复制/搜索文本）
+7. 向页面 `/Contents` 数组追加新内容流
+
+子集化采用**延迟执行**：`embed_font()` 仅存储原始 TTF 字节；`save()` 时收集所有页面已使用字符，每个字体只执行一次处理。
+
+---
+
+## 名称由来
+
+晴海（はるみ / Harumi）— *晴*（晴空）＋ *海*（大海）。表面平静，底层暗流涌动。
+
+## 开发路线图
+
+| 版本 | 范围 |
+|---|---|
+| **v0.1** | TrueType，不可见/可见文本，批量放置，`page.size()`，`save_to_bytes()`，GID 修复，OTF 接受 |
+| **v0.2** | `draw` feature（`add_rect`、`add_line`），`image` feature（`add_image`、`add_image_with_opacity`），CFF2 早期错误，TTC 魔术字节检测，MediaBox 父节点链遍历 |
+| **v0.3** | `add_text_box`、`add_rect_stroke`、`add_polygon`；安全加固（NaN 防护、二重保存防护、间接 Contents 数组、JPEG 标记解析修复、PNG 整数溢出修复） |
+| **v0.4** | PNG 真透明度（SMask）— 透明背景 PNG 正确渲染，无白色背景 |
+| **v0.5** | `add_text_with_opacity`、`add_text_box_aligned`（VerticalAlign）、`add_polyline`、`add_text_box_with_opacity` — **已完成** |
+| **v0.6** | 页面操作 — `rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages` — **已完成** |
+| **v0.7** | `merge_from`（PDF 合并）、`remove_page` 正确性修复与孤立对象清理 — **已完成** |
+| **v0.8** | `Document::new`（从零创建空白 PDF）、`extract_pages`（页面拆分） — **已完成** |
+| **v0.9** | `extract_text_runs`（CID 字体 + 标准简单字体支持）、PDF 元数据读写（`metadata()`、`set_metadata()`、`PdfMetadata`） — **已完成** |
+| **Next（v0.10 及以后）** | `#[non_exhaustive]` on Error、MSRV 声明、WASM CI、发布到 crates.io |
+
+---
+
+## 贡献
+
+欢迎在 [github.com/kent-tokyo/harumi](https://github.com/kent-tokyo/harumi) 提交 Issue 和 PR。
+
+代码库中最复杂的部分是 `src/font/embed.rs`（CID 字体对象图构建）。如果您在特定 PDF 查看器中发现渲染问题，请在 Issue 中注明查看器名称和版本。
+
+---
+
+## 许可证
+
+MIT OR Apache-2.0

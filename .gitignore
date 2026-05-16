@@ -1,0 +1,8 @@
+tasks/
+CLAUDE.md
+AGENTS.md
+.claude/
+
+# Added by cargo
+
+/target
