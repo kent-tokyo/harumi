@@ -70,7 +70,7 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 
 ```toml
 [dependencies]
-harumi = "0.1"
+harumi = "0.2"
 ```
 
 ### 不可见 OCR 文本层
@@ -213,7 +213,7 @@ doc.save("report_with_meta.pdf")?;
 ### 绘制图形（`draw` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["draw"] }
+harumi = { version = "0.2", features = ["draw"] }
 ```
 
 ```rust
@@ -236,7 +236,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 嵌入图像（`image` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["image"] }
+harumi = { version = "0.2", features = ["image"] }
 ```
 
 ```rust
@@ -296,21 +296,22 @@ doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() 
 坐标以 **PDF 点**（1pt = 1/72 英寸）为单位，原点在页面**左下角**。如需转换 OCR 像素坐标：
 
 ```toml
-harumi = { version = "0.1", features = ["ocr"] }
+harumi = { version = "0.2", features = ["ocr"] }
 ```
 
 ### 功能标志
 
 | 标志 | 启用的功能 | 额外依赖 |
 |---|---|---|
-| *(默认)* | 文本叠加、字体嵌入 | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon` — 图形绘制 | 无 |
+| *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 图形绘制 | 无 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像（自动启用 `draw`） | `image` crate |
-| `ocr` | `ocr::hocr_y_to_pdf` 等 Tesseract 坐标转换工具 | 无 |
+| `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
 let pdf_x = harumi::ocr::hocr_x_to_pdf(pixel_x, image_dpi);
+let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 ```
 
 ---

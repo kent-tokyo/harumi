@@ -70,7 +70,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "0.1"
+harumi = "0.2"
 ```
 
 ### Invisible OCR text layer
@@ -221,7 +221,7 @@ doc.save("report_with_meta.pdf")?;
 ### Draw shapes (`draw` feature)
 
 ```toml
-harumi = { version = "0.1", features = ["draw"] }
+harumi = { version = "0.2", features = ["draw"] }
 ```
 
 ```rust
@@ -244,7 +244,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### Embed images (`image` feature)
 
 ```toml
-harumi = { version = "0.1", features = ["image"] }
+harumi = { version = "0.2", features = ["image"] }
 ```
 
 ```rust
@@ -318,21 +318,22 @@ doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() 
 Coordinates are in **PDF points** (1 pt = 1/72 inch), origin at the **bottom-left** of the page. If your OCR engine (e.g. Tesseract / hOCR) gives pixel coordinates from the top-left, use the `ocr` feature helper:
 
 ```toml
-harumi = { version = "0.1", features = ["ocr"] }
+harumi = { version = "0.2", features = ["ocr"] }
 ```
 
 ### Feature flags
 
 | Flag | What it enables | Extra dependencies |
 |---|---|---|
-| *(default)* | Text overlay, font embedding, `add_text_box` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon` — shapes | none |
+| *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images (enables `draw`) | `image` crate |
-| `ocr` | `ocr::hocr_y_to_pdf` and helpers for Tesseract coordinate conversion | none |
+| `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
 let pdf_x = harumi::ocr::hocr_x_to_pdf(pixel_x, image_dpi);
+let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 ```
 
 ---

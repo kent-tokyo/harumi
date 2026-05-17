@@ -70,7 +70,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "0.1"
+harumi = "0.2"
 ```
 
 ### 不可視のOCRテキストレイヤー
@@ -221,7 +221,7 @@ doc.save("report_with_meta.pdf")?;
 ### 図形描画（`draw` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["draw"] }
+harumi = { version = "0.2", features = ["draw"] }
 ```
 
 ```rust
@@ -244,7 +244,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 画像埋め込み（`image` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["image"] }
+harumi = { version = "0.2", features = ["image"] }
 ```
 
 ```rust
@@ -318,21 +318,22 @@ doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() 
 座標は **PDFポイント**（1pt = 1/72インチ）で、原点はページ**左下**です。Tesseract / hOCR など左上原点のピクセル座標を使う場合は `ocr` featureのヘルパーを使ってください：
 
 ```toml
-harumi = { version = "0.1", features = ["ocr"] }
+harumi = { version = "0.2", features = ["ocr"] }
 ```
 
 ### Feature flags
 
 | フラグ | 有効になる機能 | 追加依存 |
 |---|---|---|
-| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon` — 図形描画 | なし |
+| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 図形描画 | なし |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG（`draw` を有効化） | `image` クレート |
-| `ocr` | `ocr::hocr_y_to_pdf` など Tesseract 座標変換ヘルパー | なし |
+| `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
 let pdf_x = harumi::ocr::hocr_x_to_pdf(pixel_x, image_dpi);
+let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 ```
 
 ---
