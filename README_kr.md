@@ -70,7 +70,7 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 
 ```toml
 [dependencies]
-harumi = "0.1"
+harumi = "0.2"
 ```
 
 ### 보이지 않는 OCR 텍스트 레이어
@@ -212,7 +212,7 @@ doc.save("report_with_meta.pdf")?;
 ### 도형 그리기（`draw` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["draw"] }
+harumi = { version = "0.2", features = ["draw"] }
 ```
 
 ```rust
@@ -235,7 +235,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 이미지 삽입（`image` feature）
 
 ```toml
-harumi = { version = "0.1", features = ["image"] }
+harumi = { version = "0.2", features = ["image"] }
 ```
 
 ```rust
@@ -295,21 +295,22 @@ doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() 
 좌표는 **PDF 포인트** (1pt = 1/72인치) 단위이며, 원점은 페이지 **좌하단**입니다:
 
 ```toml
-harumi = { version = "0.1", features = ["ocr"] }
+harumi = { version = "0.2", features = ["ocr"] }
 ```
 
 ### 기능 플래그
 
 | 플래그 | 활성화되는 기능 | 추가 의존성 |
 |---|---|---|
-| *(기본)* | 텍스트 오버레이, 폰트 임베드 | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon` — 도형 그리기 | 없음 |
+| *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 도형 그리기 | 없음 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지（`draw` 자동 활성화） | `image` crate |
-| `ocr` | `ocr::hocr_y_to_pdf` 등 Tesseract 좌표 변환 헬퍼 | 없음 |
+| `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
 let pdf_x = harumi::ocr::hocr_x_to_pdf(pixel_x, image_dpi);
+let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 ```
 
 ---
