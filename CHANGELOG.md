@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`PageHandle::replace_text_preserve_font(old_text, new_text)`** — in-place text replacement that reuses the font already embedded in the PDF at the matched position. No `FontHandle` is required: harumi reads the font reference from the preceding `Tf` operator.
+  If any character in `new_text` is absent from the font's ToUnicode mapping (e.g. the font was subsetted and the glyph was not included), `save()` returns `Error::FontCharNotMapped` so the caller can fall back to `replace_text` with an explicit font.
+  Width compensation (`Td`) is applied automatically.
+
+- **`PageHandle::replace_text(old_text, new_text, font)`** — true in-place text replacement in existing PDF content streams.
+  Decodes existing `Tj` and `TJ` operators, locates the first occurrence where the decoded Unicode string matches `old_text`,
+  and rewrites the stream with the new text encoded in `font` (a newly embedded font).
+  Font-switching (`Tf`) is injected automatically; a `Td` operator is appended after each replacement to compensate for
+  the width difference between the old and new glyphs, preventing subsequent text from drifting.
+  For `TJ` arrays, the matching element is split out as a standalone `Tj` so the `Tf` can appear outside the array.
+  Returns `Ok(())` without modifying the PDF if `old_text` is not found on the page.
+  **Limitation**: `old_text` must match the complete decoded content of one `Tj` operator or one string element within a
+  `TJ` array. Text that spans multiple operators is not matched.
+
 - **`Document::extract_text_runs(page)`** — extracts positioned text runs from a page, returning `Vec<TextFragment>`.
   Each `TextFragment` carries `text` (Unicode string), `x`/`y` (PDF-point coordinates, bottom-left origin),
   `width` (estimated from advance widths), and `font_size`.

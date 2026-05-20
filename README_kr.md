@@ -51,6 +51,7 @@ doc.save("searchable.pdf")?;
 | PDF를 개별 파일로 분리하고 싶다 | `extract_pages` 로 지정한 페이지만 담은 새 `Document` 를 원하는 순서로 반환 |
 | 기존 PDF에서 텍스트 위치 정보를 추출하고 싶다 | `extract_text_runs` 로 CID 폰트 및 표준 단순 폰트（Type1, TrueType, WinAnsi 등）를 디코딩 |
 | PDF 메타데이터（제목, 저자 등）를 읽고 쓰고 싶다 | `doc.metadata()` 로 `/Info` 읽기, `doc.set_metadata(&meta)` 로 쓰기 |
+| 기존 PDF에서 텍스트를 찾아 바꾸고 싶다 | `page.replace_text(old, new, font)` 로 콘텐츠 스트림을 인플레이스로 재작성; 폰트 전환 및 폭 보상 자동 처리; 단일 연산자 매칭 |
 
 ---
 
@@ -187,6 +188,40 @@ for fragment in &runs {
 
 harumi가 생성한 PDF（Identity-H CID 폰트）뿐 아니라 임의의 기존 PDF도 지원합니다. Type1·TrueType 등 표준 단순 폰트（WinAnsiEncoding, MacRomanEncoding, StandardEncoding, `/Differences` 딕셔너리）도 디코딩합니다.
 
+### 기존 PDF에서 텍스트 바꾸기
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
+doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+doc.save("translated.pdf")?;
+```
+
+> **제한 사항**: `old_text`는 하나의 `Tj` 연산자 전체 내용 또는 `TJ` 배열 내 하나의 문자열 요소와 정확히 일치해야 합니다. 여러 연산자에 걸쳐 있는 텍스트는 매칭되지 않습니다. 찾을 수 없으면 파일을 수정하지 않고 `Ok(())`를 반환합니다.
+
+### 기존 임베드 폰트를 사용하여 텍스트 교체
+
+폰트 파일 없이 PDF에 이미 포함된 폰트로 교체할 때 사용합니다:
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+// FontHandle 불필요 — 해당 위치의 기존 폰트를 그대로 재사용
+doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
+doc.save("final.pdf")?;
+```
+
+교체 텍스트의 문자가 임베드된 폰트 서브셋에 없으면 `save()`가 `Error::FontCharNotMapped`를 반환합니다. 이 경우 `replace_text`로 폰트를 명시적으로 지정하여 폴백할 수 있습니다:
+
+```rust
+if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
+    // 서브셋에 글리프 존재 — 추가 폰트 불필요
+} else {
+    let font = doc.embed_font(include_bytes!("font.ttf"))?;
+    doc.page(1)?.replace_text("Draft", replacement, font)?;
+}
+doc.save("output.pdf")?;
+```
+
 ### PDF 메타데이터 읽기/쓰기
 
 ```rust
@@ -288,6 +323,9 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // PDF 메타데이터（/Info 딕셔너리）
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
+
+// 기존 콘텐츠 스트림에서 텍스트 바꾸기（단일 연산자 매칭）
+doc.page(1)?.replace_text(old_text, new_text, font)?;
 ```
 
 ### 좌표계
@@ -376,7 +414,8 @@ harumi
 | **v0.7** | `merge_from`（PDF 합치기）, `remove_page` 정확성 수정 및 고아 객체 정리 — **완료** |
 | **v0.8** | `Document::new`（빈 PDF 처음부터 생성）, `extract_pages`（페이지 분리） — **완료** |
 | **v0.9** | `extract_text_runs`（CID + 표준 단순 폰트 지원）, PDF 메타데이터 읽기/쓰기（`metadata()`, `set_metadata()`, `PdfMetadata`） — **완료** |
-| **Next（v0.10 이상）** | `#[non_exhaustive]` on Error, MSRV 선언, WASM CI, crates.io 출시 |
+| **v0.10** | `replace_text` — 진정한 스트림 내 텍스트 교체: Tj/TJ 재작성, 자동 폰트 전환, Td 폭 보상 — **완료** |
+| **Next（v0.11 이상）** | `#[non_exhaustive]` on Error, MSRV 선언, WASM CI, crates.io 출시 |
 
 ---
 

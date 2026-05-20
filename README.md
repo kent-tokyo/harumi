@@ -51,6 +51,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to split a PDF into separate files | `extract_pages` returns a new `Document` with the specified pages in any order |
 | Need to extract text positions from an existing PDF | `extract_text_runs` decodes CID fonts and standard simple fonts (Type1, TrueType, WinAnsi, etc.) |
 | Need to read or write PDF metadata (title, author…) | `doc.metadata()` reads `/Info`; `doc.set_metadata(&meta)` writes it |
+| Need to replace text in an existing PDF (new font) | `page.replace_text(old, new, font)` rewrites the content stream in-place; automatic font-switching and width compensation; single-operator matching |
+| Need to replace text using the original font | `page.replace_text_preserve_font(old, new)` — no `FontHandle` needed; reuses the font already in the PDF; returns `Error::FontCharNotMapped` if the glyph is missing from the subset |
 
 ---
 
@@ -196,6 +198,40 @@ for fragment in &runs {
 
 Works on arbitrary PDFs — Identity-H CID fonts (harumi output) and standard simple fonts (Type1, TrueType) with WinAnsiEncoding, MacRomanEncoding, StandardEncoding, or `/Differences` encoding dicts.
 
+### Replace text in an existing PDF
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
+doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+doc.save("translated.pdf")?;
+```
+
+> **Limitation**: `old_text` must match the complete decoded content of one `Tj` operator or one string element within a `TJ` array. Text split across multiple operators is not matched. Returns `Ok(())` without modifying the file if `old_text` is not found.
+
+### Replace text using the original embedded font
+
+When you don't have the font file but know the replacement text uses only glyphs already in the PDF:
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+// No font file needed — reuses whatever font is already at that position
+doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
+doc.save("final.pdf")?;
+```
+
+If a character in the replacement text is absent from the embedded font's subset, `save()` returns `Error::FontCharNotMapped`. Use this as a signal to fall back to `replace_text` with an explicit font:
+
+```rust
+if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
+    // glyph was in the subset — no extra font needed
+} else {
+    let font = doc.embed_font(include_bytes!("font.ttf"))?;
+    doc.page(1)?.replace_text("Draft", replacement, font)?;
+}
+doc.save("output.pdf")?;
+```
+
 ### Read/write PDF metadata
 
 ```rust
@@ -311,6 +347,11 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // PDF metadata (/Info dictionary)
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
+
+// Replace text in existing content stream (single-operator match)
+doc.page(1)?.replace_text(old_text, new_text, font)?;
+// Replace using the original embedded font (no FontHandle needed)
+doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
 ```
 
 ### Coordinate system
@@ -401,7 +442,8 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 | **v0.7** | `merge_from` (PDF merging), `remove_page` correctness & orphan-object fix — **Done** |
 | **v0.8** | `Document::new` (blank PDF from scratch), `extract_pages` (page splitting) — **Done** |
 | **v0.9** | `extract_text_runs` (CID + standard simple fonts), PDF metadata read/write (`metadata()`, `set_metadata()`, `PdfMetadata`) — **Done** |
-| **Next (v0.10+)** | `#[non_exhaustive]` on Error, MSRV declaration, WASM CI, publish to crates.io |
+| **v0.10** | `replace_text` — true in-stream text replacement: Tj/TJ rewrite, automatic font-switching, Td width compensation — **Done** |
+| **Next (v0.11+)** | `#[non_exhaustive]` on Error, MSRV declaration, WASM CI, publish to crates.io |
 
 ---
 

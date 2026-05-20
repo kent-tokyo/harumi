@@ -51,6 +51,7 @@ doc.save("searchable.pdf")?;
 | PDFを個別ファイルに分割したい | `extract_pages` で指定ページのみを含む新しい `Document` を任意の順序で取得 |
 | 既存PDFからテキストの位置情報を取り出したい | `extract_text_runs` でCIDフォントと標準シンプルフォント（Type1、TrueType、WinAnsiなど）をデコード |
 | PDFのメタデータ（タイトル・著者など）を読み書きしたい | `doc.metadata()` で `/Info` を読み込み、`doc.set_metadata(&meta)` で書き込む |
+| 既存PDFのテキストを検索・置換したい | `page.replace_text(old, new, font)` でコンテントストリームをその場で書き換え。フォント切替・幅補正も自動。シングルオペレータマッチング |
 
 ---
 
@@ -196,6 +197,40 @@ for fragment in &runs {
 
 harumi が出力したPDF（Identity-H CIDフォント）だけでなく、任意の既存PDFにも対応。Type1・TrueTypeなど標準シンプルフォント（WinAnsiEncoding・MacRomanEncoding・StandardEncoding・`/Differences` 辞書）も解析できます。
 
+### 既存PDFのテキスト置換
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
+doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+doc.save("translated.pdf")?;
+```
+
+> **制限**: `old_text` は1つの `Tj` 演算子、または `TJ` 配列内の1つの文字列要素の内容に完全一致している必要があります。複数の演算子にまたがるテキストはマッチしません。見つからない場合はファイルを変更せず `Ok(())` を返します。
+
+### 元フォントをそのまま使ってテキストを置換
+
+フォントファイルを持っていないが、置換後のテキストのグリフがPDF内にすでに含まれている場合に使用します：
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+// フォントファイル不要 — その位置にある既存フォントをそのまま使う
+doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
+doc.save("final.pdf")?;
+```
+
+置換テキストに含まれる文字が埋め込みフォントのサブセットにない場合、`save()` は `Error::FontCharNotMapped` を返します。この場合は `replace_text` でフォントを明示的に指定してフォールバックできます：
+
+```rust
+if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
+    // グリフがサブセットに存在 — 追加フォント不要
+} else {
+    let font = doc.embed_font(include_bytes!("font.ttf"))?;
+    doc.page(1)?.replace_text("Draft", replacement, font)?;
+}
+doc.save("output.pdf")?;
+```
+
 ### PDFメタデータの読み書き
 
 ```rust
@@ -311,6 +346,9 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // PDFメタデータ（/Info 辞書）
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
+
+// 既存コンテントストリームのテキスト置換（シングルオペレータマッチング）
+doc.page(1)?.replace_text(old_text, new_text, font)?;
 ```
 
 ### 座標系について
@@ -399,7 +437,8 @@ harumi
 | **v0.7** | `merge_from`（PDF結合）、`remove_page` 正確性・オーファンオブジェクト修正 — **完了** |
 | **v0.8** | `Document::new`（白紙PDFの作成）、`extract_pages`（ページ分割） — **完了** |
 | **v0.9** | `extract_text_runs`（CIDフォント＋標準シンプルフォント対応）、PDFメタデータ読み書き（`metadata()`、`set_metadata()`、`PdfMetadata`） — **完了** |
-| **Next（v0.10以降）** | `#[non_exhaustive]` on Error、MSRV宣言、WASM CI、crates.io公開 |
+| **v0.10** | `replace_text` — コンテントストリームの真のテキスト置換：Tj/TJ書き換え、フォント自動切替、Td幅補正 — **完了** |
+| **Next（v0.11以降）** | `#[non_exhaustive]` on Error、MSRV宣言、WASM CI、crates.io公開 |
 
 ---
 
