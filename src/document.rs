@@ -64,6 +64,8 @@ struct PendingText {
 /// A pending operation on a page (text or drawing primitive).
 enum PendingOp {
     Text(PendingText),
+    Replace(crate::replace::TextReplaceOp),
+    ReplacePreserve(crate::replace::TextReplacePreserveOp),
     #[cfg(feature = "draw")]
     Draw(crate::draw::DrawOp),
 }
@@ -817,6 +819,11 @@ impl Document {
                         let chars = font_chars.entry(t.font.0).or_default();
                         chars.extend(t.text.chars());
                     }
+                    PendingOp::Replace(r) => {
+                        let chars = font_chars.entry(r.font.0).or_default();
+                        chars.extend(r.new_text.chars());
+                    }
+                    PendingOp::ReplacePreserve(_) => {}
                     #[cfg(feature = "draw")]
                     PendingOp::Draw(_) => {}
                 }
@@ -831,6 +838,8 @@ impl Document {
         struct EmbedState {
             ef: EmbeddedFont,
             char_to_gid: BTreeMap<char, u16>,
+            gid_to_advance: BTreeMap<u16, u16>,
+            units_per_em: u16,
         }
         let mut embedded: HashMap<u32, EmbedState> = HashMap::new();
 
@@ -851,9 +860,10 @@ impl Document {
             let upm = face.units_per_em() as f64;
             let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
 
-            let font_name = format!("HARUMI+F{}", font_idx);
-            let pdf_name = format!("F{}", font_idx).into_bytes();
+            let font_name = format!("HARUMI+HR{}", font_idx);
+            let pdf_name = format!("HR{}", font_idx).into_bytes();
 
+            let saved_gid_to_advance = subset.gid_to_advance.clone();
             let params = EmbedParams {
                 font_name: &font_name,
                 subset_bytes: subset.bytes,
@@ -871,6 +881,7 @@ impl Document {
             };
 
             let type0_id = embed_cid_font(&mut self.inner, params)?;
+            let upm = face.units_per_em();
 
             embedded.insert(font_idx, EmbedState {
                 ef: EmbeddedFont {
@@ -878,10 +889,122 @@ impl Document {
                     pdf_name,
                     gid_to_char: BTreeMap::new(),
                     gid_to_advance: BTreeMap::new(),
-                    units_per_em: face.units_per_em(),
+                    units_per_em: upm,
                 },
                 char_to_gid,
+                gid_to_advance: saved_gid_to_advance,
+                units_per_em: upm,
             });
+        }
+
+        // Replace pass: rewrite existing content streams for pages with Replace ops.
+        {
+            // Collect work items (cloned) to avoid borrow conflicts with self.inner.
+            struct ReplaceWork {
+                page_id: ObjectId,
+                ops: Vec<(String, String, u32)>, // (old_text, new_text, font_idx)
+            }
+            let work: Vec<ReplaceWork> = self.pending.iter()
+                .filter_map(|page| {
+                    let ops: Vec<_> = page.ops.iter()
+                        .filter_map(|op| {
+                            if let PendingOp::Replace(r) = op {
+                                Some((r.old_text.clone(), r.new_text.clone(), r.font.0))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if ops.is_empty() { None } else { Some(ReplaceWork { page_id: page.page_id, ops }) }
+                })
+                .collect();
+
+            for item in work {
+                // Build resolved replacements from embedded font info.
+                let mut resolved: Vec<crate::replace::ResolvedReplacement> = Vec::new();
+                for (old_text, new_text, font_idx) in &item.ops {
+                    let state = embedded.get(font_idx).ok_or(Error::InvalidFont(*font_idx))?;
+                    resolved.push(crate::replace::ResolvedReplacement {
+                        old_text: old_text.clone(),
+                        new_text: new_text.clone(),
+                        new_pdf_font_name: state.ef.pdf_name.clone(),
+                        char_to_gid: state.char_to_gid.clone(),
+                        gid_to_advance: state.gid_to_advance.clone(),
+                        units_per_em: state.units_per_em,
+                    });
+                }
+
+                // Rewrite streams and replace /Contents.
+                let (new_content, fonts_used) =
+                    crate::replace::rewrite_page_streams(&self.inner, item.page_id, &resolved);
+                let new_stream_id = self.inner.add_object(Object::Stream(
+                    Stream::new(Dictionary::new(), new_content),
+                ));
+                self.inner
+                    .get_object_mut(item.page_id)?
+                    .as_dict_mut()?
+                    .set("Contents", Object::Reference(new_stream_id));
+
+                // Only register fonts that were actually used in the rewritten stream.
+                // This avoids overwriting existing font entries when no replacement matched.
+                let mut registered: std::collections::HashSet<Vec<u8>> =
+                    std::collections::HashSet::new();
+                for (_, _, font_idx) in &item.ops {
+                    let state = embedded.get(font_idx).ok_or(Error::InvalidFont(*font_idx))?;
+                    if fonts_used.contains(&state.ef.pdf_name)
+                        && registered.insert(state.ef.pdf_name.clone())
+                    {
+                        add_font_to_resources(
+                            &mut self.inner,
+                            item.page_id,
+                            &state.ef.pdf_name,
+                            state.ef.type0_id,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // ReplacePreserve pass: rewrite streams using the font already embedded in the PDF.
+        {
+            struct PreserveWork {
+                page_id: ObjectId,
+                ops: Vec<(String, String)>,
+            }
+            let work: Vec<PreserveWork> = self.pending.iter()
+                .filter_map(|page| {
+                    let ops: Vec<_> = page.ops.iter()
+                        .filter_map(|op| {
+                            if let PendingOp::ReplacePreserve(r) = op {
+                                Some((r.old_text.clone(), r.new_text.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if ops.is_empty() { None } else { Some(PreserveWork { page_id: page.page_id, ops }) }
+                })
+                .collect();
+
+            for item in work {
+                let preserve_ops: Vec<crate::replace::TextReplacePreserveOp> = item.ops
+                    .into_iter()
+                    .map(|(old_text, new_text)| crate::replace::TextReplacePreserveOp {
+                        old_text,
+                        new_text,
+                    })
+                    .collect();
+                let new_content = crate::replace::rewrite_page_streams_preserve_font(
+                    &self.inner, item.page_id, &preserve_ops,
+                )?;
+                let new_stream_id = self.inner.add_object(Object::Stream(
+                    Stream::new(Dictionary::new(), new_content),
+                ));
+                self.inner
+                    .get_object_mut(item.page_id)?
+                    .as_dict_mut()?
+                    .set("Contents", Object::Reference(new_stream_id));
+            }
         }
 
         // Pass 3: build one content stream per page and update /Resources.
@@ -901,6 +1024,8 @@ impl Document {
 
             for op in &page.ops {
                 match op {
+                    PendingOp::Replace(_) => {} // handled in replace pass above
+                    PendingOp::ReplacePreserve(_) => {} // handled in ReplacePreserve pass above
                     PendingOp::Text(t) => {
                         let state = embedded.get(&t.font.0).ok_or(Error::InvalidFont(t.font.0))?;
                         let chars: Vec<char> = t.text.chars().collect();
@@ -1118,6 +1243,59 @@ impl<'doc> PageHandle<'doc> {
                 opacity: 1.0,
             });
         }
+        Ok(())
+    }
+
+    /// Replaces all occurrences of `old_text` in this page's existing content streams
+    /// with `new_text` rendered in `font`.
+    ///
+    /// Matching is per PDF text operator: `old_text` must exactly equal the decoded
+    /// content of a single `Tj` operator or one string element within a `TJ` array.
+    /// Text split across multiple operators is not matched.
+    ///
+    /// Width compensation is applied automatically via a `Td` operator so that
+    /// subsequent text on the same line is not displaced.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document,
+    /// or [`Error::InvalidInput`] if called after [`save`](Document::save).
+    pub fn replace_text(
+        &mut self,
+        old_text: &str,
+        new_text: &str,
+        font: FontHandle,
+    ) -> Result<()> {
+        if self.doc.raw_fonts.get(font.0 as usize).is_none() {
+            return Err(Error::InvalidFont(font.0));
+        }
+        self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
+            font,
+            old_text: old_text.to_owned(),
+            new_text: new_text.to_owned(),
+        }));
+        Ok(())
+    }
+
+    /// Replaces all occurrences of `old_text` in this page's existing content streams
+    /// with `new_text`, reusing the font already embedded in the PDF at that position.
+    ///
+    /// Unlike [`replace_text`](PageHandle::replace_text), no `FontHandle` is required —
+    /// harumi reads the font reference from the preceding `Tf` operator in the stream.
+    ///
+    /// The replacement is validated at [`save`](Document::save) time. If any character in
+    /// `new_text` is absent from the existing font's ToUnicode mapping (e.g. the font is
+    /// subsetted and the glyph was not included), save returns
+    /// [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) so the caller can
+    /// fall back to [`replace_text`](PageHandle::replace_text) with an explicit font.
+    ///
+    /// # Errors
+    /// Returns [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) at save time
+    /// if any character in `new_text` is not present in the font's ToUnicode mapping.
+    pub fn replace_text_preserve_font(&mut self, old_text: &str, new_text: &str) -> Result<()> {
+        self.push_op(PendingOp::ReplacePreserve(crate::replace::TextReplacePreserveOp {
+            old_text: old_text.to_owned(),
+            new_text: new_text.to_owned(),
+        }));
         Ok(())
     }
 

@@ -25,21 +25,21 @@ pub struct TextFragment {
 // Internal font data
 // ---------------------------------------------------------------------------
 
-struct FontInfo {
-    to_unicode: BTreeMap<u16, char>,
-    dw: u32,
-    w_runs: Vec<WidthRun>,
+pub(crate) struct FontInfo {
+    pub(crate) to_unicode: BTreeMap<u16, char>,
+    pub(crate) dw: u32,
+    pub(crate) w_runs: Vec<WidthRun>,
     /// 1 for simple fonts (Type1, TrueType), 2 for CID fonts (Type0).
-    bytes_per_char: u8,
+    pub(crate) bytes_per_char: u8,
 }
 
-struct WidthRun {
-    start_gid: u16,
-    widths: Vec<u32>,
+pub(crate) struct WidthRun {
+    pub(crate) start_gid: u16,
+    pub(crate) widths: Vec<u32>,
 }
 
 impl FontInfo {
-    fn advance_width(&self, gid: u16) -> u32 {
+    pub(crate) fn advance_width(&self, gid: u16) -> u32 {
         for run in &self.w_runs {
             if gid >= run.start_gid {
                 let idx = (gid - run.start_gid) as usize;
@@ -74,7 +74,7 @@ pub(crate) fn extract_text_runs_from_page(
 // Step 1: raw content stream bytes for a page
 // ---------------------------------------------------------------------------
 
-fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> Vec<Vec<u8>> {
+pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> Vec<Vec<u8>> {
     let Ok(page_obj) = doc.get_object(page_id) else {
         return vec![];
     };
@@ -125,7 +125,7 @@ fn resolve_dict<'a>(doc: &'a lopdf::Document, obj: &'a Object) -> Option<&'a Dic
     }
 }
 
-fn collect_fonts(doc: &lopdf::Document, page_id: ObjectId) -> HashMap<Vec<u8>, FontInfo> {
+pub(crate) fn collect_fonts(doc: &lopdf::Document, page_id: ObjectId) -> HashMap<Vec<u8>, FontInfo> {
     collect_fonts_inner(doc, page_id).unwrap_or_default()
 }
 
@@ -978,7 +978,7 @@ fn parse_array_tokens(input: &[u8]) -> (Vec<Token>, usize) {
 
 /// Parse a PDF literal string starting at `i` (the character after the opening `(`).
 /// Returns (decoded_bytes, new_i) where new_i points past the closing `)`.
-fn parse_literal_string(input: &[u8], mut i: usize) -> (Vec<u8>, usize) {
+pub(crate) fn parse_literal_string(input: &[u8], mut i: usize) -> (Vec<u8>, usize) {
     let mut depth = 1i32;
     let mut out = Vec::new();
 
@@ -1030,7 +1030,7 @@ fn parse_literal_string(input: &[u8], mut i: usize) -> (Vec<u8>, usize) {
     (out, i)
 }
 
-fn decode_hex_bytes(hex: &[u8]) -> Vec<u8> {
+pub(crate) fn decode_hex_bytes(hex: &[u8]) -> Vec<u8> {
     let cleaned: Vec<u8> =
         hex.iter().filter(|&&b| !is_pdf_whitespace(b)).copied().collect();
     let mut padded = cleaned;
@@ -1044,11 +1044,11 @@ fn decode_hex_bytes(hex: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn is_pdf_whitespace(b: u8) -> bool {
+pub(crate) fn is_pdf_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0C | 0x00)
 }
 
-fn is_pdf_delimiter(b: u8) -> bool {
+pub(crate) fn is_pdf_delimiter(b: u8) -> bool {
     matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
 }
 

@@ -51,6 +51,7 @@ doc.save("searchable.pdf")?;
 | 需要将 PDF 拆分为单独的文件 | `extract_pages` 以任意顺序返回包含指定页面的新 `Document` |
 | 需要从现有 PDF 中提取文本位置信息 | `extract_text_runs` 可解码 CID 字体和标准简单字体（Type1、TrueType、WinAnsi 等） |
 | 需要读写 PDF 元数据（标题、作者等） | `doc.metadata()` 读取 `/Info`；`doc.set_metadata(&meta)` 写入 |
+| 需要在现有 PDF 中查找并替换文本 | `page.replace_text(old, new, font)` 就地重写内容流；自动处理字体切换和宽度补偿；单算子匹配 |
 
 ---
 
@@ -188,6 +189,40 @@ for fragment in &runs {
 
 不仅适用于 harumi 生成的 PDF（Identity-H CID 字体），也适用于任意现有 PDF。支持标准简单字体（Type1、TrueType）及 WinAnsiEncoding、MacRomanEncoding、StandardEncoding 或 `/Differences` 编码字典。
 
+### 替换现有 PDF 中的文本
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
+doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+doc.save("translated.pdf")?;
+```
+
+> **限制**：`old_text` 必须与单个 `Tj` 算子的完整解码内容或 `TJ` 数组中某个字符串元素完全匹配。跨多个算子的文本不会被匹配。若未找到则返回 `Ok(())` 且不修改文件。
+
+### 使用原始嵌入字体替换文本
+
+当您没有字体文件，但替换文本的字形已包含在 PDF 中时使用：
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+// 无需 FontHandle — 直接复用该位置已有的字体
+doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
+doc.save("final.pdf")?;
+```
+
+若替换文本中有字符不在嵌入字体的子集中，`save()` 将返回 `Error::FontCharNotMapped`。此时可回退到 `replace_text` 并显式指定字体：
+
+```rust
+if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
+    // 字形在子集中 — 无需额外字体
+} else {
+    let font = doc.embed_font(include_bytes!("font.ttf"))?;
+    doc.page(1)?.replace_text("Draft", replacement, font)?;
+}
+doc.save("output.pdf")?;
+```
+
 ### 读写 PDF 元数据
 
 ```rust
@@ -289,6 +324,9 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // PDF 元数据（/Info 字典）
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
+
+// 替换现有内容流中的文本（单算子匹配）
+doc.page(1)?.replace_text(old_text, new_text, font)?;
 ```
 
 ### 坐标系
@@ -377,7 +415,8 @@ harumi
 | **v0.7** | `merge_from`（PDF 合并）、`remove_page` 正确性修复与孤立对象清理 — **已完成** |
 | **v0.8** | `Document::new`（从零创建空白 PDF）、`extract_pages`（页面拆分） — **已完成** |
 | **v0.9** | `extract_text_runs`（CID 字体 + 标准简单字体支持）、PDF 元数据读写（`metadata()`、`set_metadata()`、`PdfMetadata`） — **已完成** |
-| **Next（v0.10 及以后）** | `#[non_exhaustive]` on Error、MSRV 声明、WASM CI、发布到 crates.io |
+| **v0.10** | `replace_text` — 真正的流内文本替换：Tj/TJ 重写、自动字体切换、Td 宽度补偿 — **已完成** |
+| **Next（v0.11 及以后）** | `#[non_exhaustive]` on Error、MSRV 声明、WASM CI、发布到 crates.io |
 
 ---
 

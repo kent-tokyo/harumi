@@ -57,6 +57,7 @@ mod document;
 mod error;
 mod extract;
 mod font;
+mod replace;
 
 #[cfg(feature = "draw")]
 pub(crate) mod draw;

@@ -36,6 +36,11 @@ pub enum Error {
     /// A caller-supplied parameter is invalid (e.g. NaN coordinate, zero-size box).
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    /// A character in `new_text` is not present in the embedded font's ToUnicode mapping.
+    /// The font may be subsetted and no longer contain the required glyph.
+    #[error("char '{ch}' not found in font '{font_name}' ToUnicode mapping; font may be subsetted")]
+    FontCharNotMapped { ch: char, font_name: String },
 }
 
 /// Alias for `std::result::Result<T, harumi::Error>`.
