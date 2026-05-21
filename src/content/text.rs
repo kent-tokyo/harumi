@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 ///
 /// `color` is an RGB triplet in 0.0–1.0 range, applied only for `render_mode 0`.
 /// `gs_name`: when `Some("GS0")`, emits `"/GS0 gs"` to apply an ExtGState (e.g. opacity).
+/// `rotation_degrees`: counter-clockwise rotation in degrees. `0.0` emits `Td`; any other
+/// value emits a full `Tm` text matrix (`cos sin -sin cos x y Tm`).
 /// Character encoding: 2-byte big-endian GID values (Identity-H encoding).
 #[allow(clippy::too_many_arguments)]
 pub fn text_stream(
@@ -14,6 +16,7 @@ pub fn text_stream(
     font_size: f32,
     x: f32,
     y: f32,
+    rotation_degrees: f32,
     chars: &[char],
     char_to_gid: &BTreeMap<char, u16>,
     render_mode: u8,
@@ -43,7 +46,17 @@ pub fn text_stream(
         ));
     }
     s.push_str(&format!("{} Tr\n", render_mode));
-    s.push_str(&format!("{:.4} {:.4} Td\n", x, y));
+    if rotation_degrees == 0.0 {
+        s.push_str(&format!("{:.4} {:.4} Td\n", x, y));
+    } else {
+        let theta = rotation_degrees.to_radians();
+        let cos_t = theta.cos();
+        let sin_t = theta.sin();
+        s.push_str(&format!(
+            "{:.6} {:.6} {:.6} {:.6} {:.4} {:.4} Tm\n",
+            cos_t, sin_t, -sin_t, cos_t, x, y
+        ));
+    }
     s.push_str(&format!("<{}> Tj\n", hex));
     s.push_str("ET\n");
     s.push_str("Q\n");
@@ -61,7 +74,7 @@ pub fn invisible_text_stream(
     chars: &[char],
     char_to_gid: &BTreeMap<char, u16>,
 ) -> Vec<u8> {
-    text_stream(font_name, font_size, x, y, chars, char_to_gid, 3, [0.0; 3], None)
+    text_stream(font_name, font_size, x, y, 0.0, chars, char_to_gid, 3, [0.0; 3], None)
 }
 
 /// Converts chars to a hex string of 2-byte GID values for Identity-H encoding.
@@ -103,17 +116,39 @@ mod tests {
     fn stream_visible_mode_has_color() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, &['A'], &map, 0, [1.0, 0.0, 0.0], None);
+        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 0.0, &['A'], &map, 0, [1.0, 0.0, 0.0], None);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("0 Tr"), "visible mode should use Tr 0");
         assert!(s.contains("1.0000 0.0000 0.0000 rg"), "should emit RGB color");
     }
 
     #[test]
+    fn rotation_zero_uses_td() {
+        let mut map = BTreeMap::new();
+        map.insert('A', 1u16);
+        let bytes = text_stream(b"F0", 12.0, 10.0, 20.0, 0.0, &['A'], &map, 0, [0.0; 3], None);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("10.0000 20.0000 Td"), "zero rotation should use Td");
+        assert!(!s.contains("Tm"), "zero rotation must not emit Tm");
+    }
+
+    #[test]
+    fn rotation_nonzero_uses_tm() {
+        let mut map = BTreeMap::new();
+        map.insert('A', 1u16);
+        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 45.0, &['A'], &map, 0, [0.0; 3], None);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("Tm"), "non-zero rotation should use Tm");
+        assert!(!s.contains("Td"), "non-zero rotation must not emit Td");
+        // cos(45°) ≈ 0.707107
+        assert!(s.contains("0.707107"), "should embed cos(45)");
+    }
+
+    #[test]
     fn text_stream_with_gs_emits_gs_op() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 0.0, 0.0, &['A'], &map, 0, [0.0; 3], Some("GS0"));
+        let bytes = text_stream(b"F0", 12.0, 0.0, 0.0, 0.0, &['A'], &map, 0, [0.0; 3], Some("GS0"));
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS0 gs"), "should emit gs operator when gs_name is Some");
         // Must appear after q and before BT

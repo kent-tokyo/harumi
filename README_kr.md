@@ -51,7 +51,14 @@ doc.save("searchable.pdf")?;
 | PDF를 개별 파일로 분리하고 싶다 | `extract_pages` 로 지정한 페이지만 담은 새 `Document` 를 원하는 순서로 반환 |
 | 기존 PDF에서 텍스트 위치 정보를 추출하고 싶다 | `extract_text_runs` 로 CID 폰트 및 표준 단순 폰트（Type1, TrueType, WinAnsi 등）를 디코딩 |
 | PDF 메타데이터（제목, 저자 등）를 읽고 쓰고 싶다 | `doc.metadata()` 로 `/Info` 읽기, `doc.set_metadata(&meta)` 로 쓰기 |
-| 기존 PDF에서 텍스트를 찾아 바꾸고 싶다 | `page.replace_text(old, new, font)` 로 콘텐츠 스트림을 인플레이스로 재작성; 폰트 전환 및 폭 보상 자동 처리; 단일 연산자 매칭 |
+| 기존 PDF 텍스트를 새 폰트로 교체하고 싶다 | `page.replace_text(old, new, font)` — 매칭 건수를 `usize` 로 반환; 폰트 전환·폭 보상 자동 처리 |
+| 원래 폰트를 그대로 써서 텍스트를 교체하고 싶다 | `page.replace_text_preserve_font(old, new)` — `FontHandle` 불필요; 매칭 건수 반환; 글리프 검증을 호출 시점에 즉시 수행 |
+| 문서를 변경하지 않고 교체 가능 여부를 사전 확인하고 싶다 | `page.can_replace_text(old, new)` — 읽기 전용 스캔; 매칭 건수 또는 `Err(FontCharNotMapped)` 반환 |
+| 타원이나 원을 그리고 싶다 | `add_ellipse(rect, color, opacity, filled, stroke_width)`（`draw` feature） |
+| 채우기와 외곽선을 동시에 그리고 싶다 | `add_ellipse` / `add_polygon` / `add_path`에서 `filled=true`와 `stroke_width>0` 동시 사용 — PDF `B` 연산자 |
+| 열린/닫힌 경로를 통합 API로 그리고 싶다 | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
+| 텍스트를 회전하고 싶다（워터마크, 대각선 스탬프） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
+| 여러 `Tj` 연산자에 걸친 텍스트를 치환하고 싶다 | `replace_text` / `replace_text_preserve_font` — 크로스 연산자 매칭 지원 |
 
 ---
 
@@ -71,7 +78,7 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 
 ```toml
 [dependencies]
-harumi = "0.2"
+harumi = "0.3"
 ```
 
 ### 보이지 않는 OCR 텍스트 레이어
@@ -197,7 +204,7 @@ doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-> **제한 사항**: `old_text`는 하나의 `Tj` 연산자 전체 내용 또는 `TJ` 배열 내 하나의 문자열 요소와 정확히 일치해야 합니다. 여러 연산자에 걸쳐 있는 텍스트는 매칭되지 않습니다. 찾을 수 없으면 파일을 수정하지 않고 `Ok(())`를 반환합니다.
+동일한 글꼴 컨텍스트（동일 `Tf` / `BT`〜`ET` 블록）내 연속된 `Tj`/`TJ` 연산자에 걸쳐 있는 텍스트도 매칭됩니다（크로스 연산자 매칭）. 위치 연산자（`Td`, `Tm`）가 사이에 있는 경우는 대상 외입니다.
 
 ### 기존 임베드 폰트를 사용하여 텍스트 교체
 
@@ -247,7 +254,7 @@ doc.save("report_with_meta.pdf")?;
 ### 도형 그리기（`draw` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["draw"] }
+harumi = { version = "0.3", features = ["draw"] }
 ```
 
 ```rust
@@ -257,10 +264,10 @@ doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
 // 파란색 테두리 사각형（채우기 없음）
 doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
 
-// 채워진 삼각형（말풍선 화살표 끝）
+// 채워진 삼각형（말풍선 화살표 끝）— 마지막 인수는 stroke_width（0.0 = 외곽선 없음）
 doc.page(1)?.add_polygon(
     &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
-    [1.0, 0.5, 0.0], 1.0, true,
+    [1.0, 0.5, 0.0], 1.0, true, 0.0,
 )?;
 
 // 검정 밑줄
@@ -270,7 +277,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 이미지 삽입（`image` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["image"] }
+harumi = { version = "0.3", features = ["image"] }
 ```
 
 ```rust
@@ -333,7 +340,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 좌표는 **PDF 포인트** (1pt = 1/72인치) 단위이며, 원점은 페이지 **좌하단**입니다:
 
 ```toml
-harumi = { version = "0.2", features = ["ocr"] }
+harumi = { version = "0.3", features = ["ocr"] }
 ```
 
 ### 기능 플래그
@@ -341,7 +348,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 | 플래그 | 활성화되는 기능 | 추가 의존성 |
 |---|---|---|
 | *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 도형 그리기 | 없음 |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지（`draw` 자동 활성화） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
 

@@ -323,7 +323,7 @@ fn smoke_add_polygon_filled() {
     // Triangle: three vertices
     doc.page(1)
         .unwrap()
-        .add_polygon(&[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]], [1.0, 0.5, 0.0], 1.0, true)
+        .add_polygon(&[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]], [1.0, 0.5, 0.0], 1.0, true, 0.0)
         .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
@@ -455,4 +455,52 @@ fn smoke_polyline_three_segments() {
     assert_eq!(l_count, 2, "3 points → 2 lineto operators");
     assert!(s.contains("\nS\n"), "should stroke without close");
     assert!(!s.contains("\nh\n"), "must NOT close path (polyline != polygon)");
+}
+
+#[cfg(feature = "draw")]
+#[test]
+fn smoke_add_ellipse_filled() {
+    let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_ellipse([50.0, 100.0, 200.0, 150.0], [0.0, 0.5, 1.0], 1.0, true, 0.0)
+        .unwrap();
+
+    let out = doc.save_to_bytes().unwrap();
+    let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
+    let pages = lpdf.get_pages();
+    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let s = String::from_utf8_lossy(&content);
+
+    // 4 cubic Bézier curves (4 'c' operators)
+    let c_count = s.matches(" c\n").count();
+    assert_eq!(c_count, 4, "ellipse should have 4 Bézier curve operators, got {c_count}");
+    // should close path and fill
+    assert!(s.contains("h\n"), "should close path");
+    assert!(s.contains("\nf\n"), "filled ellipse should use 'f' operator");
+    assert!(!s.contains("\nS\n"), "filled ellipse should not use stroke 'S'");
+    // fill color (rg)
+    assert!(s.contains(" rg\n"), "filled ellipse should set rg color");
+    // moveto
+    assert!(s.contains(" m\n"), "should have a moveto operator");
+}
+
+#[cfg(feature = "draw")]
+#[test]
+fn smoke_add_ellipse_stroked() {
+    let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_ellipse([10.0, 10.0, 100.0, 80.0], [1.0, 0.0, 0.0], 0.8, false, 1.5)
+        .unwrap();
+
+    let out = doc.save_to_bytes().unwrap();
+    let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
+    let pages = lpdf.get_pages();
+    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let s = String::from_utf8_lossy(&content);
+
+    assert!(s.contains("\nS\n"), "stroked ellipse should use 'S' operator");
+    assert!(!s.contains("\nf\n"), "stroked ellipse should not use fill 'f'");
+    assert!(s.contains(" RG\n"), "stroked ellipse should set RG color");
 }

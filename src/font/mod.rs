@@ -23,7 +23,7 @@ impl FontKind {
     }
 }
 
-/// Opaque handle to a font registered with [`Document::embed_font`].
+/// Opaque handle to a font registered with [`crate::Document::embed_font`].
 ///
 /// The handle is cheap to copy and can be passed to any number of text
 /// placement calls on any page of the same document. Using a handle from a

@@ -11,8 +11,10 @@ pub(crate) enum DrawOp {
     Rect       { rect: [f32; 4], color: [f32; 3], opacity: f32 },
     RectStroke { rect: [f32; 4], color: [f32; 3], line_width: f32, opacity: f32 },
     Line       { from: [f32; 2], to: [f32; 2], color: [f32; 3], width: f32, opacity: f32 },
-    Polygon    { points: Vec<[f32; 2]>, color: [f32; 3], opacity: f32, filled: bool },
+    Polygon    { points: Vec<[f32; 2]>, color: [f32; 3], opacity: f32, filled: bool, stroke_width: f32 },
     Polyline   { points: Vec<[f32; 2]>, color: [f32; 3], width: f32, opacity: f32 },
+    Ellipse    { rect: [f32; 4], color: [f32; 3], opacity: f32, filled: bool, stroke_width: f32 },
+    Path       { points: Vec<[f32; 2]>, closed: bool, color: [f32; 3], opacity: f32, filled: bool, stroke_width: f32 },
     #[cfg(feature = "image")]
     Image      { bytes: Vec<u8>, rect: [f32; 4], opacity: f32 },
 }

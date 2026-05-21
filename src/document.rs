@@ -59,6 +59,7 @@ struct PendingText {
     render_mode: u8,
     color: [f32; 3],
     opacity: f32,
+    rotation_degrees: f32,
 }
 
 /// A pending operation on a page (text or drawing primitive).
@@ -1042,6 +1043,7 @@ impl Document {
                             t.font_size,
                             t.x,
                             t.y,
+                            t.rotation_degrees,
                             &chars,
                             &state.char_to_gid,
                             t.render_mode,
@@ -1069,13 +1071,21 @@ impl Document {
                                 let gs = gs_registry.register(*opacity);
                                 page_stream.extend(shapes::line_stream(from, to, color, *width, &gs));
                             }
-                            DrawOp::Polygon { points, color, opacity, filled } => {
+                            DrawOp::Polygon { points, color, opacity, filled, stroke_width } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polygon_stream(points, color, &gs, *filled));
+                                page_stream.extend(shapes::polygon_stream(points, color, &gs, *filled, *stroke_width));
                             }
                             DrawOp::Polyline { points, color, width, opacity } => {
                                 let gs = gs_registry.register(*opacity);
                                 page_stream.extend(shapes::polyline_stream(points, color, *width, &gs));
+                            }
+                            DrawOp::Ellipse { rect, color, opacity, filled, stroke_width } => {
+                                let gs = gs_registry.register(*opacity);
+                                page_stream.extend(shapes::ellipse_stream(rect, color, &gs, *filled, *stroke_width));
+                            }
+                            DrawOp::Path { points, closed, color, opacity, filled, stroke_width } => {
+                                let gs = gs_registry.register(*opacity);
+                                page_stream.extend(shapes::path_stream(points, *closed, color, &gs, *filled, *stroke_width));
                             }
                             #[cfg(feature = "image")]
                             DrawOp::Image { bytes, rect, opacity } => {
@@ -1178,6 +1188,7 @@ impl<'doc> PageHandle<'doc> {
             render_mode: 3,
             color: [0.0; 3],
             opacity: 1.0,
+            rotation_degrees: 0.0,
         });
         Ok(())
     }
@@ -1221,6 +1232,7 @@ impl<'doc> PageHandle<'doc> {
             render_mode: 0,
             color,
             opacity: 1.0,
+            rotation_degrees: 0.0,
         });
         Ok(())
     }
@@ -1241,6 +1253,7 @@ impl<'doc> PageHandle<'doc> {
                 render_mode: run.render_mode,
                 color: run.color,
                 opacity: 1.0,
+                rotation_degrees: 0.0,
             });
         }
         Ok(())
@@ -1256,6 +1269,9 @@ impl<'doc> PageHandle<'doc> {
     /// Width compensation is applied automatically via a `Td` operator so that
     /// subsequent text on the same line is not displaced.
     ///
+    /// Returns the number of matches found (and queued for replacement). A return
+    /// value of `0` means `old_text` was not found; no modification is queued.
+    ///
     /// # Errors
     /// Returns [`Error::InvalidFont`] if `font` was not registered on this document,
     /// or [`Error::InvalidInput`] if called after [`save`](Document::save).
@@ -1264,16 +1280,21 @@ impl<'doc> PageHandle<'doc> {
         old_text: &str,
         new_text: &str,
         font: FontHandle,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         if self.doc.raw_fonts.get(font.0 as usize).is_none() {
             return Err(Error::InvalidFont(font.0));
         }
-        self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
-            font,
-            old_text: old_text.to_owned(),
-            new_text: new_text.to_owned(),
-        }));
-        Ok(())
+        let count = crate::replace::count_matches_in_page(
+            &self.doc.inner, self.page_id, old_text, None,
+        )?;
+        if count > 0 {
+            self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
+                font,
+                old_text: old_text.to_owned(),
+                new_text: new_text.to_owned(),
+            }));
+        }
+        Ok(count)
     }
 
     /// Replaces all occurrences of `old_text` in this page's existing content streams
@@ -1282,21 +1303,46 @@ impl<'doc> PageHandle<'doc> {
     /// Unlike [`replace_text`](PageHandle::replace_text), no `FontHandle` is required —
     /// harumi reads the font reference from the preceding `Tf` operator in the stream.
     ///
-    /// The replacement is validated at [`save`](Document::save) time. If any character in
-    /// `new_text` is absent from the existing font's ToUnicode mapping (e.g. the font is
-    /// subsetted and the glyph was not included), save returns
-    /// [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) so the caller can
-    /// fall back to [`replace_text`](PageHandle::replace_text) with an explicit font.
+    /// Returns the number of matches found (and queued for replacement). Glyph
+    /// availability is validated eagerly: if any character in `new_text` is absent
+    /// from the existing font's ToUnicode mapping (e.g. the font is subsetted),
+    /// `Err(FontCharNotMapped)` is returned immediately so the caller can fall back
+    /// to [`replace_text`](PageHandle::replace_text) with an explicit font.
     ///
     /// # Errors
-    /// Returns [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) at save time
-    /// if any character in `new_text` is not present in the font's ToUnicode mapping.
-    pub fn replace_text_preserve_font(&mut self, old_text: &str, new_text: &str) -> Result<()> {
-        self.push_op(PendingOp::ReplacePreserve(crate::replace::TextReplacePreserveOp {
-            old_text: old_text.to_owned(),
-            new_text: new_text.to_owned(),
-        }));
-        Ok(())
+    /// Returns [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) if any
+    /// character in `new_text` is not present in the font's ToUnicode mapping.
+    pub fn replace_text_preserve_font(&mut self, old_text: &str, new_text: &str) -> Result<usize> {
+        let count = crate::replace::count_matches_in_page(
+            &self.doc.inner, self.page_id, old_text, Some(new_text),
+        )?;
+        if count > 0 {
+            self.push_op(PendingOp::ReplacePreserve(crate::replace::TextReplacePreserveOp {
+                old_text: old_text.to_owned(),
+                new_text: new_text.to_owned(),
+            }));
+        }
+        Ok(count)
+    }
+
+    /// Scans the page for `old_text` and validates that all characters in `new_text`
+    /// are present in the existing font's ToUnicode mapping — without modifying the document.
+    ///
+    /// Returns the number of occurrences of `old_text` found on this page.
+    /// A return value of `0` means no replacement would occur.
+    ///
+    /// Use this to decide whether to call
+    /// [`replace_text_preserve_font`](PageHandle::replace_text_preserve_font)
+    /// (which would mutate the document) or fall back to
+    /// [`replace_text`](PageHandle::replace_text) with an explicit font.
+    ///
+    /// # Errors
+    /// Returns [`Error::FontCharNotMapped`](crate::Error::FontCharNotMapped) if any
+    /// character in `new_text` is absent from the font's ToUnicode mapping.
+    pub fn can_replace_text(&self, old_text: &str, new_text: &str) -> Result<usize> {
+        crate::replace::count_matches_in_page(
+            &self.doc.inner, self.page_id, old_text, Some(new_text),
+        )
     }
 
     /// Overlays multi-line visible text within a bounding box.
@@ -1426,6 +1472,7 @@ impl<'doc> PageHandle<'doc> {
                 render_mode: 0,
                 color,
                 opacity: 1.0,
+                rotation_degrees: 0.0,
             });
         }
         Ok(())
@@ -1548,24 +1595,27 @@ impl<'doc> PageHandle<'doc> {
     /// At least 2 points are required; fewer produce no output.
     /// `color` is `[r, g, b]` in `0.0..=1.0`.
     /// `opacity` is in `0.0..=1.0`.
-    /// `filled = true` fills the polygon; `filled = false` strokes it.
+    /// `filled = true` fills the polygon. `stroke_width > 0` strokes the outline.
+    /// Both can be active simultaneously (`B` operator).
     pub fn add_polygon(
         &mut self,
         points: &[[f32; 2]],
         color: [f32; 3],
         opacity: f32,
         filled: bool,
+        stroke_width: f32,
     ) -> Result<()> {
         {
             let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
             check_finite(&coords, "add_polygon points")?;
         }
-        check_finite(&[color[0], color[1], color[2], opacity], "add_polygon")?;
+        check_finite(&[color[0], color[1], color[2], opacity, stroke_width], "add_polygon")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Polygon {
             points: points.to_vec(),
             color,
             opacity,
             filled,
+            stroke_width,
         }));
         Ok(())
     }
@@ -1638,6 +1688,76 @@ impl<'doc> PageHandle<'doc> {
         Ok(())
     }
 
+    /// Overlays an ellipse (or circle) on this page.
+    ///
+    /// `rect` is `[x, y, width, height]` — the bounding box of the ellipse in PDF points
+    /// (origin: bottom-left). For a circle, set `width == height`.
+    /// `color` is `[r, g, b]` in `0.0..=1.0`.
+    /// `opacity` is in `0.0` (transparent) to `1.0` (opaque).
+    /// `filled = true` fills the ellipse. `stroke_width > 0` strokes the outline.
+    /// Both can be active simultaneously (`B` operator).
+    pub fn add_ellipse(
+        &mut self,
+        rect: [f32; 4],
+        color: [f32; 3],
+        opacity: f32,
+        filled: bool,
+        stroke_width: f32,
+    ) -> Result<()> {
+        check_finite(
+            &[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2], opacity, stroke_width],
+            "add_ellipse",
+        )?;
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return Err(Error::InvalidInput("add_ellipse: width and height must be positive".into()));
+        }
+        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Ellipse {
+            rect,
+            color,
+            opacity,
+            filled,
+            stroke_width,
+        }));
+        Ok(())
+    }
+
+    /// Overlays an open or closed path on this page.
+    ///
+    /// `points` is a slice of `[x, y]` vertices in PDF points (origin: bottom-left).
+    /// At least 2 points are required; fewer produce no output.
+    /// `closed = true` closes the path (`h`); `closed = false` leaves it open.
+    /// `color` is `[r, g, b]` in `0.0..=1.0`.
+    /// `filled = true` fills the interior. `stroke_width > 0` strokes the outline.
+    /// Both can be active simultaneously (`B` operator).
+    /// `opacity` is in `0.0..=1.0`.
+    pub fn add_path(
+        &mut self,
+        points: &[[f32; 2]],
+        closed: bool,
+        color: [f32; 3],
+        filled: bool,
+        stroke_width: f32,
+        opacity: f32,
+    ) -> Result<()> {
+        if points.len() < 2 {
+            return Ok(());
+        }
+        {
+            let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
+            check_finite(&coords, "add_path points")?;
+        }
+        check_finite(&[color[0], color[1], color[2], stroke_width, opacity], "add_path")?;
+        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Path {
+            points: points.to_vec(),
+            closed,
+            color,
+            opacity,
+            filled,
+            stroke_width,
+        }));
+        Ok(())
+    }
+
     /// Overlays visible text with opacity on this page.
     ///
     /// Like [`add_text`](PageHandle::add_text) but applies a uniform fill opacity
@@ -1664,6 +1784,43 @@ impl<'doc> PageHandle<'doc> {
             render_mode: 0,
             color,
             opacity,
+            rotation_degrees: 0.0,
+        });
+        Ok(())
+    }
+
+    /// Overlays visible text with rotation and opacity on this page.
+    ///
+    /// `rotation_degrees` rotates the text counter-clockwise around `position`.
+    /// Use `0.0` for horizontal text. Internally emits a PDF `Tm` text matrix when
+    /// `rotation_degrees != 0.0`, enabling arbitrary angles including CJK watermarks.
+    ///
+    /// `opacity` is in `0.0` (transparent) to `1.0` (opaque).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_text_with_rotation(
+        &mut self,
+        text: &str,
+        font: FontHandle,
+        position: [f32; 2],
+        font_size: f32,
+        color: [f32; 3],
+        opacity: f32,
+        rotation_degrees: f32,
+    ) -> Result<()> {
+        check_finite(
+            &[position[0], position[1], font_size, color[0], color[1], color[2], opacity, rotation_degrees],
+            "add_text_with_rotation",
+        )?;
+        self.push_text(PendingText {
+            font,
+            text: text.to_owned(),
+            x: position[0],
+            y: position[1],
+            font_size,
+            render_mode: 0,
+            color,
+            opacity,
+            rotation_degrees,
         });
         Ok(())
     }
@@ -1723,6 +1880,7 @@ impl<'doc> PageHandle<'doc> {
                 render_mode: 0,
                 color,
                 opacity,
+                rotation_degrees: 0.0,
             });
         }
         Ok(())

@@ -51,7 +51,14 @@ doc.save("searchable.pdf")?;
 | PDFを個別ファイルに分割したい | `extract_pages` で指定ページのみを含む新しい `Document` を任意の順序で取得 |
 | 既存PDFからテキストの位置情報を取り出したい | `extract_text_runs` でCIDフォントと標準シンプルフォント（Type1、TrueType、WinAnsiなど）をデコード |
 | PDFのメタデータ（タイトル・著者など）を読み書きしたい | `doc.metadata()` で `/Info` を読み込み、`doc.set_metadata(&meta)` で書き込む |
-| 既存PDFのテキストを検索・置換したい | `page.replace_text(old, new, font)` でコンテントストリームをその場で書き換え。フォント切替・幅補正も自動。シングルオペレータマッチング |
+| 既存PDFのテキストを検索・置換したい（新フォント） | `page.replace_text(old, new, font)` でコンテントストリームをその場で書き換え。マッチ件数を `usize` で返す。フォント切替・幅補正も自動 |
+| 既存フォントで文字を置換したい | `page.replace_text_preserve_font(old, new)` — `FontHandle` 不要。マッチ件数を返す。グリフ検証はコール時に即時実行 |
+| 変更なしで置換可能か事前確認したい | `page.can_replace_text(old, new)` — 読み取り専用スキャン。マッチ件数または `Err(FontCharNotMapped)` を返す |
+| 楕円・円を描画したい | `add_ellipse(rect, color, opacity, filled, stroke_width)`（`draw` feature） |
+| 塗りと枠線を同時に描画したい | `add_ellipse` / `add_polygon` / `add_path` で `filled=true` かつ `stroke_width>0` — PDF `B` 演算子を使用 |
+| 開放・閉鎖パスを統一APIで描画したい | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
+| テキストを回転させたい（透かし・斜めスタンプ） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
+| 複数の `Tj` 演算子にまたがるテキストを置換したい | `replace_text` / `replace_text_preserve_font` — クロス演算子マッチングに対応 |
 
 ---
 
@@ -71,7 +78,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "0.2"
+harumi = "0.3"
 ```
 
 ### 不可視のOCRテキストレイヤー
@@ -202,33 +209,40 @@ harumi が出力したPDF（Identity-H CIDフォント）だけでなく、任�
 ```rust
 let mut doc = Document::from_file("contract.pdf")?;
 let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
-doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+// マッチ件数を返す（0 = 見つからなかった）
+let n = doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-> **制限**: `old_text` は1つの `Tj` 演算子、または `TJ` 配列内の1つの文字列要素の内容に完全一致している必要があります。複数の演算子にまたがるテキストはマッチしません。見つからない場合はファイルを変更せず `Ok(())` を返します。
+同一フォントコンテキスト内（同一 `Tf` / `BT`〜`ET` ブロック）の連続する `Tj`/`TJ` 演算子にまたがるテキストにもマッチします（クロス演算子マッチング）。位置変更演算子（`Td`, `Tm`）を挟む場合は対象外です。
 
 ### 元フォントをそのまま使ってテキストを置換
 
-フォントファイルを持っていないが、置換後のテキストのグリフがPDF内にすでに含まれている場合に使用します：
+グリフ検証はコール時に即時実行されます — `save()` まで待ちません：
 
 ```rust
 let mut doc = Document::from_file("contract.pdf")?;
-// フォントファイル不要 — その位置にある既存フォントをそのまま使う
-doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
-doc.save("final.pdf")?;
-```
-
-置換テキストに含まれる文字が埋め込みフォントのサブセットにない場合、`save()` は `Error::FontCharNotMapped` を返します。この場合は `replace_text` でフォントを明示的に指定してフォールバックできます：
-
-```rust
-if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
-    // グリフがサブセットに存在 — 追加フォント不要
-} else {
-    let font = doc.embed_font(include_bytes!("font.ttf"))?;
-    doc.page(1)?.replace_text("Draft", replacement, font)?;
+match doc.page(1)?.replace_text_preserve_font("Draft", replacement) {
+    Ok(n) if n > 0 => { /* n 件置換キュー済み — 追加フォント不要 */ }
+    Ok(_) => { /* old_text が見つからなかった */ }
+    Err(_) => {
+        // グリフがサブセットにない — 明示フォントでフォールバック
+        let font = doc.embed_font(include_bytes!("font.ttf"))?;
+        doc.page(1)?.replace_text("Draft", replacement, font)?;
+    }
 }
 doc.save("output.pdf")?;
+```
+
+### 変更せずに置換可能か確認する
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+match doc.page(1)?.can_replace_text("Draft", "Final") {
+    Ok(0) => println!("'Draft' は1ページ目に見つかりませんでした"),
+    Ok(n) => println!("{n} 件見つかりました。グリフも問題なし"),
+    Err(e) => println!("グリフが欠けています: {e}"),
+}
 ```
 
 ### PDFメタデータの読み書き
@@ -256,7 +270,7 @@ doc.save("report_with_meta.pdf")?;
 ### 図形描画（`draw` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["draw"] }
+harumi = { version = "0.3", features = ["draw"] }
 ```
 
 ```rust
@@ -266,20 +280,51 @@ doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
 // 青い枠線のみの矩形（塗りなし）
 doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
 
-// 塗り三角形（吹き出しの矢印先端）
+// 塗り三角形（吹き出しの矢印先端）— 末尾引数は stroke_width（0.0 = 枠線なし）
 doc.page(1)?.add_polygon(
     &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
-    [1.0, 0.5, 0.0], 1.0, true,
+    [1.0, 0.5, 0.0], 1.0, true, 0.0,
+)?;
+
+// 塗り + 枠線同時描画（PDF `B` 演算子）
+doc.page(1)?.add_polygon(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    [0.0, 0.6, 1.0], 1.0, true, 2.0,
 )?;
 
 // 黒い下線
 doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?;
+
+// 半透明の青い楕円（バウンディングボックス: x, y, width, height）
+doc.page(1)?.add_ellipse([200.0, 300.0, 150.0, 100.0], [0.0, 0.4, 1.0], 0.7, true, 0.0)?;
+
+// 円の輪郭のみ（2pt 枠線）
+doc.page(1)?.add_ellipse([100.0, 100.0, 80.0, 80.0], [1.0, 0.0, 0.0], 1.0, false, 2.0)?;
+
+// 開放パス（多角形：閉じない）
+doc.page(1)?.add_path(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    false, [0.2, 0.8, 0.2], false, 1.5, 1.0,
+)?;
+
+// 45° 回転ウォーターマーク
+let font = doc.embed_font(include_bytes!("NotoSansCJK.ttf"))?;
+let (w, h) = doc.page(1)?.size()?;
+doc.page(1)?.add_text_with_rotation(
+    "社外秘",
+    font,
+    [w / 2.0, h / 2.0],
+    72.0,
+    [0.8, 0.0, 0.0],  // 赤
+    0.3,              // 30% 不透明度
+    45.0,             // 反時計回りに45°
+)?;
 ```
 
 ### 画像埋め込み（`image` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["image"] }
+harumi = { version = "0.3", features = ["image"] }
 ```
 
 ```rust
@@ -356,7 +401,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 座標は **PDFポイント**（1pt = 1/72インチ）で、原点はページ**左下**です。Tesseract / hOCR など左上原点のピクセル座標を使う場合は `ocr` featureのヘルパーを使ってください：
 
 ```toml
-harumi = { version = "0.2", features = ["ocr"] }
+harumi = { version = "0.3", features = ["ocr"] }
 ```
 
 ### Feature flags
@@ -364,7 +409,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 | フラグ | 有効になる機能 | 追加依存 |
 |---|---|---|
 | *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 図形描画 | なし |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG（`draw` を有効化） | `image` クレート |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
 

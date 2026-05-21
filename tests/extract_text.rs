@@ -276,3 +276,104 @@ fn simple_font_encoding_fallback_no_tounicode() {
     assert_eq!(frags.len(), 1, "expected 1 fragment, got {}", frags.len());
     assert_eq!(frags[0].text, "é");
 }
+
+// ---------------------------------------------------------------------------
+// R2: font_name field
+// ---------------------------------------------------------------------------
+
+#[test]
+fn font_name_is_populated() {
+    // The resource name is "F1" in the minimal WinAnsi PDF
+    let content = b"BT\n/F1 12 Tf\n72 700 Td\n(Hello) Tj\nET\n";
+    let pdf_bytes = minimal_winansi_pdf(content);
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let frags = doc.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 1);
+    assert_eq!(frags[0].font_name, "F1", "font_name should be the PDF resource name 'F1'");
+}
+
+#[test]
+fn font_name_cjk_roundtrip() {
+    // harumi embeds CJK fonts as HR0, HR1, …
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1).unwrap().add_invisible_text("日本語", font, [72.0, 700.0], 12.0).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+
+    assert_eq!(frags.len(), 1);
+    assert!(!frags[0].font_name.is_empty(), "font_name should not be empty for CJK text");
+    // harumi embeds as "HR<n>"
+    assert!(
+        frags[0].font_name.starts_with("HR"),
+        "CJK font_name should start with 'HR', got '{}'",
+        frags[0].font_name
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R3: color and invisible fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn color_default_is_black() {
+    // No rg/g operator → default fill color is black [0,0,0]
+    let content = b"BT\n/F1 12 Tf\n72 700 Td\n(Hello) Tj\nET\n";
+    let pdf_bytes = minimal_winansi_pdf(content);
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let frags = doc.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 1);
+    assert_eq!(frags[0].color, [0.0, 0.0, 0.0], "default color should be black");
+    assert!(!frags[0].invisible, "render mode 0 should not be invisible");
+}
+
+#[test]
+fn color_rg_operator_tracked() {
+    // 1 0 0 rg sets fill color to red
+    let content = b"1 0 0 rg\nBT\n/F1 12 Tf\n72 700 Td\n(Hello) Tj\nET\n";
+    let pdf_bytes = minimal_winansi_pdf(content);
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let frags = doc.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 1);
+    assert!(
+        (frags[0].color[0] - 1.0).abs() < 0.01,
+        "red channel should be 1.0, got {}",
+        frags[0].color[0]
+    );
+    assert!(frags[0].color[1].abs() < 0.01, "green channel should be 0.0");
+    assert!(frags[0].color[2].abs() < 0.01, "blue channel should be 0.0");
+}
+
+#[test]
+fn invisible_flag_set_for_render_mode_3() {
+    // Tr 3 = invisible (OCR search layer)
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1).unwrap().add_invisible_text("Secret", font, [72.0, 700.0], 12.0).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+
+    assert_eq!(frags.len(), 1);
+    assert!(frags[0].invisible, "add_invisible_text should produce invisible=true (Tr 3)");
+}
+
+#[test]
+fn invisible_flag_false_for_visible_text() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1).unwrap().add_text("Visible", font, [72.0, 700.0], 12.0, [0.0; 3]).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+
+    assert_eq!(frags.len(), 1);
+    assert!(!frags[0].invisible, "add_text should produce invisible=false (Tr 0)");
+}

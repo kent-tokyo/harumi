@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+---
+
+## [0.3.0] — 2026-05-21
+
+### Added
+
+- **`PageHandle::add_text_with_rotation`** — overlays text at an arbitrary counter-clockwise rotation (degrees).
+  Uses the PDF `Tm` (text matrix) operator: `cos(θ) sin(θ) -sin(θ) cos(θ) x y Tm`.
+  Zero degrees falls back to the standard `Td` operator for backward compatibility.
+  Accepts the same font/size/color/opacity parameters as `add_text_with_opacity`.
+
+- **Simultaneous fill + stroke for shapes** (`draw` feature) — `add_ellipse` and `add_polygon` now accept
+  a `stroke_width: f32` parameter (appended as the last argument). When both `filled = true` and
+  `stroke_width > 0.0`, the PDF `B` (fill-then-stroke) operator is used. Setting `stroke_width = 0.0`
+  preserves the previous behavior (`f` / `S` depending on `filled`).
+  **Breaking change**: callers must append `0.0` (or a positive stroke width) to existing calls.
+
+- **`PageHandle::add_path`** (`draw` feature) — unified path API that subsumes `add_polygon` and `add_polyline`.
+  Parameters: `points`, `closed: bool`, `color`, `filled: bool`, `stroke_width: f32`, `opacity`.
+  `closed = true` appends the PDF `h` (closepath) operator; `closed = false` leaves the path open.
+  Supports the same fill/stroke/both modes as the updated `add_ellipse`/`add_polygon`.
+  The existing `add_polygon` and `add_polyline` methods are unchanged (additive, not replaced).
+
+- **Cross-operator text replace** — `replace_text` and `replace_text_preserve_font` now match
+  `old_text` that is split across consecutive `Tj`/`TJ` operators within the same font context
+  (same `Tf` operator, same `BT`/`ET` block). Previously only single-operator exact matches were supported.
+  Matches that span a positional operator (`Td`, `Tm`, etc.) between the operators are intentionally
+  skipped to avoid reordering text. `can_replace_text` likewise counts cross-operator matches.
+
+- **`TextFragment::font_name`** — PDF resource name of the font at the extracted position (e.g. `"HR0"`, `"F1"`). Useful for identifying which font family a run belongs to, especially for CJK glyph diagnostics.
+- **`TextFragment::color`** — RGB fill color `[f32; 3]` at the extracted position, tracking the most recent `rg` or `g` content-stream operator. Defaults to black `[0.0, 0.0, 0.0]`.
+- **`TextFragment::invisible`** — `true` when the text render mode is 3 (OCR search layer, `Tr 3`). Lets callers distinguish invisible OCR text from visible content.
+- **`TextFragment` is now `#[non_exhaustive]`** — future field additions will not require semver breaking changes.
+- **`PageHandle::replace_text` now returns `Result<usize>`** (was `Result<()>`). The return value is the number of occurrences of `old_text` found on the page. A return value of `0` means no match was found and no operation is queued. The match count is computed eagerly at call time (read-only scan).
+- **`PageHandle::replace_text_preserve_font` now returns `Result<usize>`** (was `Result<()>`). Glyph validation is now performed eagerly at call time — `Err(FontCharNotMapped)` is returned immediately if any character in `new_text` is absent from the existing font's ToUnicode mapping, enabling 1-pass fallback patterns without waiting until `save()`.
+- **`PageHandle::can_replace_text(old_text, new_text) -> Result<usize>`** — pure read-only scan that returns the number of occurrences of `old_text` and validates that all characters in `new_text` are present in the existing font's subset. No document modification. Useful for preflight checks before deciding which replace method to call.
+- **`PageHandle::add_ellipse(rect, color, opacity, filled)`** (`draw` feature) — draws an ellipse or circle approximated with 4 cubic Bézier curves (`c` operator). `filled = true` uses `rg`/`f`; `filled = false` uses `RG`/`S`.
+
+### Changed
+
+- **`replace_text_preserve_font` validation timing**: `FontCharNotMapped` is now returned at call time instead of `save()` time. This is a behavioral change for callers that previously relied on the error being deferred.
+
+---
+
 ## [Unreleased] — v0.2.0
 
 ### Added
