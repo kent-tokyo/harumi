@@ -53,29 +53,36 @@ pub(crate) fn rect_stroke_stream(
 
 /// Closed polygon content stream fragment.
 ///
-/// `filled = true` → fill (`f` operator, `rg` color); `filled = false` → stroke (`S`, `RG`).
+/// `filled = true` → fill; `stroke_width > 0` → stroke; both → fill-then-stroke (`B`).
 /// Returns an empty Vec if fewer than 2 points are given.
 pub(crate) fn polygon_stream(
     points: &[[f32; 2]],
     color: &[f32; 3],
     gs_name: &str,
     filled: bool,
+    stroke_width: f32,
 ) -> Vec<u8> {
     if points.len() < 2 {
         return Vec::new();
     }
-    let color_op = if filled { "rg" } else { "RG" };
-    let paint_op = if filled { "f" } else { "S" };
-    let mut s = format!(
-        "q\n/{gs} gs\n{r:.4} {g:.4} {b:.4} {co}\n{x0:.4} {y0:.4} m\n",
-        gs = gs_name,
-        r = color[0], g = color[1], b = color[2],
-        co = color_op,
-        x0 = points[0][0], y0 = points[0][1],
-    );
+    let stroke = stroke_width > 0.0;
+    let mut s = format!("q\n/{gs} gs\n", gs = gs_name);
+    if filled {
+        s.push_str(&format!("{:.4} {:.4} {:.4} rg\n", color[0], color[1], color[2]));
+    }
+    if stroke {
+        s.push_str(&format!("{:.4} {:.4} {:.4} RG\n{:.4} w\n", color[0], color[1], color[2], stroke_width));
+    }
+    s.push_str(&format!("{:.4} {:.4} m\n", points[0][0], points[0][1]));
     for pt in &points[1..] {
         s.push_str(&format!("{:.4} {:.4} l\n", pt[0], pt[1]));
     }
+    let paint_op = match (filled, stroke) {
+        (true, true) => "B",
+        (true, false) => "f",
+        (false, true) => "S",
+        (false, false) => return Vec::new(),
+    };
     s.push_str(&format!("h\n{}\nQ\n", paint_op));
     s.into_bytes()
 }
@@ -107,6 +114,105 @@ pub(crate) fn polyline_stream(
     s.into_bytes()
 }
 
+/// Ellipse (or circle) content stream fragment, approximated with 4 cubic Bézier curves.
+///
+/// `rect` = `[x, y, width, height]` — the bounding box of the ellipse.
+/// `filled = true` → fill; `stroke_width > 0` → stroke; both → fill-then-stroke (`B`).
+pub(crate) fn ellipse_stream(
+    rect: &[f32; 4],
+    color: &[f32; 3],
+    gs_name: &str,
+    filled: bool,
+    stroke_width: f32,
+) -> Vec<u8> {
+    let stroke = stroke_width > 0.0;
+    // k = 4*(sqrt(2)-1)/3 ≈ 0.5523 — standard cubic Bézier approximation for a quarter-arc
+    const K: f32 = 0.5522847498;
+    let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
+    let cx = x + w / 2.0;
+    let cy = y + h / 2.0;
+    let rx = w / 2.0;
+    let ry = h / 2.0;
+    let kx = K * rx;
+    let ky = K * ry;
+
+    let paint_op = match (filled, stroke) {
+        (true, true) => "B",
+        (true, false) => "f",
+        (false, true) => "S",
+        (false, false) => return Vec::new(),
+    };
+
+    let mut s = format!("q\n/{gs} gs\n", gs = gs_name);
+    if filled {
+        s.push_str(&format!("{:.4} {:.4} {:.4} rg\n", color[0], color[1], color[2]));
+    }
+    if stroke {
+        s.push_str(&format!("{:.4} {:.4} {:.4} RG\n{:.4} w\n", color[0], color[1], color[2], stroke_width));
+    }
+    // Move to top-center
+    s.push_str(&format!("{:.4} {:.4} m\n", cx, cy + ry));
+    // 4 quadrants (counter-clockwise)
+    s.push_str(&format!(
+        "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
+        cx + kx, cy + ry, cx + rx, cy + ky, cx + rx, cy
+    ));
+    s.push_str(&format!(
+        "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
+        cx + rx, cy - ky, cx + kx, cy - ry, cx, cy - ry
+    ));
+    s.push_str(&format!(
+        "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
+        cx - kx, cy - ry, cx - rx, cy - ky, cx - rx, cy
+    ));
+    s.push_str(&format!(
+        "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
+        cx - rx, cy + ky, cx - kx, cy + ry, cx, cy + ry
+    ));
+    s.push_str(&format!("h\n{}\nQ\n", paint_op));
+    s.into_bytes()
+}
+
+/// General open or closed path content stream fragment.
+///
+/// `closed = true` → closepath (`h`); `filled = true` → fill; `stroke_width > 0` → stroke.
+/// Returns an empty Vec if fewer than 2 points are given or neither fill nor stroke is active.
+pub(crate) fn path_stream(
+    points: &[[f32; 2]],
+    closed: bool,
+    color: &[f32; 3],
+    gs_name: &str,
+    filled: bool,
+    stroke_width: f32,
+) -> Vec<u8> {
+    if points.len() < 2 {
+        return Vec::new();
+    }
+    let stroke = stroke_width > 0.0;
+    let paint_op = match (filled, stroke) {
+        (true, true) => "B",
+        (true, false) => "f",
+        (false, true) => "S",
+        (false, false) => return Vec::new(),
+    };
+    let mut s = format!("q\n/{gs} gs\n", gs = gs_name);
+    if filled {
+        s.push_str(&format!("{:.4} {:.4} {:.4} rg\n", color[0], color[1], color[2]));
+    }
+    if stroke {
+        s.push_str(&format!("{:.4} {:.4} {:.4} RG\n{:.4} w\n", color[0], color[1], color[2], stroke_width));
+    }
+    s.push_str(&format!("{:.4} {:.4} m\n", points[0][0], points[0][1]));
+    for pt in &points[1..] {
+        s.push_str(&format!("{:.4} {:.4} l\n", pt[0], pt[1]));
+    }
+    if closed {
+        s.push_str("h\n");
+    }
+    s.push_str(&format!("{}\nQ\n", paint_op));
+    s.into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,7 +240,7 @@ mod tests {
     #[test]
     fn polygon_stream_filled_contains_rg_and_f() {
         let pts = [[0.0_f32, 0.0], [10.0, 0.0], [5.0, 10.0]];
-        let bytes = polygon_stream(&pts, &[0.0, 1.0, 0.0], "GS1", true);
+        let bytes = polygon_stream(&pts, &[0.0, 1.0, 0.0], "GS1", true, 0.0);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("0.0000 1.0000 0.0000 rg"), "fill color rg");
         assert!(s.contains(" m\n"), "moveto");
@@ -147,7 +253,7 @@ mod tests {
     #[test]
     fn polygon_stream_stroked_contains_rg_and_s() {
         let pts = [[0.0_f32, 0.0], [10.0, 0.0], [5.0, 10.0]];
-        let bytes = polygon_stream(&pts, &[1.0, 0.0, 0.0], "GS2", false);
+        let bytes = polygon_stream(&pts, &[1.0, 0.0, 0.0], "GS2", false, 1.5);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("1.0000 0.0000 0.0000 RG"), "stroke color RG");
         assert!(s.contains("\nS\n"), "stroke operator");
@@ -155,9 +261,22 @@ mod tests {
     }
 
     #[test]
+    fn polygon_stream_fill_and_stroke() {
+        let pts = [[0.0_f32, 0.0], [10.0, 0.0], [5.0, 10.0]];
+        let bytes = polygon_stream(&pts, &[0.0, 0.5, 1.0], "GS3", true, 2.0);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("rg"), "fill color");
+        assert!(s.contains("RG"), "stroke color");
+        assert!(s.contains("2.0000 w"), "stroke width");
+        assert!(s.contains("\nB\n"), "fill-then-stroke operator");
+    }
+
+    #[test]
     fn polygon_stream_empty_returns_empty() {
-        assert!(polygon_stream(&[], &[0.0; 3], "GS0", true).is_empty());
-        assert!(polygon_stream(&[[0.0, 0.0]], &[0.0; 3], "GS0", true).is_empty());
+        assert!(polygon_stream(&[], &[0.0; 3], "GS0", true, 0.0).is_empty());
+        assert!(polygon_stream(&[[0.0, 0.0]], &[0.0; 3], "GS0", true, 0.0).is_empty());
+        // neither fill nor stroke → empty
+        assert!(polygon_stream(&[[0.0, 0.0], [10.0, 0.0]], &[0.0; 3], "GS0", false, 0.0).is_empty());
     }
 
     #[test]

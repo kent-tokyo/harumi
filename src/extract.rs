@@ -6,7 +6,8 @@ use crate::error::Result;
 
 /// A text fragment extracted from a page content stream.
 ///
-/// Returned by [`Document::extract_text_runs`].
+/// Returned by [`crate::Document::extract_text_runs`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextFragment {
     /// Decoded Unicode text.
@@ -19,6 +20,13 @@ pub struct TextFragment {
     pub width: f32,
     /// Font size in PDF points.
     pub font_size: f32,
+    /// PDF resource name of the font at this position (e.g. `"HR0"`, `"F1"`).
+    pub font_name: String,
+    /// RGB fill color at this position, each component in `0.0..=1.0`.
+    /// Defaults to black `[0.0, 0.0, 0.0]` when no color operator precedes the text.
+    pub color: [f32; 3],
+    /// `true` if the text render mode is 3 (invisible / OCR search layer).
+    pub invisible: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -705,9 +713,9 @@ fn parse_to_unicode_cmap(bytes: &[u8]) -> BTreeMap<u16, char> {
 }
 
 fn parse_bfchar_line(line: &str, map: &mut BTreeMap<u16, char>) {
-    let mut parts = line.splitn(2, ' ');
+    let mut parts = line.split_ascii_whitespace();
     let gid_tok = match parts.next() { Some(s) => s, None => return };
-    let uni_tok = match parts.next() { Some(s) => s.trim(), None => return };
+    let uni_tok = match parts.next() { Some(s) => s, None => return };
 
     let gid_hex = gid_tok.trim_start_matches('<').trim_end_matches('>');
     let uni_hex = uni_tok.trim_start_matches('<').trim_end_matches('>');
@@ -722,10 +730,21 @@ fn parse_bfchar_line(line: &str, map: &mut BTreeMap<u16, char>) {
 
 fn parse_bfrange_line(line: &str, map: &mut BTreeMap<u16, char>) {
     // <lo> <hi> <dst>  or  <lo> <hi> [<u1> <u2> ...]
-    let mut parts = line.splitn(3, ' ');
-    let lo_tok = match parts.next() { Some(s) => s, None => return };
-    let hi_tok = match parts.next() { Some(s) => s, None => return };
-    let rest = match parts.next() { Some(s) => s.trim(), None => return };
+    // Use split_ascii_whitespace so tabs / multiple spaces between tokens are handled.
+    let mut toks = line.split_ascii_whitespace();
+    let lo_tok = match toks.next() { Some(s) => s, None => return };
+    let hi_tok = match toks.next() { Some(s) => s, None => return };
+    // Reconstruct rest from the original line starting at the third non-whitespace span.
+    let rest = {
+        let skip2 = line
+            .trim_start()
+            .trim_start_matches(|c: char| !c.is_ascii_whitespace()) // skip lo_tok
+            .trim_start_matches(|c: char| c.is_ascii_whitespace())  // skip ws
+            .trim_start_matches(|c: char| !c.is_ascii_whitespace()) // skip hi_tok
+            .trim_start();
+        if skip2.is_empty() { return }
+        skip2
+    };
 
     let lo_hex = lo_tok.trim_start_matches('<').trim_end_matches('>');
     let hi_hex = hi_tok.trim_start_matches('<').trim_end_matches('>');
@@ -922,6 +941,7 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
         if word.is_empty() { i += 1; continue; }
         if let Ok(s) = std::str::from_utf8(word)
             && let Ok(n) = s.parse::<f32>()
+            && n.is_finite()
         {
             tokens.push(Token::Number(n));
             continue;
@@ -1068,6 +1088,8 @@ fn parse_content_stream(
     let mut font_size: f32 = 12.0;
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
+    let mut cur_color: [f32; 3] = [0.0, 0.0, 0.0];
+    let mut cur_render_mode: u8 = 0;
 
     for token in tokens {
         match token {
@@ -1116,6 +1138,32 @@ fn parse_content_stream(
                     }
                     stack.clear();
                 }
+                b"Tr" => {
+                    if let Some(Token::Number(mode)) = stack.pop() {
+                        cur_render_mode = mode as u8;
+                    }
+                    stack.clear();
+                }
+                b"rg" => {
+                    let b_val = stack.pop();
+                    let g_val = stack.pop();
+                    let r_val = stack.pop();
+                    if let (
+                        Some(Token::Number(bv)),
+                        Some(Token::Number(gv)),
+                        Some(Token::Number(rv)),
+                    ) = (b_val, g_val, r_val)
+                    {
+                        cur_color = [rv, gv, bv];
+                    }
+                    stack.clear();
+                }
+                b"g" => {
+                    if let Some(Token::Number(gray)) = stack.pop() {
+                        cur_color = [gray, gray, gray];
+                    }
+                    stack.clear();
+                }
                 b"Tj" if in_bt => {
                     let bytes_opt = match stack.pop() {
                         Some(Token::HexStr(b)) => Some(b),
@@ -1125,6 +1173,7 @@ fn parse_content_stream(
                     if let Some(char_bytes) = bytes_opt
                         && let Some(frag) = decode_chars_to_fragment(
                             &char_bytes, &font_name, font_size, x, y, fonts,
+                            cur_color, cur_render_mode,
                         )
                     {
                         x += frag.width;
@@ -1140,6 +1189,7 @@ fn parse_content_stream(
                                 Token::HexStr(ref b) | Token::LitStr(ref b) => {
                                     if let Some(frag) = decode_chars_to_fragment(
                                         b, &font_name, font_size, cur_x, y, fonts,
+                                        cur_color, cur_render_mode,
                                     ) {
                                         cur_x += frag.width;
                                         out.push(frag);
@@ -1169,6 +1219,8 @@ fn decode_chars_to_fragment(
     x: f32,
     y: f32,
     fonts: &HashMap<Vec<u8>, FontInfo>,
+    color: [f32; 3],
+    render_mode: u8,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() { return None; }
     let font_info = fonts.get(font_name)?;
@@ -1199,7 +1251,16 @@ fn decode_chars_to_fragment(
     }
 
     if text.is_empty() { return None; }
-    Some(TextFragment { text, x, y, width: total_width, font_size })
+    Some(TextFragment {
+        text,
+        x,
+        y,
+        width: total_width,
+        font_size,
+        font_name: String::from_utf8_lossy(font_name).into_owned(),
+        color,
+        invisible: render_mode == 3,
+    })
 }
 
 // ---------------------------------------------------------------------------

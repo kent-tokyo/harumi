@@ -51,8 +51,14 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to split a PDF into separate files | `extract_pages` returns a new `Document` with the specified pages in any order |
 | Need to extract text positions from an existing PDF | `extract_text_runs` decodes CID fonts and standard simple fonts (Type1, TrueType, WinAnsi, etc.) |
 | Need to read or write PDF metadata (title, author…) | `doc.metadata()` reads `/Info`; `doc.set_metadata(&meta)` writes it |
-| Need to replace text in an existing PDF (new font) | `page.replace_text(old, new, font)` rewrites the content stream in-place; automatic font-switching and width compensation; single-operator matching |
-| Need to replace text using the original font | `page.replace_text_preserve_font(old, new)` — no `FontHandle` needed; reuses the font already in the PDF; returns `Error::FontCharNotMapped` if the glyph is missing from the subset |
+| Need to replace text in an existing PDF (new font) | `page.replace_text(old, new, font)` rewrites the content stream in-place; returns the match count as `usize`; automatic font-switching and width compensation |
+| Need to replace text using the original font | `page.replace_text_preserve_font(old, new)` — no `FontHandle` needed; returns match count; validates glyphs eagerly (not at `save()`) |
+| Need to check replaceability without modifying | `page.can_replace_text(old, new)` — pure read-only scan; returns match count or `Err(FontCharNotMapped)` |
+| Need to draw an ellipse or circle | `add_ellipse(rect, color, opacity, filled, stroke_width)` (`draw` feature) |
+| Need fill + stroke on same shape | pass `filled=true` and `stroke_width>0` to `add_ellipse` / `add_polygon` / `add_path` — uses PDF `B` operator |
+| Need open or closed path (polyline + polygon unified) | `add_path(points, closed, color, filled, stroke_width, opacity)` (`draw` feature) |
+| Need rotated text (watermarks, stamps at an angle) | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
+| Need to replace text spanning multiple Tj operators | `replace_text` / `replace_text_preserve_font` — cross-operator matching supported |
 
 ---
 
@@ -72,7 +78,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "0.2"
+harumi = "0.3"
 ```
 
 ### Invisible OCR text layer
@@ -191,10 +197,15 @@ excerpt.save("excerpt.pdf")?;
 ```rust
 let doc = Document::from_file("existing.pdf")?;
 let runs = doc.extract_text_runs(1)?;
-for fragment in &runs {
-    println!("{:?} at ({:.1}, {:.1})", fragment.text, fragment.x, fragment.y);
+for frag in &runs {
+    println!(
+        "{:?} at ({:.1}, {:.1}) font={} color={:?} invisible={}",
+        frag.text, frag.x, frag.y, frag.font_name, frag.color, frag.invisible,
+    );
 }
 ```
+
+Each `TextFragment` carries: `text`, `x`/`y` (PDF-point coordinates), `width`, `font_size`, **`font_name`** (PDF resource name e.g. `"HR0"`), **`color`** (RGB fill `[f32; 3]`), and **`invisible`** (`true` for OCR `Tr 3` text).
 
 Works on arbitrary PDFs — Identity-H CID fonts (harumi output) and standard simple fonts (Type1, TrueType) with WinAnsiEncoding, MacRomanEncoding, StandardEncoding, or `/Differences` encoding dicts.
 
@@ -203,33 +214,43 @@ Works on arbitrary PDFs — Identity-H CID fonts (harumi output) and standard si
 ```rust
 let mut doc = Document::from_file("contract.pdf")?;
 let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
-doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+// Returns the number of matches found (0 means old_text was not present)
+let n = doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-> **Limitation**: `old_text` must match the complete decoded content of one `Tj` operator or one string element within a `TJ` array. Text split across multiple operators is not matched. Returns `Ok(())` without modifying the file if `old_text` is not found.
+Matches text that spans consecutive `Tj`/`TJ` operators within the same font context (cross-operator matching). Only splits across positional operators (`Td`, `Tm`) are not matched.
 
 ### Replace text using the original embedded font
 
-When you don't have the font file but know the replacement text uses only glyphs already in the PDF:
+When you don't have the font file but know the replacement text uses only glyphs already in the PDF.
+Glyph validation is **eager**: `Err(FontCharNotMapped)` is returned immediately at call time if a glyph is missing, so you can fall back in one pass:
 
 ```rust
 let mut doc = Document::from_file("contract.pdf")?;
-// No font file needed — reuses whatever font is already at that position
-doc.page(1)?.replace_text_preserve_font("Draft", "Final")?;
-doc.save("final.pdf")?;
-```
-
-If a character in the replacement text is absent from the embedded font's subset, `save()` returns `Error::FontCharNotMapped`. Use this as a signal to fall back to `replace_text` with an explicit font:
-
-```rust
-if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
-    // glyph was in the subset — no extra font needed
-} else {
-    let font = doc.embed_font(include_bytes!("font.ttf"))?;
-    doc.page(1)?.replace_text("Draft", replacement, font)?;
+match doc.page(1)?.replace_text_preserve_font("Draft", replacement) {
+    Ok(n) if n > 0 => { /* n replacements queued — no extra font needed */ }
+    Ok(_) => { /* old_text not found */ }
+    Err(_) => {
+        // glyph missing from subset — fall back to explicit font
+        let font = doc.embed_font(include_bytes!("font.ttf"))?;
+        doc.page(1)?.replace_text("Draft", replacement, font)?;
+    }
 }
 doc.save("output.pdf")?;
+```
+
+### Pre-flight check without modifying the document
+
+Use `can_replace_text` to inspect replaceability before queuing any operations:
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+match doc.page(1)?.can_replace_text("Draft", "Final") {
+    Ok(0) => println!("'Draft' not found on page 1"),
+    Ok(n) => println!("{n} occurrence(s) found; glyphs OK"),
+    Err(e) => println!("glyph missing: {e}"),
+}
 ```
 
 ### Read/write PDF metadata
@@ -257,7 +278,7 @@ doc.save("report_with_meta.pdf")?;
 ### Draw shapes (`draw` feature)
 
 ```toml
-harumi = { version = "0.2", features = ["draw"] }
+harumi = { version = "0.3", features = ["draw"] }
 ```
 
 ```rust
@@ -267,20 +288,53 @@ doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
 // Blue border rectangle (stroke only, no fill)
 doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
 
-// Filled triangle (callout arrow tip)
+// Filled triangle (callout arrow tip) — last arg is stroke_width (0.0 = no stroke)
 doc.page(1)?.add_polygon(
     &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
-    [1.0, 0.5, 0.0], 1.0, true,
+    [1.0, 0.5, 0.0], 1.0, true, 0.0,
+)?;
+
+// Filled + stroked triangle simultaneously (fill-then-stroke, PDF `B` operator)
+doc.page(1)?.add_polygon(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    [0.0, 0.6, 1.0], 1.0, true, 2.0,
 )?;
 
 // Black underline stroke
 doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?;
+
+// Semi-transparent blue filled ellipse
+doc.page(1)?.add_ellipse([200.0, 300.0, 150.0, 100.0], [0.0, 0.4, 1.0], 0.7, true, 0.0)?;
+
+// Circle outline only (no fill, 2pt border)
+doc.page(1)?.add_ellipse([100.0, 100.0, 80.0, 80.0], [1.0, 0.0, 0.0], 1.0, false, 2.0)?;
+
+// Open polyline path (triangle without closing edge)
+doc.page(1)?.add_path(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    false,               // open path (no closepath)
+    [0.2, 0.8, 0.2],    // green
+    false, 1.5, 1.0,    // stroke only, 1.5pt line width, full opacity
+)?;
+
+// Rotated watermark text (45° counter-clockwise)
+let font = doc.embed_font(include_bytes!("NotoSansCJK.ttf"))?;
+let (w, h) = doc.page(1)?.size()?;
+doc.page(1)?.add_text_with_rotation(
+    "CONFIDENTIAL",
+    font,
+    [w / 2.0, h / 2.0],
+    48.0,
+    [0.8, 0.0, 0.0],   // red
+    0.3,               // 30 % opacity
+    45.0,              // degrees (counter-clockwise)
+)?;
 ```
 
 ### Embed images (`image` feature)
 
 ```toml
-harumi = { version = "0.2", features = ["image"] }
+harumi = { version = "0.3", features = ["image"] }
 ```
 
 ```rust
@@ -348,10 +402,12 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
 
-// Replace text in existing content stream (single-operator match)
-doc.page(1)?.replace_text(old_text, new_text, font)?;
-// Replace using the original embedded font (no FontHandle needed)
-doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
+// Replace text in existing content stream (single-operator match); returns match count
+let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
+// Replace using the original embedded font; eager glyph validation; returns match count
+let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
+// Read-only scan: returns match count or Err(FontCharNotMapped)
+let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
 ```
 
 ### Coordinate system
@@ -367,7 +423,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 | Flag | What it enables | Extra dependencies |
 |---|---|---|
 | *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — shapes | none |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images (enables `draw`) | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
 

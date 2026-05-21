@@ -51,7 +51,14 @@ doc.save("searchable.pdf")?;
 | 需要将 PDF 拆分为单独的文件 | `extract_pages` 以任意顺序返回包含指定页面的新 `Document` |
 | 需要从现有 PDF 中提取文本位置信息 | `extract_text_runs` 可解码 CID 字体和标准简单字体（Type1、TrueType、WinAnsi 等） |
 | 需要读写 PDF 元数据（标题、作者等） | `doc.metadata()` 读取 `/Info`；`doc.set_metadata(&meta)` 写入 |
-| 需要在现有 PDF 中查找并替换文本 | `page.replace_text(old, new, font)` 就地重写内容流；自动处理字体切换和宽度补偿；单算子匹配 |
+| 需要在现有 PDF 中替换文本（新字体） | `page.replace_text(old, new, font)` 就地重写；返回匹配数 `usize`；自动字体切换和宽度补偿 |
+| 需要用原有字体替换文本 | `page.replace_text_preserve_font(old, new)` — 无需 `FontHandle`；返回匹配数；字形验证在调用时立即执行 |
+| 需要在不修改文档的情况下预检替换 | `page.can_replace_text(old, new)` — 只读扫描；返回匹配数或 `Err(FontCharNotMapped)` |
+| 需要绘制椭圆或圆形 | `add_ellipse(rect, color, opacity, filled, stroke_width)`（`draw` feature） |
+| 需要同时填充和描边 | `add_ellipse` / `add_polygon` / `add_path` 中 `filled=true` 且 `stroke_width>0`，使用 PDF `B` 算子 |
+| 需要统一的开/闭路径 API | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
+| 需要旋转文字（水印、斜向印章） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
+| 需要跨多个 `Tj` 算子的文本替换 | `replace_text` / `replace_text_preserve_font` — 支持跨算子匹配 |
 
 ---
 
@@ -71,7 +78,7 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 
 ```toml
 [dependencies]
-harumi = "0.2"
+harumi = "0.3"
 ```
 
 ### 不可见 OCR 文本层
@@ -198,7 +205,7 @@ doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-> **限制**：`old_text` 必须与单个 `Tj` 算子的完整解码内容或 `TJ` 数组中某个字符串元素完全匹配。跨多个算子的文本不会被匹配。若未找到则返回 `Ok(())` 且不修改文件。
+支持匹配同一字体上下文（同一 `Tf` / `BT`~`ET` 块）内连续 `Tj`/`TJ` 算子中的跨算子文本。位置算子（`Td`、`Tm`）之间的情况不匹配。
 
 ### 使用原始嵌入字体替换文本
 
@@ -248,7 +255,7 @@ doc.save("report_with_meta.pdf")?;
 ### 绘制图形（`draw` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["draw"] }
+harumi = { version = "0.3", features = ["draw"] }
 ```
 
 ```rust
@@ -258,10 +265,10 @@ doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
 // 蓝色边框矩形（仅描边，不填充）
 doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
 
-// 填充三角形（标注箭头尖端）
+// 填充三角形（标注箭头尖端）— 最后一个参数为 stroke_width（0.0 = 无描边）
 doc.page(1)?.add_polygon(
     &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
-    [1.0, 0.5, 0.0], 1.0, true,
+    [1.0, 0.5, 0.0], 1.0, true, 0.0,
 )?;
 
 // 黑色下划线
@@ -271,7 +278,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 嵌入图像（`image` feature）
 
 ```toml
-harumi = { version = "0.2", features = ["image"] }
+harumi = { version = "0.3", features = ["image"] }
 ```
 
 ```rust
@@ -334,7 +341,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 坐标以 **PDF 点**（1pt = 1/72 英寸）为单位，原点在页面**左下角**。如需转换 OCR 像素坐标：
 
 ```toml
-harumi = { version = "0.2", features = ["ocr"] }
+harumi = { version = "0.3", features = ["ocr"] }
 ```
 
 ### 功能标志
@@ -342,7 +349,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 | 标志 | 启用的功能 | 额外依赖 |
 |---|---|---|
 | *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline` — 图形绘制 | 无 |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像（自动启用 `draw`） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
 
