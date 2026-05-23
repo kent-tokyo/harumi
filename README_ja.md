@@ -59,6 +59,7 @@ doc.save("searchable.pdf")?;
 | 開放・閉鎖パスを統一APIで描画したい | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | テキストを回転させたい（透かし・斜めスタンプ） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 複数の `Tj` 演算子にまたがるテキストを置換したい | `replace_text` / `replace_text_preserve_font` — クロス演算子マッチングに対応 |
+| スキャン PDF から埋め込み画像を取り出したい | `extract_page_image` で JPEG または PNG バイト列を取得（`image` feature）。スキャン PDF 専用 |
 
 ---
 
@@ -340,6 +341,25 @@ let sig_png = std::fs::read("signature.png")?;
 doc.page(1)?.add_image(&sig_png, [72.0, 300.0, 200.0, 80.0])?;
 ```
 
+### スキャン PDF から埋め込み画像を取り出す（`image` feature）
+
+OCR ワークフロー向け：スキャン PDF を読み込み → 画像を取り出す → OCR を実行 → 不可視テキストレイヤーを書き戻す。
+
+```rust
+use harumi::{Document, PageImageFormat};
+
+let doc = Document::from_file("scanned.pdf")?;
+let img = doc.extract_page_image(1)?;
+
+match img.format {
+    PageImageFormat::Jpeg => std::fs::write("page1.jpg", &img.bytes)?,
+    PageImageFormat::Png  => std::fs::write("page1.png", &img.bytes)?,
+}
+println!("{}×{} ピクセル", img.width, img.height);
+```
+
+> **スキャン PDF 専用。** 既存の Image XObject を取り出す機能であり、ページをラスタ化するわけではありません。テキスト PDF・ベクター PDF には Image XObject がないため `Error::InvalidInput` を返します。
+
 ### 自動改ページ付き構造化ドキュメントの生成（`flow` feature）
 
 ```toml
@@ -473,7 +493,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 |---|---|---|
 | *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG（`draw` を有効化） | `image` クレート |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 画像埋め込み；`extract_page_image` — スキャン PDF から画像を取り出す（`draw` を有効化） | `image` クレート |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
 | `flow` | `FlowDocument` push 型ドキュメントビルダー・自動改ページ（`push_heading`・`push_paragraph`・`push_key_value_table`・`push_list`・`push_page_break`・`render`） | なし |
 | `html` | `render_html_to_pdf` — HTML→PDF変換（h1–h6・p・table・ul/ol・改ページ。`flow` を有効化） | `scraper` |
@@ -549,6 +569,7 @@ harumi
 | **v0.9** | `extract_text_runs`（CIDフォント＋標準シンプルフォント対応）、PDFメタデータ読み書き（`metadata()`、`set_metadata()`、`PdfMetadata`） — **完了** |
 | **v0.10** | `replace_text` — コンテントストリームの真のテキスト置換：Tj/TJ書き換え、フォント自動切替、Td幅補正 — **完了** |
 | **v0.11** | `flow` feature（`FlowDocument` push 型ビルダー・自動改ページ・CJK対応）＋ `html` feature（`render_html_to_pdf`、h1–h6 / table / list / 改ページ）— **完了** |
+| **v0.12** | `extract_page_image` — スキャン PDF ページから最大の Image XObject を取り出す。JPEG はそのまま返し、FlateDecode ピクセルは PNG に再エンコード（`image` feature）— **完了** |
 | **Next** | WASM CI、`cargo semver-checks` CI 組み込み |
 
 ---

@@ -125,7 +125,7 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
 // Step 2: font info from /Resources/Font
 // ---------------------------------------------------------------------------
 
-fn resolve_dict<'a>(doc: &'a lopdf::Document, obj: &'a Object) -> Option<&'a Dictionary> {
+pub(crate) fn resolve_dict<'a>(doc: &'a lopdf::Document, obj: &'a Object) -> Option<&'a Dictionary> {
     match obj {
         Object::Dictionary(d) => Some(d),
         Object::Reference(id) => doc.get_object(*id).ok()?.as_dict().ok(),

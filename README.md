@@ -59,6 +59,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need open or closed path (polyline + polygon unified) | `add_path(points, closed, color, filled, stroke_width, opacity)` (`draw` feature) |
 | Need rotated text (watermarks, stamps at an angle) | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | Need to replace text spanning multiple Tj operators | `replace_text` / `replace_text_preserve_font` — cross-operator matching supported |
+| Need to extract an embedded image from a scanned PDF | `extract_page_image` returns JPEG or PNG bytes (`image` feature); scanned PDFs only |
 
 ---
 
@@ -350,6 +351,25 @@ let sig_png = std::fs::read("signature.png")?;
 doc.page(1)?.add_image(&sig_png, [72.0, 300.0, 200.0, 80.0])?;
 ```
 
+### Extract an embedded image from a scanned PDF (`image` feature)
+
+Designed for OCR workflows: load a scanned PDF, extract the raster image, run OCR, then write the invisible text layer back.
+
+```rust
+use harumi::{Document, PageImageFormat};
+
+let doc = Document::from_file("scanned.pdf")?;
+let img = doc.extract_page_image(1)?;
+
+match img.format {
+    PageImageFormat::Jpeg => std::fs::write("page1.jpg", &img.bytes)?,
+    PageImageFormat::Png  => std::fs::write("page1.png", &img.bytes)?,
+}
+println!("{}×{} pixels", img.width, img.height);
+```
+
+> **Scanned PDFs only.** This extracts an existing Image XObject — it does not rasterize the page. Text and vector PDFs have no Image XObject and will return `Error::InvalidInput`.
+
 ### Build a structured document with auto-pagination (`flow` feature)
 
 ```toml
@@ -487,7 +507,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 |---|---|---|
 | *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images (enables `draw`) | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
 | `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`) | none |
 | `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`) | `scraper` |
@@ -565,6 +585,7 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 | **v0.9** | `extract_text_runs` (CID + standard simple fonts), PDF metadata read/write (`metadata()`, `set_metadata()`, `PdfMetadata`) — **Done** |
 | **v0.10** | `replace_text` — true in-stream text replacement: Tj/TJ rewrite, automatic font-switching, Td width compensation — **Done** |
 | **v0.11** | `flow` feature (`FlowDocument` push-style builder, auto-pagination, CJK) + `html` feature (`render_html_to_pdf`, h1–h6 / table / list / page-break) — **Done** |
+| **v0.12** | `extract_page_image` — extract the largest embedded Image XObject from a scanned PDF page; JPEG returned as-is, FlateDecode pixels re-encoded as PNG (`image` feature) — **Done** |
 | **Next** | WASM CI, `cargo semver-checks` in CI |
 
 ---
