@@ -289,6 +289,69 @@ doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
 doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
 ```
 
+### 자동 페이지 나누기 구조화 문서 생성（`flow` feature）
+
+```toml
+harumi = { version = "0.3", features = ["flow"] }
+```
+
+```rust
+use harumi::{FlowDocument, FlowOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+
+doc.push_heading("연간 보고서", 1)?;
+doc.push_paragraph("이 문서는 당기 실적을 정리한 것입니다.")?;
+doc.push_key_value_table(&[
+    ("매출액", "100만 원"),
+    ("비용", "80만 원"),
+    ("이익", "20만 원"),
+])?;
+doc.push_list(&["3개 신시장 진출", "신제품 2종 출시"], false)?;
+
+// 콘텐츠가 페이지를 초과하면 자동으로 페이지가 추가됩니다.
+// push_page_break()로 원하는 위치에 수동 페이지 나누기를 삽입할 수 있습니다.
+
+let pdf_bytes = doc.render()?;
+```
+
+한국어·일본어·중국어를 기본 지원 — CJK TTF 폰트를 전달하면 임의의 문자 위치에서 자동 줄바꿈합니다.
+
+### HTML → PDF 변환（`html` feature）
+
+```toml
+harumi = { version = "0.3", features = ["html"] }
+```
+
+```rust
+use harumi::{render_html_to_pdf, HtmlRenderOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf").to_vec();
+let html = r#"
+    <h1>연간 보고서</h1>
+    <p>서론 단락입니다.</p>
+    <table>
+      <tr><th>매출액</th><td>100만 원</td></tr>
+      <tr><th>이익</th><td>20만 원</td></tr>
+    </table>
+    <h2>주요 성과</h2>
+    <ul><li>3개 신시장 진출</li><li>신제품 2종 출시</li></ul>
+    <div style="page-break-after: always"></div>
+    <h1>2페이지</h1>
+"#;
+
+let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
+    font_bytes: font,
+    ..HtmlRenderOptions::default()
+})?;
+```
+
+지원 요소: `<h1>`–`<h6>`, `<p>`, `<table>/<tr>/<th>/<td>`, `<ul>/<ol>/<li>`, `<div>/<section>/<article>`（블록 컨테이너）.  
+페이지 나누기: `style="page-break-after: always"` 또는 `class="page-break"`.  
+건너뜀: `<script>`, `<style>`, `<head>`.  
+깊은 중첩 HTML도 스택 오버플로 없이 처리（반복형 파서, 5000단계 `<div>` 중첩 검증 완료）.
+
 ---
 
 ## API 개요
@@ -351,6 +414,8 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지（`draw` 자동 활성화） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
+| `flow` | `FlowDocument` 푸시형 문서 빌더, 자동 페이지 나누기（`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`） | 없음 |
+| `html` | `render_html_to_pdf` — HTML→PDF 변환（h1–h6, p, table, ul/ol, 페이지 나누기; `flow` 자동 활성화） | `scraper` |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
@@ -422,7 +487,8 @@ harumi
 | **v0.8** | `Document::new`（빈 PDF 처음부터 생성）, `extract_pages`（페이지 분리） — **완료** |
 | **v0.9** | `extract_text_runs`（CID + 표준 단순 폰트 지원）, PDF 메타데이터 읽기/쓰기（`metadata()`, `set_metadata()`, `PdfMetadata`） — **완료** |
 | **v0.10** | `replace_text` — 진정한 스트림 내 텍스트 교체: Tj/TJ 재작성, 자동 폰트 전환, Td 폭 보상 — **완료** |
-| **Next（v0.11 이상）** | `#[non_exhaustive]` on Error, MSRV 선언, WASM CI, crates.io 출시 |
+| **v0.11** | `flow` feature（`FlowDocument` 푸시형 빌더, 자동 페이지 나누기, CJK 지원）＋ `html` feature（`render_html_to_pdf`, h1–h6 / table / list / 페이지 나누기）— **완료** |
+| **Next** | WASM CI, `cargo semver-checks` CI 통합 |
 
 ---
 
