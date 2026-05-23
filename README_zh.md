@@ -59,6 +59,7 @@ doc.save("searchable.pdf")?;
 | 需要统一的开/闭路径 API | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | 需要旋转文字（水印、斜向印章） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 需要跨多个 `Tj` 算子的文本替换 | `replace_text` / `replace_text_preserve_font` — 支持跨算子匹配 |
+| 需要从扫描版 PDF 中提取嵌入图像 | `extract_page_image` 返回 JPEG 或 PNG 字节（`image` feature）；仅限扫描版 PDF |
 
 ---
 
@@ -290,6 +291,25 @@ doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
 doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
 ```
 
+### 从扫描版 PDF 中提取嵌入图像（`image` feature）
+
+适用于 OCR 工作流：读取扫描版 PDF → 提取光栅图像 → 执行 OCR → 将不可见文本层写回。
+
+```rust
+use harumi::{Document, PageImageFormat};
+
+let doc = Document::from_file("scanned.pdf")?;
+let img = doc.extract_page_image(1)?;
+
+match img.format {
+    PageImageFormat::Jpeg => std::fs::write("page1.jpg", &img.bytes)?,
+    PageImageFormat::Png  => std::fs::write("page1.png", &img.bytes)?,
+}
+println!("{}×{} 像素", img.width, img.height);
+```
+
+> **仅限扫描版 PDF。** 此 API 提取已有的 Image XObject，不对页面进行光栅化。文本型和矢量型 PDF 不含 Image XObject，调用时将返回 `Error::InvalidInput`。
+
 ### 自动分页结构化文档生成（`flow` feature）
 
 ```toml
@@ -413,7 +433,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 |---|---|---|
 | *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像（自动启用 `draw`） | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像嵌入；`extract_page_image` — 从扫描版 PDF 中提取嵌入图像（自动启用 `draw`） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
 | `flow` | `FlowDocument` 推送式文档构建器，自动分页（`push_heading`、`push_paragraph`、`push_key_value_table`、`push_list`、`push_page_break`、`render`） | 无 |
 | `html` | `render_html_to_pdf` — HTML→PDF 转换（h1–h6、p、table、ul/ol、分页；自动启用 `flow`） | `scraper` |
@@ -489,6 +509,7 @@ harumi
 | **v0.9** | `extract_text_runs`（CID 字体 + 标准简单字体支持）、PDF 元数据读写（`metadata()`、`set_metadata()`、`PdfMetadata`） — **已完成** |
 | **v0.10** | `replace_text` — 真正的流内文本替换：Tj/TJ 重写、自动字体切换、Td 宽度补偿 — **已完成** |
 | **v0.11** | `flow` feature（`FlowDocument` 推送式构建器、自动分页、CJK 支持）＋ `html` feature（`render_html_to_pdf`，h1–h6 / table / list / 分页）— **已完成** |
+| **v0.12** | `extract_page_image` — 从扫描版 PDF 页面中提取最大的 Image XObject；JPEG 直接返回，FlateDecode 像素重新编码为 PNG（`image` feature）— **已完成** |
 | **Next** | WASM CI、`cargo semver-checks` CI 集成 |
 
 ---

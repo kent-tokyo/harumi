@@ -59,6 +59,7 @@ doc.save("searchable.pdf")?;
 | 열린/닫힌 경로를 통합 API로 그리고 싶다 | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | 텍스트를 회전하고 싶다（워터마크, 대각선 스탬프） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 여러 `Tj` 연산자에 걸친 텍스트를 치환하고 싶다 | `replace_text` / `replace_text_preserve_font` — 크로스 연산자 매칭 지원 |
+| 스캔 PDF에서 임베드된 이미지를 추출하고 싶다 | `extract_page_image` 로 JPEG 또는 PNG 바이트 반환（`image` feature）; 스캔 PDF 전용 |
 
 ---
 
@@ -289,6 +290,25 @@ doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
 doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
 ```
 
+### 스캔 PDF에서 임베드된 이미지 추출（`image` feature）
+
+OCR 워크플로용: 스캔 PDF 로드 → 래스터 이미지 추출 → OCR 실행 → 보이지 않는 텍스트 레이어 작성.
+
+```rust
+use harumi::{Document, PageImageFormat};
+
+let doc = Document::from_file("scanned.pdf")?;
+let img = doc.extract_page_image(1)?;
+
+match img.format {
+    PageImageFormat::Jpeg => std::fs::write("page1.jpg", &img.bytes)?,
+    PageImageFormat::Png  => std::fs::write("page1.png", &img.bytes)?,
+}
+println!("{}×{} 픽셀", img.width, img.height);
+```
+
+> **스캔 PDF 전용.** 기존 Image XObject를 추출하는 기능으로, 페이지를 래스터화하지 않습니다. 텍스트·벡터 PDF에는 Image XObject가 없어 `Error::InvalidInput`이 반환됩니다.
+
 ### 자동 페이지 나누기 구조화 문서 생성（`flow` feature）
 
 ```toml
@@ -412,7 +432,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 |---|---|---|
 | *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지（`draw` 자동 활성화） | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지 삽입；`extract_page_image` — 스캔 PDF에서 임베드 이미지 추출（`draw` 자동 활성화） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
 | `flow` | `FlowDocument` 푸시형 문서 빌더, 자동 페이지 나누기（`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`） | 없음 |
 | `html` | `render_html_to_pdf` — HTML→PDF 변환（h1–h6, p, table, ul/ol, 페이지 나누기; `flow` 자동 활성화） | `scraper` |
@@ -488,6 +508,7 @@ harumi
 | **v0.9** | `extract_text_runs`（CID + 표준 단순 폰트 지원）, PDF 메타데이터 읽기/쓰기（`metadata()`, `set_metadata()`, `PdfMetadata`） — **완료** |
 | **v0.10** | `replace_text` — 진정한 스트림 내 텍스트 교체: Tj/TJ 재작성, 자동 폰트 전환, Td 폭 보상 — **완료** |
 | **v0.11** | `flow` feature（`FlowDocument` 푸시형 빌더, 자동 페이지 나누기, CJK 지원）＋ `html` feature（`render_html_to_pdf`, h1–h6 / table / list / 페이지 나누기）— **완료** |
+| **v0.12** | `extract_page_image` — 스캔 PDF 페이지에서 가장 큰 Image XObject 추출; JPEG는 그대로 반환, FlateDecode 픽셀은 PNG로 재인코딩（`image` feature）— **완료** |
 | **Next** | WASM CI, `cargo semver-checks` CI 통합 |
 
 ---

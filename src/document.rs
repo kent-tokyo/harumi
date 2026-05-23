@@ -740,6 +740,40 @@ impl Document {
         crate::extract::extract_text_runs_from_page(&self.inner, page_id)
     }
 
+    /// Extracts the largest raster image embedded on the given page (1-indexed).
+    ///
+    /// Designed for **scanned PDFs** where each page is a single Image XObject.
+    /// JPEG (DCTDecode) images are returned as-is; other formats are decoded and
+    /// re-encoded as PNG. When a page contains multiple images the one with the
+    /// greatest `width × height` area is returned.
+    ///
+    /// This method does **not** rasterize the page — it only retrieves an already-embedded
+    /// image. Text and vector pages will return [`Error::InvalidInput`].
+    ///
+    /// Requires the **`image`** feature.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let doc = Document::from_file("scanned.pdf")?;
+    /// let img = doc.extract_page_image(1)?;
+    /// std::fs::write("page1.jpg", &img.bytes)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if `page_number` is zero or exceeds the page count.
+    /// - [`Error::InvalidInput`] if the page contains no Image XObject or the image
+    ///   uses an unsupported filter (`CCITTFaxDecode`, `JBIG2Decode`, etc.).
+    #[cfg(feature = "image")]
+    pub fn extract_page_image(&self, page_number: u32) -> Result<crate::extract_image::PageImage> {
+        let page_ids = self.inner.get_pages();
+        let page_id = page_ids.get(&page_number).copied().ok_or(Error::PageNotFound(page_number))?;
+        crate::extract_image::extract_largest_image_on_page(&self.inner, page_id)
+    }
+
     /// Finalizes the document (subsets fonts, embeds them, writes content streams)
     /// and saves to a file.
     ///

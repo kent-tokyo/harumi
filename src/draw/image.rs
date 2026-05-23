@@ -137,7 +137,7 @@ pub(crate) fn image_stream(xobj_name: &str, rect: &[f32; 4], gs_name: &str) -> V
 }
 
 /// Parse JPEG dimensions by scanning SOF markers (FF C0–CF, except DHT/DAC/etc.).
-fn parse_jpeg_dims(data: &[u8]) -> Result<(u32, u32)> {
+pub(crate) fn parse_jpeg_dims(data: &[u8]) -> Result<(u32, u32)> {
     let mut i = 2; // skip SOI marker (FF D8)
     while i < data.len() {
         if data[i] != 0xFF {

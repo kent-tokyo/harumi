@@ -50,7 +50,7 @@
 //! |---------|-----------------|
 //! | `ocr`   | [`ocr`] module: helpers for converting Tesseract/hOCR pixel coordinates to PDF points |
 //! | `draw`  | [`PageHandle::add_rect`], [`PageHandle::add_line`] — filled rectangles and stroked lines (no extra dependencies) |
-//! | `image` | [`PageHandle::add_image`], [`PageHandle::add_image_with_opacity`] — JPEG/PNG raster image overlay (enables `draw`, adds `image` crate) |
+//! | `image` | [`PageHandle::add_image`], [`PageHandle::add_image_with_opacity`], [`Document::extract_page_image`] — JPEG/PNG raster image overlay + extraction (enables `draw`, adds `image` crate) |
 
 mod content;
 mod document;
@@ -58,6 +58,9 @@ mod error;
 mod extract;
 mod font;
 mod replace;
+
+#[cfg(feature = "image")]
+mod extract_image;
 
 #[cfg(feature = "draw")]
 pub(crate) mod draw;
@@ -72,6 +75,9 @@ pub use document::{Document, PageHandle, PdfMetadata, TextRun, VerticalAlign};
 pub use error::{Error, Result};
 pub use extract::TextFragment;
 pub use font::FontHandle;
+
+#[cfg(feature = "image")]
+pub use extract_image::{PageImage, PageImageFormat};
 
 #[cfg(feature = "flow")]
 pub use flow::{FlowDocument, FlowOptions, Margins};
