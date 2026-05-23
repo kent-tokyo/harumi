@@ -19,12 +19,15 @@ allsorts = "0.17"
 ttf-parser = "0.25"
 thiserror = "2"
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
+scraper = { version = "0.19", optional = true }
 
 [features]
 default = []
 draw = []
 image = ["dep:image", "draw"]
 ocr = []
+flow = ["draw"]
+html = ["flow", "dep:scraper"]
 
 [dev-dependencies]
 lopdf = "0.40"

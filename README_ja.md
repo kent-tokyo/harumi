@@ -340,6 +340,69 @@ let sig_png = std::fs::read("signature.png")?;
 doc.page(1)?.add_image(&sig_png, [72.0, 300.0, 200.0, 80.0])?;
 ```
 
+### 自動改ページ付き構造化ドキュメントの生成（`flow` feature）
+
+```toml
+harumi = { version = "0.3", features = ["flow"] }
+```
+
+```rust
+use harumi::{FlowDocument, FlowOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+
+doc.push_heading("年次報告書", 1)?;
+doc.push_paragraph("この文書は当期の業績をまとめたものです。")?;
+doc.push_key_value_table(&[
+    ("売上高", "100万円"),
+    ("費用", "80万円"),
+    ("利益", "20万円"),
+])?;
+doc.push_list(&["3つの新市場に進出", "2つの新製品を発売"], false)?;
+
+// コンテンツがページに収まらない場合は自動改ページ。
+// push_page_break() で任意の位置に手動改ページを挿入できる。
+
+let pdf_bytes = doc.render()?;
+```
+
+日本語・中国語・韓国語もそのまま利用可能。CJKフォントを渡すと任意の文字位置で折り返します。
+
+### HTML→PDF変換（`html` feature）
+
+```toml
+harumi = { version = "0.3", features = ["html"] }
+```
+
+```rust
+use harumi::{render_html_to_pdf, HtmlRenderOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf").to_vec();
+let html = r#"
+    <h1>年次報告書</h1>
+    <p>はじめに。</p>
+    <table>
+      <tr><th>売上高</th><td>100万円</td></tr>
+      <tr><th>利益</th><td>20万円</td></tr>
+    </table>
+    <h2>ハイライト</h2>
+    <ul><li>3つの新市場に進出</li><li>2つの新製品を発売</li></ul>
+    <div style="page-break-after: always"></div>
+    <h1>2ページ目</h1>
+"#;
+
+let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
+    font_bytes: font,
+    ..HtmlRenderOptions::default()
+})?;
+```
+
+対応要素：`<h1>`–`<h6>`、`<p>`、`<table>/<tr>/<th>/<td>`、`<ul>/<ol>/<li>`、`<div>/<section>/<article>`（ブロックコンテナ）。  
+改ページ：`style="page-break-after: always"` または `class="page-break"`。  
+スキップ：`<script>`、`<style>`、`<head>`。  
+深いネスト構造もスタックオーバーフローなし（反復型パーサ、5000段ネストで検証済み）。
+
 ---
 
 ## API
@@ -412,6 +475,8 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG（`draw` を有効化） | `image` クレート |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
+| `flow` | `FlowDocument` push 型ドキュメントビルダー・自動改ページ（`push_heading`・`push_paragraph`・`push_key_value_table`・`push_list`・`push_page_break`・`render`） | なし |
+| `html` | `render_html_to_pdf` — HTML→PDF変換（h1–h6・p・table・ul/ol・改ページ。`flow` を有効化） | `scraper` |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
@@ -483,7 +548,8 @@ harumi
 | **v0.8** | `Document::new`（白紙PDFの作成）、`extract_pages`（ページ分割） — **完了** |
 | **v0.9** | `extract_text_runs`（CIDフォント＋標準シンプルフォント対応）、PDFメタデータ読み書き（`metadata()`、`set_metadata()`、`PdfMetadata`） — **完了** |
 | **v0.10** | `replace_text` — コンテントストリームの真のテキスト置換：Tj/TJ書き換え、フォント自動切替、Td幅補正 — **完了** |
-| **Next（v0.11以降）** | `#[non_exhaustive]` on Error、MSRV宣言、WASM CI、crates.io公開 |
+| **v0.11** | `flow` feature（`FlowDocument` push 型ビルダー・自動改ページ・CJK対応）＋ `html` feature（`render_html_to_pdf`、h1–h6 / table / list / 改ページ）— **完了** |
+| **Next** | WASM CI、`cargo semver-checks` CI 組み込み |
 
 ---
 

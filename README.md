@@ -350,6 +350,69 @@ let sig_png = std::fs::read("signature.png")?;
 doc.page(1)?.add_image(&sig_png, [72.0, 300.0, 200.0, 80.0])?;
 ```
 
+### Build a structured document with auto-pagination (`flow` feature)
+
+```toml
+harumi = { version = "0.3", features = ["flow"] }
+```
+
+```rust
+use harumi::{FlowDocument, FlowOptions, Margins};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+
+doc.push_heading("Annual Report", 1)?;
+doc.push_paragraph("This document summarizes our performance.")?;
+doc.push_key_value_table(&[
+    ("Revenue", "$1,000,000"),
+    ("Expenses", "$800,000"),
+    ("Profit", "$200,000"),
+])?;
+doc.push_list(&["Expanded to 3 new markets", "Launched 2 new products"], false)?;
+
+// Page breaks are inserted automatically when content overflows.
+// Call push_page_break() to force a manual break.
+
+let pdf_bytes = doc.render()?;
+```
+
+Supports Japanese / Chinese / Korean out of the box — pass a CJK TTF font and text wraps at any character boundary.
+
+### Convert HTML to PDF (`html` feature)
+
+```toml
+harumi = { version = "0.3", features = ["html"] }
+```
+
+```rust
+use harumi::{render_html_to_pdf, HtmlRenderOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf").to_vec();
+let html = r#"
+    <h1>Annual Report</h1>
+    <p>Introduction paragraph.</p>
+    <table>
+      <tr><th>Revenue</th><td>$1,000,000</td></tr>
+      <tr><th>Profit</th><td>$200,000</td></tr>
+    </table>
+    <h2>Highlights</h2>
+    <ul><li>Expanded to 3 new markets</li><li>Launched 2 new products</li></ul>
+    <div style="page-break-after: always"></div>
+    <h1>Page Two</h1>
+"#;
+
+let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
+    font_bytes: font,
+    ..HtmlRenderOptions::default()
+})?;
+```
+
+Supported elements: `<h1>`–`<h6>`, `<p>`, `<table>/<tr>/<th>/<td>`, `<ul>/<ol>/<li>`, `<div>/<section>/<article>` (block containers).  
+Page breaks: `style="page-break-after: always"` or `class="page-break"`.  
+Skipped: `<script>`, `<style>`, `<head>`.  
+Handles deeply nested HTML without stack overflow (iterative parser, tested with 5 000 nested `<div>`s).
+
 ---
 
 ## API Overview
@@ -426,6 +489,8 @@ harumi = { version = "0.2", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images (enables `draw`) | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
+| `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`) | none |
+| `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`) | `scraper` |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
@@ -499,7 +564,8 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 | **v0.8** | `Document::new` (blank PDF from scratch), `extract_pages` (page splitting) — **Done** |
 | **v0.9** | `extract_text_runs` (CID + standard simple fonts), PDF metadata read/write (`metadata()`, `set_metadata()`, `PdfMetadata`) — **Done** |
 | **v0.10** | `replace_text` — true in-stream text replacement: Tj/TJ rewrite, automatic font-switching, Td width compensation — **Done** |
-| **Next (v0.11+)** | `#[non_exhaustive]` on Error, MSRV declaration, WASM CI, publish to crates.io |
+| **v0.11** | `flow` feature (`FlowDocument` push-style builder, auto-pagination, CJK) + `html` feature (`render_html_to_pdf`, h1–h6 / table / list / page-break) — **Done** |
+| **Next** | WASM CI, `cargo semver-checks` in CI |
 
 ---
 

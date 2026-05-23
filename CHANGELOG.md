@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`flow` feature** (`draw` implied) — `FlowDocument`, a push-style document builder with automatic pagination.
+  Push block elements in order; page breaks are inserted automatically when content overflows a page.
+  - `FlowDocument::new(font_bytes, options)` — create a document with an embedded font
+  - `push_heading(text, level)` — heading at level 1–6; font size scaled by `FlowOptions::heading_size_scale`
+  - `push_paragraph(text)` — body-text paragraph with automatic word wrapping (Latin word boundaries / CJK break-anywhere)
+  - `push_key_value_table(rows)` — two-column key/value table with light-gray horizontal separator lines
+  - `push_list(items, ordered)` — bulleted (`•`) or numbered list
+  - `push_page_break()` — explicit page break
+  - `render()` → `Vec<u8>` — finalize and return the PDF bytes
+  - `FlowOptions` — `page_size`, `margins`, `body_font_size`, `heading_size_scale`, `line_height_factor`, `paragraph_spacing`, `table_key_ratio`, `max_pages`
+  - `Margins` — `uniform(pt)` and `a4_standard()` (≈ 20 mm, 56.7 pt, on all sides)
+
+- **`html` feature** (implies `flow`) — `render_html_to_pdf(html, options) -> Result<Vec<u8>>` converts an HTML string to PDF bytes.
+  Backed by `FlowDocument`; HTML is parsed with `scraper` (html5ever-based).
+  - Supported elements: `<h1>`–`<h6>`, `<p>`, `<table>/<tr>/<th>/<td>`, `<ul>/<ol>/<li>`, `<div>/<section>/<article>/<body>` (block containers)
+  - Page breaks: `style="page-break-after: always"` or `class="page-break"`
+  - Skipped entirely: `<head>`, `<script>`, `<style>`, `<meta>`, `<link>`, `<noscript>`
+  - Deeply nested HTML (5 000+ div levels) handled without stack overflow (iterative DFS walker)
+  - `HtmlRenderOptions` — `font_bytes` (required), `page_size`, `margins`, `body_font_size`, `line_height_factor`, `max_pages`
+  - `HtmlRenderOptions::font_bytes` is required; returns `Error::InvalidInput` when empty
+
+### Security
+
+- **`max_pages` limit** (`flow` and `html` features) — `FlowOptions::max_pages` and `HtmlRenderOptions::max_pages` (both default 2000) cap the number of pages that may be generated. `ensure_space` returns `Error::InvalidInput` if the limit would be exceeded, preventing unbounded memory growth when rendering untrusted HTML.
+- **Iterative HTML tree walker** — `walk_iterative` uses an explicit `Vec` stack instead of recursion, preventing stack overflows from deeply nested HTML (tested with 5 000 `<div>` levels).
+
 ---
 
 ## [0.3.0] — 2026-05-21

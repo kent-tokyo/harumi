@@ -290,6 +290,69 @@ doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
 doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
 ```
 
+### 自动分页结构化文档生成（`flow` feature）
+
+```toml
+harumi = { version = "0.3", features = ["flow"] }
+```
+
+```rust
+use harumi::{FlowDocument, FlowOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+
+doc.push_heading("年度报告", 1)?;
+doc.push_paragraph("本文档汇总了本期业绩情况。")?;
+doc.push_key_value_table(&[
+    ("营业收入", "100万元"),
+    ("费用", "80万元"),
+    ("利润", "20万元"),
+])?;
+doc.push_list(&["进入3个新市场", "发布2款新产品"], false)?;
+
+// 内容超出页面时自动插入分页。
+// 调用 push_page_break() 可在任意位置手动分页。
+
+let pdf_bytes = doc.render()?;
+```
+
+完整支持中文/日文/韩文——传入 CJK TTF 字体后，文本可在任意字符处自动换行。
+
+### HTML → PDF 转换（`html` feature）
+
+```toml
+harumi = { version = "0.3", features = ["html"] }
+```
+
+```rust
+use harumi::{render_html_to_pdf, HtmlRenderOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf").to_vec();
+let html = r#"
+    <h1>年度报告</h1>
+    <p>引言段落。</p>
+    <table>
+      <tr><th>营业收入</th><td>100万元</td></tr>
+      <tr><th>利润</th><td>20万元</td></tr>
+    </table>
+    <h2>亮点</h2>
+    <ul><li>进入3个新市场</li><li>发布2款新产品</li></ul>
+    <div style="page-break-after: always"></div>
+    <h1>第二页</h1>
+"#;
+
+let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
+    font_bytes: font,
+    ..HtmlRenderOptions::default()
+})?;
+```
+
+支持的元素：`<h1>`–`<h6>`、`<p>`、`<table>/<tr>/<th>/<td>`、`<ul>/<ol>/<li>`、`<div>/<section>/<article>`（块容器）。  
+分页：`style="page-break-after: always"` 或 `class="page-break"`。  
+跳过：`<script>`、`<style>`、`<head>`。  
+深度嵌套 HTML 不会导致栈溢出（迭代式解析器，已通过 5000 层 `<div>` 嵌套验证）。
+
 ---
 
 ## API 概览
@@ -352,6 +415,8 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像（自动启用 `draw`） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
+| `flow` | `FlowDocument` 推送式文档构建器，自动分页（`push_heading`、`push_paragraph`、`push_key_value_table`、`push_list`、`push_page_break`、`render`） | 无 |
+| `html` | `render_html_to_pdf` — HTML→PDF 转换（h1–h6、p、table、ul/ol、分页；自动启用 `flow`） | `scraper` |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
@@ -423,7 +488,8 @@ harumi
 | **v0.8** | `Document::new`（从零创建空白 PDF）、`extract_pages`（页面拆分） — **已完成** |
 | **v0.9** | `extract_text_runs`（CID 字体 + 标准简单字体支持）、PDF 元数据读写（`metadata()`、`set_metadata()`、`PdfMetadata`） — **已完成** |
 | **v0.10** | `replace_text` — 真正的流内文本替换：Tj/TJ 重写、自动字体切换、Td 宽度补偿 — **已完成** |
-| **Next（v0.11 及以后）** | `#[non_exhaustive]` on Error、MSRV 声明、WASM CI、发布到 crates.io |
+| **v0.11** | `flow` feature（`FlowDocument` 推送式构建器、自动分页、CJK 支持）＋ `html` feature（`render_html_to_pdf`，h1–h6 / table / list / 分页）— **已完成** |
+| **Next** | WASM CI、`cargo semver-checks` CI 集成 |
 
 ---
 
