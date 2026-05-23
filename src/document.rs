@@ -1930,7 +1930,7 @@ fn check_finite(values: &[f32], label: &str) -> Result<()> {
 }
 
 /// Returns true for characters that can line-break at any position (CJK scripts).
-fn is_cjk(ch: char) -> bool {
+pub(crate) fn is_cjk(ch: char) -> bool {
     matches!(
         ch as u32,
         0x3000..=0x9FFF    // CJK unified ideographs, hiragana, katakana, etc.
@@ -1942,7 +1942,7 @@ fn is_cjk(ch: char) -> bool {
 }
 
 /// Width of one character in PDF points given the font face and font size.
-fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> f32 {
+pub(crate) fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> f32 {
     let upem = face.units_per_em() as f32;
     face.glyph_index(ch)
         .and_then(|g| face.glyph_hor_advance(g))
@@ -1951,7 +1951,7 @@ fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> f32 {
 }
 
 /// Greedy line-breaking for a single paragraph (no embedded newlines).
-fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f32) -> Vec<String> {
+pub(crate) fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut current_w: f32 = 0.0;

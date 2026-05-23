@@ -65,10 +65,19 @@ pub(crate) mod draw;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 
+#[cfg(feature = "flow")]
+pub mod flow;
+
 pub use document::{Document, PageHandle, PdfMetadata, TextRun, VerticalAlign};
 pub use error::{Error, Result};
 pub use extract::TextFragment;
 pub use font::FontHandle;
+
+#[cfg(feature = "flow")]
+pub use flow::{FlowDocument, FlowOptions, Margins};
+
+#[cfg(feature = "html")]
+pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};
 
 // Re-export lopdf for integration test access.
 #[doc(hidden)]
