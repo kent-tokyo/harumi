@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.4.2] — 2026-05-23
+
+### Fixed
+
+- Corrected broken intra-doc link: `Error::InvalidInput` → `crate::Error::InvalidInput` in `flow/mod.rs`.
+
+---
+
+## [0.4.1] — 2026-05-23
+
+### Added
+
+- **`Document::extract_page_image`** (`image` feature) — extracts the embedded raster image from a
+  single-image scanned PDF page. Returns a `PageImage` with `format` (`Jpeg` or `Png`) and `data` bytes.
+  Useful for round-tripping scanned PDFs: load with `from_file`, call `extract_page_image`, process the
+  raw image, then re-embed with `add_image`.
+
+---
+
+## [0.4.0] — 2026-05-23
+
 ### Added
 
 - **`flow` feature** (`draw` implied) — `FlowDocument`, a push-style document builder with automatic pagination.
@@ -81,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — v0.2.0
+## [0.2.0] — 2026-05-16
 
 ### Added
 

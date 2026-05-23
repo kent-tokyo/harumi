@@ -70,7 +70,7 @@ pub struct FlowOptions {
     pub table_key_ratio: f32,
     /// Maximum number of pages the document may contain.
     ///
-    /// `ensure_space` returns [`Error::InvalidInput`] if this limit would be exceeded.
+    /// `ensure_space` returns [`crate::Error::InvalidInput`] if this limit would be exceeded.
     /// Prevents unbounded page creation when rendering untrusted HTML.
     /// Default: 2000. Set to `u32::MAX` to disable.
     pub max_pages: u32,
