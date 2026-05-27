@@ -77,6 +77,14 @@ struct PendingPage {
     ops: Vec<PendingOp>,
 }
 
+/// A document outline entry (bookmark) accumulated before save time.
+struct PendingBookmark {
+    title: String,
+    page: u32,
+    /// PDF y coordinate (bottom-left origin) for the destination anchor.
+    y: f32,
+}
+
 /// PDF /Info dictionary fields.
 ///
 /// Used with [`Document::metadata`] and [`Document::set_metadata`].
@@ -109,6 +117,7 @@ pub struct Document {
     pub(crate) inner: lopdf::Document,
     raw_fonts: Vec<RawFont>,
     pending: Vec<PendingPage>,
+    pending_bookmarks: Vec<PendingBookmark>,
     /// Set to true after the first successful `finalize()`. Prevents silent corruption
     /// when new ops are queued after a `save()` call (font subsets would mismatch).
     finalized: bool,
@@ -141,7 +150,7 @@ impl Document {
     /// the file is not a valid PDF.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let inner = lopdf::Document::load(path)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
     }
 
     /// Loads a PDF from an in-memory byte slice.
@@ -150,7 +159,7 @@ impl Document {
     /// Returns [`Error::Pdf`] if the bytes do not represent a valid PDF.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let inner = lopdf::Document::load_from(bytes)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
     }
 
     /// Creates a new single-page blank PDF document.
@@ -206,7 +215,7 @@ impl Document {
 
         inner.trailer.set("Root", Object::Reference(catalog_id));
 
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
     }
 
     /// Returns the number of pages in the document.
@@ -661,7 +670,7 @@ impl Document {
         catalog.remove(b"OpenAction");
         catalog.remove(b"StructTreeRoot");
 
-        Ok(Document { inner: new_inner, raw_fonts: Vec::new(), pending: Vec::new(), finalized: false })
+        Ok(Document { inner: new_inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
     }
 
     /// Returns the document's `/Info` metadata fields.
@@ -703,7 +712,15 @@ impl Document {
     ///
     /// Only `Some` fields are written; `None` fields are omitted.
     /// Can be called before or after adding text/shapes — metadata is independent of font subsetting.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if the document has already been saved.
     pub fn set_metadata(&mut self, meta: &PdfMetadata) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "set_metadata() called after save(); create a new Document".into(),
+            ));
+        }
         use lopdf::{Object, StringFormat};
 
         let mut dict = lopdf::Dictionary::new();
@@ -720,6 +737,49 @@ impl Document {
 
         let info_id = self.inner.add_object(Object::Dictionary(dict));
         self.inner.trailer.set("Info", Object::Reference(info_id));
+        Ok(())
+    }
+
+    /// Appends a named bookmark (PDF document outline entry) pointing to a
+    /// specific position on a page.
+    ///
+    /// Bookmarks appear in the "Bookmarks" or "Outline" panel of most PDF
+    /// viewers. Multiple calls build a flat list in the order they are added.
+    /// Nested bookmarks are not yet supported.
+    ///
+    /// `title` — display label shown in the bookmarks panel.
+    /// `page`  — 1-indexed destination page number.
+    /// `y`     — PDF y coordinate (points, bottom-left origin) to scroll to on
+    ///           the destination page. Pass `page_height` to land at the very
+    ///           top of the page.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let mut doc = Document::from_file("report.pdf")?;
+    /// let (_, h) = doc.page(1)?.size()?;
+    /// doc.add_bookmark("Chapter 1 — Introduction", 1, h)?;
+    /// doc.add_bookmark("Chapter 2 — Results",      3, h)?;
+    /// doc.save("report_with_bookmarks.pdf")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page` is 0 or exceeds the page count,
+    /// or [`Error::InvalidInput`] if [`save`](Document::save) has already been called.
+    pub fn add_bookmark(&mut self, title: &str, page: u32, y: f32) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "add_bookmark after save() is not supported; create a new Document".into(),
+            ));
+        }
+        let count = self.page_count();
+        if page == 0 || page > count {
+            return Err(Error::PageNotFound(page));
+        }
+        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y });
         Ok(())
     }
 
@@ -841,7 +901,7 @@ impl Document {
                 "save() called again after content was already written; create a new Document".into(),
             ));
         }
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.pending_bookmarks.is_empty() {
             return Ok(());
         }
 
@@ -1162,7 +1222,104 @@ impl Document {
             }
         }
 
+        self.build_outlines_from_bookmarks()?;
         self.finalized = true;
+        Ok(())
+    }
+
+    /// Builds the PDF `/Outlines` tree from `pending_bookmarks` and links it into the `/Catalog`.
+    ///
+    /// If the document already has an `/Outlines` tree (e.g. loaded from an existing PDF), the
+    /// new items are **appended** to the existing flat list rather than replacing it.
+    ///
+    /// **Limitation:** `/Count` merging is only accurate for flat (non-nested) outline trees.
+    /// For PDFs whose existing outlines have nested children, the count may be imprecise, but
+    /// the linked-list structure remains navigable.
+    fn build_outlines_from_bookmarks(&mut self) -> Result<()> {
+        if self.pending_bookmarks.is_empty() {
+            return Ok(());
+        }
+
+        let page_ids = self.inner.get_pages();
+        let bookmarks = std::mem::take(&mut self.pending_bookmarks);
+        let n = bookmarks.len();
+
+        // Pre-allocate object IDs for the new bookmark items.
+        let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
+
+        // Check whether an /Outlines tree already exists in the catalog.
+        let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
+        let existing_outline_id: Option<ObjectId> = self.inner
+            .get_object(root_ref)?
+            .as_dict()?
+            .get(b"Outlines")
+            .and_then(|o| o.as_reference())
+            .ok();
+
+        // If there is a pre-existing outline tree, find its last item and entry count.
+        let (outline_root_id, prev_last_opt, existing_count) = match existing_outline_id {
+            Some(oid) => {
+                let root_d = self.inner.get_object(oid)?.as_dict()?;
+                let last_id = root_d.get(b"Last")?.as_reference()?;
+                let count   = root_d.get(b"Count").and_then(|o| o.as_i64()).unwrap_or(0);
+                (oid, Some(last_id), count)
+            }
+            None => (self.inner.new_object_id(), None, 0),
+        };
+
+        // Build the new bookmark item objects.
+        for (i, bm) in bookmarks.iter().enumerate() {
+            let page_id = page_ids
+                .get(&bm.page)
+                .copied()
+                .ok_or(Error::PageNotFound(bm.page))?;
+
+            let mut d = Dictionary::new();
+            d.set("Title", pdf_text_string(&bm.title));
+            d.set("Dest", Object::Array(vec![
+                Object::Reference(page_id),
+                Object::Name(b"XYZ".to_vec()),
+                Object::Null,
+                Object::Real(bm.y),
+                Object::Null,
+            ]));
+            d.set("Parent", Object::Reference(outline_root_id));
+            // /Prev: first new item points back to the old last item (if any).
+            let prev_id = if i == 0 { prev_last_opt } else { Some(item_ids[i - 1]) };
+            if let Some(pid) = prev_id {
+                d.set("Prev", Object::Reference(pid));
+            }
+            if i + 1 < n {
+                d.set("Next", Object::Reference(item_ids[i + 1]));
+            }
+            self.inner.objects.insert(item_ids[i], Object::Dictionary(d));
+        }
+
+        let new_total = existing_count + n as i64;
+
+        if let Some(oid) = existing_outline_id {
+            // Patch the old /Last item to point forward to our first new item.
+            if let Some(old_last) = prev_last_opt {
+                self.inner.get_object_mut(old_last)?.as_dict_mut()?
+                    .set("Next", Object::Reference(item_ids[0]));
+            }
+            // Update the existing outline root: advance /Last and bump /Count.
+            let root_d = self.inner.get_object_mut(oid)?.as_dict_mut()?;
+            root_d.set("Last",  Object::Reference(item_ids[n - 1]));
+            root_d.set("Count", Object::Integer(new_total));
+        } else {
+            // Build a fresh /Outlines root and wire it into /Catalog.
+            let mut root_dict = Dictionary::new();
+            root_dict.set("Type",  Object::Name(b"Outlines".to_vec()));
+            root_dict.set("First", Object::Reference(item_ids[0]));
+            root_dict.set("Last",  Object::Reference(item_ids[n - 1]));
+            root_dict.set("Count", Object::Integer(new_total));
+            self.inner.objects.insert(outline_root_id, Object::Dictionary(root_dict));
+
+            let catalog = self.inner.get_object_mut(root_ref)?.as_dict_mut()?;
+            catalog.set("Outlines", Object::Reference(outline_root_id));
+        }
+
         Ok(())
     }
 }
@@ -1377,6 +1534,88 @@ impl<'doc> PageHandle<'doc> {
         crate::replace::count_matches_in_page(
             &self.doc.inner, self.page_id, old_text, Some(new_text),
         )
+    }
+
+    /// Adds a clickable URL link annotation to this page.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
+    /// The annotation has no visible border; the clickable area is invisible in
+    /// normal view but interactive in PDF viewers. The link is written into the
+    /// PDF object graph immediately — it does not require a `save()` call to take
+    /// effect, but it will be included in the saved output.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let mut doc = Document::from_file("report.pdf")?;
+    /// // Clickable "website" label at the bottom of page 1
+    /// doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 20.0], "https://example.com")?;
+    /// doc.save("report_linked.pdf")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if `url` is empty or coordinates contain NaN/Infinity.
+    ///
+    /// # Security note
+    /// The `url` string is written verbatim into the PDF `/URI` action. Do **not** pass
+    /// user-supplied strings without validation: `javascript:`, `data:`, and `file://`
+    /// URIs are accepted by the PDF spec but may be exploited by a malicious caller.
+    pub fn add_link_url(&mut self, rect: [f32; 4], url: &str) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_link_url")?;
+        if url.is_empty() {
+            return Err(Error::InvalidInput("url must not be empty".into()));
+        }
+        let mut action = Dictionary::new();
+        action.set("Type", Object::Name(b"Action".to_vec()));
+        action.set("S", Object::Name(b"URI".to_vec()));
+        action.set("URI", Object::String(url.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+
+        let mut d = build_link_annot_base(rect);
+        d.set("A", Object::Dictionary(action));
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    /// Adds an internal link annotation that navigates to a specific page.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
+    /// `target_page` is the 1-indexed destination page; clicking the annotation
+    /// jumps to the top of that page.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let mut doc = Document::from_file("report.pdf")?;
+    /// // Table-of-contents entry on page 1 that links to page 5
+    /// doc.page(1)?.add_link_internal([72.0, 700.0, 300.0, 14.0], 5)?;
+    /// doc.save("report_with_toc.pdf")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `target_page` is out of range, or
+    /// [`Error::InvalidInput`] if coordinates contain NaN/Infinity.
+    pub fn add_link_internal(&mut self, rect: [f32; 4], target_page: u32) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_link_internal")?;
+        let page_ids = self.doc.inner.get_pages();
+        let target_id = page_ids.get(&target_page).copied().ok_or(Error::PageNotFound(target_page))?;
+
+        let dest = Object::Array(vec![
+            Object::Reference(target_id),
+            Object::Name(b"XYZ".to_vec()),
+            Object::Null,
+            Object::Null,
+            Object::Null,
+        ]);
+        let mut d = build_link_annot_base(rect);
+        d.set("Dest", dest);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
     }
 
     /// Overlays multi-line visible text within a bounding box.
@@ -1954,6 +2193,87 @@ impl<'doc> PageHandle<'doc> {
         }));
         Ok(())
     }
+}
+
+/// Encodes a Rust `&str` as a PDF text string.
+///
+/// ASCII-only strings use a literal byte encoding. Strings containing non-ASCII
+/// characters (e.g. CJK) are encoded as UTF-16BE with a 0xFE 0xFF BOM prefix,
+/// which is the standard for PDF `/Title` and other text string fields.
+fn pdf_text_string(s: &str) -> Object {
+    use lopdf::StringFormat;
+    if s.is_ascii() {
+        return Object::String(s.as_bytes().to_vec(), StringFormat::Literal);
+    }
+    let mut bytes: Vec<u8> = vec![0xFE, 0xFF]; // UTF-16BE BOM
+    for unit in s.encode_utf16() {
+        bytes.push((unit >> 8) as u8);
+        bytes.push((unit & 0xFF) as u8);
+    }
+    Object::String(bytes, StringFormat::Literal)
+}
+
+/// Builds the common fields of a /Link annotation dictionary (without the /A or /Dest key).
+fn build_link_annot_base(rect: [f32; 4]) -> Dictionary {
+    let mut d = Dictionary::new();
+    d.set("Type", Object::Name(b"Annot".to_vec()));
+    d.set("Subtype", Object::Name(b"Link".to_vec()));
+    d.set("Rect", Object::Array(vec![
+        Object::Real(rect[0]),
+        Object::Real(rect[1]),
+        Object::Real(rect[0] + rect[2]),
+        Object::Real(rect[1] + rect[3]),
+    ]));
+    // No visible border ([0 0 0] = no border)
+    d.set("Border", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0), Object::Integer(0),
+    ]));
+    d
+}
+
+/// Appends an annotation object reference to the /Annots array of a page dictionary.
+///
+/// Handles both the case where /Annots is a direct array and where it is an
+/// indirect reference to an array object.
+fn append_annotation_to_page(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    annot_id: ObjectId,
+) -> Result<()> {
+    let new_ref = Object::Reference(annot_id);
+
+    // Read the current /Annots value without borrowing `doc` mutably.
+    let annots_val = doc.get_object(page_id)?.as_dict()?.get(b"Annots").ok().cloned();
+
+    match annots_val {
+        Some(Object::Array(mut arr)) => {
+            arr.push(new_ref);
+            doc.get_object_mut(page_id)?.as_dict_mut()?.set("Annots", Object::Array(arr));
+        }
+        Some(Object::Reference(arr_id)) => {
+            // /Annots points to an indirect array object.
+            let is_array = doc
+                .get_object(arr_id)
+                .ok()
+                .map(|o| matches!(o, Object::Array(_)))
+                .unwrap_or(false);
+            if is_array {
+                doc.get_object_mut(arr_id)?.as_array_mut()?.push(new_ref);
+            } else {
+                // Indirect reference doesn't point to an array — replace with direct array.
+                doc.get_object_mut(page_id)?
+                    .as_dict_mut()?
+                    .set("Annots", Object::Array(vec![new_ref]));
+            }
+        }
+        _ => {
+            // No /Annots entry (or malformed) — create a fresh direct array.
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Annots", Object::Array(vec![new_ref]));
+        }
+    }
+    Ok(())
 }
 
 fn check_finite(values: &[f32], label: &str) -> Result<()> {

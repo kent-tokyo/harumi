@@ -60,6 +60,11 @@ doc.save("searchable.pdf")?;
 | 需要旋转文字（水印、斜向印章） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 需要跨多个 `Tj` 算子的文本替换 | `replace_text` / `replace_text_preserve_font` — 支持跨算子匹配 |
 | 需要从扫描版 PDF 中提取嵌入图像 | `extract_page_image` 返回 JPEG 或 PNG 字节（`image` feature）；仅限扫描版 PDF |
+| 需要在 PDF 中添加可点击的 URL 链接 | `add_link_url([x, y, w, h], url)` — 不可见 URI 注释；在任意查看器中点击即可打开链接 |
+| 需要内部导航链接（目录） | `add_link_internal([x, y, w, h], target_page)` — 跳转到同一文档内的指定页面 |
+| 需要书签/文档大纲 | `add_bookmark(title, page, y)` — 平铺式 PDF 大纲条目；CJK 标题自动存储为 UTF-16BE |
+| 需要在每一页添加带页码的页眉/页脚 | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` 配合 `HeaderFooter`（`flow` feature）；渲染时自动替换 `{{page}}` / `{{total}}` |
+| 需要标题自动生成书签 | `FlowOptions { auto_bookmarks: true, .. }`（默认启用）— 每次 `push_heading` 自动创建书签条目 |
 
 ---
 
@@ -79,7 +84,7 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 
 ```toml
 [dependencies]
-harumi = "0.3"
+harumi = "0.5"
 ```
 
 ### 不可见 OCR 文本层
@@ -256,7 +261,7 @@ doc.save("report_with_meta.pdf")?;
 ### 绘制图形（`draw` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["draw"] }
+harumi = { version = "0.5", features = ["draw"] }
 ```
 
 ```rust
@@ -279,7 +284,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 嵌入图像（`image` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["image"] }
+harumi = { version = "0.5", features = ["image"] }
 ```
 
 ```rust
@@ -313,7 +318,7 @@ println!("{}×{} 像素", img.width, img.height);
 ### 自动分页结构化文档生成（`flow` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["flow"] }
+harumi = { version = "0.5", features = ["flow"] }
 ```
 
 ```rust
@@ -339,10 +344,55 @@ let pdf_bytes = doc.render()?;
 
 完整支持中文/日文/韩文——传入 CJK TTF 字体后，文本可在任意字符处自动换行。
 
+### 带页码的页眉/页脚（`flow` feature）
+
+```rust
+use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+
+let opts = FlowOptions {
+    // 每页左侧显示 "harumi docs"，右侧显示 "v0.5"
+    header: Some(HeaderFooter {
+        left:  Some("harumi docs".into()),
+        right: Some("v0.5".into()),
+        ..Default::default()
+    }),
+    // 居中显示 "1 / 3" 页码
+    footer: Some(HeaderFooter::page_number()),
+    // push_heading() 自动创建书签条目（默认：true）
+    auto_bookmarks: true,
+    ..Default::default()
+};
+
+let mut doc = FlowDocument::new(font, opts)?;
+doc.push_heading("第一章", 1)?;
+doc.push_paragraph("正文内容。")?;
+let pdf_bytes = doc.render()?;
+```
+
+### 链接注释
+
+```rust
+// 可点击的 URL 区域（x, y, 宽, 高）
+doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
+
+// 内部链接：点击该区域跳转到同一文档的第 3 页
+doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+### 书签/文档大纲
+
+```rust
+// 在 PDF 查看器中构建书签面板。
+// 非 ASCII 标题（CJK、带重音的拉丁字母……）自动编码为 UTF-16BE。
+doc.add_bookmark("第一章",      1, 800.0)?;   // 标题、页码（从 1 开始）、y 坐标
+doc.add_bookmark("第2章 概要",  2, 800.0)?;
+doc.save("report.pdf")?;
+```
+
 ### HTML → PDF 转换（`html` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["html"] }
+harumi = { version = "0.5", features = ["html"] }
 ```
 
 ```rust
@@ -415,8 +465,19 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
 
-// 替换现有内容流中的文本（单算子匹配）
-doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 替换现有内容流中的文本（单算子匹配）；返回匹配数
+let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 使用原有嵌入字体替换文本；立即字形验证；返回匹配数
+let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
+// 只读扫描：返回匹配数或 Err(FontCharNotMapped)
+let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
+
+// 链接注释（无需 feature gate）
+doc.page(1)?.add_link_url([x, y, w, h], "https://example.com")?;   // URL 链接
+doc.page(1)?.add_link_internal([x, y, w, h], target_page)?;         // 文档内部链接
+
+// 文档大纲/书签（无需 feature gate）
+doc.add_bookmark("章节标题", page, y)?;  // 追加一个平铺大纲条目
 ```
 
 ### 坐标系
@@ -424,7 +485,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 坐标以 **PDF 点**（1pt = 1/72 英寸）为单位，原点在页面**左下角**。如需转换 OCR 像素坐标：
 
 ```toml
-harumi = { version = "0.3", features = ["ocr"] }
+harumi = { version = "0.5", features = ["ocr"] }
 ```
 
 ### 功能标志
@@ -435,7 +496,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像嵌入；`extract_page_image` — 从扫描版 PDF 中提取嵌入图像（自动启用 `draw`） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
-| `flow` | `FlowDocument` 推送式文档构建器，自动分页（`push_heading`、`push_paragraph`、`push_key_value_table`、`push_list`、`push_page_break`、`render`） | 无 |
+| `flow` | `FlowDocument` 推送式文档构建器，自动分页（`push_heading`、`push_paragraph`、`push_key_value_table`、`push_list`、`push_page_break`、`render`）；`HeaderFooter` 支持每页页眉/页脚，可使用 `{{page}}`/`{{total}}` 占位符；`auto_bookmarks` 从标题自动生成大纲 | 无 |
 | `html` | `render_html_to_pdf` — HTML→PDF 转换（h1–h6、p、table、ul/ol、分页；自动启用 `flow`） | `scraper` |
 
 ```rust
@@ -498,19 +559,12 @@ harumi
 
 | 版本 | 范围 |
 |---|---|
-| **v0.1** | TrueType，不可见/可见文本，批量放置，`page.size()`，`save_to_bytes()`，GID 修复，OTF 接受 |
-| **v0.2** | `draw` feature（`add_rect`、`add_line`），`image` feature（`add_image`、`add_image_with_opacity`），CFF2 早期错误，TTC 魔术字节检测，MediaBox 父节点链遍历 |
-| **v0.3** | `add_text_box`、`add_rect_stroke`、`add_polygon`；安全加固（NaN 防护、二重保存防护、间接 Contents 数组、JPEG 标记解析修复、PNG 整数溢出修复） |
-| **v0.4** | PNG 真透明度（SMask）— 透明背景 PNG 正确渲染，无白色背景 |
-| **v0.5** | `add_text_with_opacity`、`add_text_box_aligned`（VerticalAlign）、`add_polyline`、`add_text_box_with_opacity` — **已完成** |
-| **v0.6** | 页面操作 — `rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages` — **已完成** |
-| **v0.7** | `merge_from`（PDF 合并）、`remove_page` 正确性修复与孤立对象清理 — **已完成** |
-| **v0.8** | `Document::new`（从零创建空白 PDF）、`extract_pages`（页面拆分） — **已完成** |
-| **v0.9** | `extract_text_runs`（CID 字体 + 标准简单字体支持）、PDF 元数据读写（`metadata()`、`set_metadata()`、`PdfMetadata`） — **已完成** |
-| **v0.10** | `replace_text` — 真正的流内文本替换：Tj/TJ 重写、自动字体切换、Td 宽度补偿 — **已完成** |
-| **v0.11** | `flow` feature（`FlowDocument` 推送式构建器、自动分页、CJK 支持）＋ `html` feature（`render_html_to_pdf`，h1–h6 / table / list / 分页）— **已完成** |
-| **v0.12** | `extract_page_image` — 从扫描版 PDF 页面中提取最大的 Image XObject；JPEG 直接返回，FlateDecode 像素重新编码为 PNG（`image` feature）— **已完成** |
-| **Next** | WASM CI、`cargo semver-checks` CI 集成 |
+| **v0.1** | TrueType 字体，不可见/可见文本，批量放置，`page.size()`，`save_to_bytes()`，GID 重映射，接受 OTF |
+| **v0.2** | `draw` feature（`add_rect`、`add_line`），`image` feature（`add_image`、PNG SMask 透明度），页面操作（`rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages`） |
+| **v0.3** | `add_text_box`、`add_rect_stroke`、`add_polygon`、`add_ellipse`、`add_path`；`add_text_with_rotation`；安全加固；`merge_from`；`Document::new`；`extract_pages` |
+| **v0.4** | `extract_text_runs`（CID + 标准字体），PDF 元数据读写，`replace_text`（Tj/TJ 重写、跨算子匹配、宽度补偿、保留字体模式），`flow` feature（`FlowDocument`、CJK 自动分页），`html` feature，`extract_page_image` |
+| **v0.5** *（当前）* | `add_link_url`、`add_link_internal` — 可点击 PDF 链接注释；`add_bookmark` — 含 CJK UTF-16BE 标题的文档大纲/书签；`HeaderFooter` + `{{page}}`/`{{total}}` 用于 `FlowDocument`；`auto_bookmarks` 从标题自动生成大纲；安全修复（`set_metadata` 守护、CMap 溢出、CJK 页眉度量） |
+| **Next** | FlowDocument 内联样式（粗体/斜体/颜色），AcroForm 字段读取，WASM CI，`cargo semver-checks` |
 
 ---
 

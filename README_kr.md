@@ -60,6 +60,11 @@ doc.save("searchable.pdf")?;
 | 텍스트를 회전하고 싶다（워터마크, 대각선 스탬프） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 여러 `Tj` 연산자에 걸친 텍스트를 치환하고 싶다 | `replace_text` / `replace_text_preserve_font` — 크로스 연산자 매칭 지원 |
 | 스캔 PDF에서 임베드된 이미지를 추출하고 싶다 | `extract_page_image` 로 JPEG 또는 PNG 바이트 반환（`image` feature）; 스캔 PDF 전용 |
+| PDF에 클릭 가능한 URL 링크를 넣고 싶다 | `add_link_url([x, y, w, h], url)` — 보이지 않는 URI 어노테이션; 클릭하면 어떤 뷰어에서도 URL을 열어줌 |
+| 내부 페이지 이동 링크（목차）가 필요하다 | `add_link_internal([x, y, w, h], target_page)` — 같은 문서 내 페이지로 이동 |
+| 북마크/문서 개요를 만들고 싶다 | `add_bookmark(title, page, y)` — 플랫 PDF 아웃라인 항목; CJK 제목은 UTF-16BE로 자동 인코딩 |
+| 모든 페이지에 페이지 번호가 있는 헤더/푸터를 넣고 싶다 | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` + `HeaderFooter`（`flow` feature）; `{{page}}`/`{{total}}` 치환 |
+| 제목에서 자동으로 개요 항목을 생성하고 싶다 | `FlowOptions { auto_bookmarks: true, .. }`（기본값）— `push_heading` 호출마다 자동으로 북마크 생성 |
 
 ---
 
@@ -79,7 +84,7 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 
 ```toml
 [dependencies]
-harumi = "0.3"
+harumi = "0.5"
 ```
 
 ### 보이지 않는 OCR 텍스트 레이어
@@ -255,7 +260,7 @@ doc.save("report_with_meta.pdf")?;
 ### 도형 그리기（`draw` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["draw"] }
+harumi = { version = "0.5", features = ["draw"] }
 ```
 
 ```rust
@@ -278,7 +283,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 이미지 삽입（`image` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["image"] }
+harumi = { version = "0.5", features = ["image"] }
 ```
 
 ```rust
@@ -312,7 +317,7 @@ println!("{}×{} 픽셀", img.width, img.height);
 ### 자동 페이지 나누기 구조화 문서 생성（`flow` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["flow"] }
+harumi = { version = "0.5", features = ["flow"] }
 ```
 
 ```rust
@@ -338,10 +343,55 @@ let pdf_bytes = doc.render()?;
 
 한국어·일본어·중국어를 기본 지원 — CJK TTF 폰트를 전달하면 임의의 문자 위치에서 자동 줄바꿈합니다.
 
+### 페이지 번호가 있는 헤더/푸터（`flow` feature）
+
+```rust
+use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+
+let opts = FlowOptions {
+    // 모든 페이지의 왼쪽에 "harumi docs", 오른쪽에 "v0.5"
+    header: Some(HeaderFooter {
+        left:  Some("harumi docs".into()),
+        right: Some("v0.5".into()),
+        ..Default::default()
+    }),
+    // 가운데에 "1 / 3" 페이지 카운터
+    footer: Some(HeaderFooter::page_number()),
+    // push_heading()이 자동으로 북마크 항목을 생성（기본값: true）
+    auto_bookmarks: true,
+    ..Default::default()
+};
+
+let mut doc = FlowDocument::new(font, opts)?;
+doc.push_heading("제1장", 1)?;
+doc.push_paragraph("본문 텍스트입니다.")?;
+let pdf_bytes = doc.render()?;
+```
+
+### 링크 어노테이션
+
+```rust
+// 클릭 가능한 URL 영역（x, y, 너비, 높이）
+doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
+
+// 내부 링크: 해당 영역을 클릭하면 같은 문서의 3페이지로 이동
+doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+### 북마크/문서 개요
+
+```rust
+// PDF 뷰어의 북마크 패널을 구성합니다.
+// ASCII 이외의 제목（CJK, 악센트 라틴어 등）은 UTF-16BE로 자동 인코딩됩니다.
+doc.add_bookmark("제1장",        1, 800.0)?;   // 제목, 페이지（1부터 시작）, y 좌표
+doc.add_bookmark("第2章 概要",   2, 800.0)?;
+doc.save("report.pdf")?;
+```
+
 ### HTML → PDF 변환（`html` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["html"] }
+harumi = { version = "0.5", features = ["html"] }
 ```
 
 ```rust
@@ -414,8 +464,19 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
 
-// 기존 콘텐츠 스트림에서 텍스트 바꾸기（단일 연산자 매칭）
-doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 기존 콘텐츠 스트림에서 텍스트 바꾸기（단일 연산자 매칭）; 매칭 건수 반환
+let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 원래 임베드 폰트를 사용해 교체; 글리프 즉시 검증; 매칭 건수 반환
+let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
+// 읽기 전용 스캔: 매칭 건수 또는 Err(FontCharNotMapped) 반환
+let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
+
+// 링크 어노테이션（feature gate 불필요）
+doc.page(1)?.add_link_url([x, y, w, h], "https://example.com")?;   // URL 링크
+doc.page(1)?.add_link_internal([x, y, w, h], target_page)?;         // 문서 내 링크
+
+// 문서 아웃라인 / 북마크（feature gate 불필요）
+doc.add_bookmark("섹션 제목", page, y)?;  // 플랫 아웃라인 항목 추가
 ```
 
 ### 좌표계
@@ -423,7 +484,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 좌표는 **PDF 포인트** (1pt = 1/72인치) 단위이며, 원점은 페이지 **좌하단**입니다:
 
 ```toml
-harumi = { version = "0.3", features = ["ocr"] }
+harumi = { version = "0.5", features = ["ocr"] }
 ```
 
 ### 기능 플래그
@@ -434,7 +495,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지 삽입；`extract_page_image` — 스캔 PDF에서 임베드 이미지 추출（`draw` 자동 활성화） | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
-| `flow` | `FlowDocument` 푸시형 문서 빌더, 자동 페이지 나누기（`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`） | 없음 |
+| `flow` | `FlowDocument` 푸시형 빌더, 자동 페이지 나누기（`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`）; `{{page}}`/`{{total}}` 치환 기능이 있는 `HeaderFooter`; 제목에서 자동 북마크 생성 `auto_bookmarks` | 없음 |
 | `html` | `render_html_to_pdf` — HTML→PDF 변환（h1–h6, p, table, ul/ol, 페이지 나누기; `flow` 자동 활성화） | `scraper` |
 
 ```rust
@@ -497,19 +558,12 @@ harumi
 
 | 버전 | 범위 |
 |---|---|
-| **v0.1** | TrueType, 보이지 않는/가시적 텍스트, 일괄 배치, `page.size()`, `save_to_bytes()`, GID 버그 수정, OTF 수락 |
-| **v0.2** | `draw` feature（`add_rect`, `add_line`）, `image` feature（`add_image`, `add_image_with_opacity`）, CFF2 조기 오류, TTC 매직 바이트 감지, MediaBox 부모 체인 순회 |
-| **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`; 보안 강화（NaN 방어, 이중 저장 방지, 간접 Contents 배열 지원, JPEG 마커 파서 수정, PNG 정수 오버플로 수정） |
-| **v0.4** | PNG 실제 투명도（SMask）— 투명 배경 PNG가 흰색 배경 없이 올바르게 렌더링됨 |
-| **v0.5** | `add_text_with_opacity`, `add_text_box_aligned`（VerticalAlign）, `add_polyline`, `add_text_box_with_opacity` — **완료** |
-| **v0.6** | 페이지 조작 — `rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages` — **완료** |
-| **v0.7** | `merge_from`（PDF 합치기）, `remove_page` 정확성 수정 및 고아 객체 정리 — **완료** |
-| **v0.8** | `Document::new`（빈 PDF 처음부터 생성）, `extract_pages`（페이지 분리） — **완료** |
-| **v0.9** | `extract_text_runs`（CID + 표준 단순 폰트 지원）, PDF 메타데이터 읽기/쓰기（`metadata()`, `set_metadata()`, `PdfMetadata`） — **완료** |
-| **v0.10** | `replace_text` — 진정한 스트림 내 텍스트 교체: Tj/TJ 재작성, 자동 폰트 전환, Td 폭 보상 — **완료** |
-| **v0.11** | `flow` feature（`FlowDocument` 푸시형 빌더, 자동 페이지 나누기, CJK 지원）＋ `html` feature（`render_html_to_pdf`, h1–h6 / table / list / 페이지 나누기）— **완료** |
-| **v0.12** | `extract_page_image` — 스캔 PDF 페이지에서 가장 큰 Image XObject 추출; JPEG는 그대로 반환, FlateDecode 픽셀은 PNG로 재인코딩（`image` feature）— **완료** |
-| **Next** | WASM CI, `cargo semver-checks` CI 통합 |
+| **v0.1** | TrueType 폰트, 보이지 않는/가시적 텍스트, 일괄 배치, `page.size()`, `save_to_bytes()`, GID 재매핑, OTF 수락 |
+| **v0.2** | `draw` feature（`add_rect`, `add_line`）, `image` feature（`add_image`, PNG SMask 투명도）, 페이지 조작（`rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages`） |
+| **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path`; `add_text_with_rotation`; 보안 강화; `merge_from`; `Document::new`; `extract_pages` |
+| **v0.4** | `extract_text_runs`（CID + 표준 폰트）, PDF 메타데이터 읽기/쓰기, `replace_text`（Tj/TJ 재작성, 크로스 연산자 매칭, 폭 보상, 폰트 유지 모드）, `flow` feature（`FlowDocument`, CJK 자동 줄바꿈）, `html` feature, `extract_page_image` |
+| **v0.5** *（현재）* | `add_link_url`, `add_link_internal` — 클릭 가능한 PDF 링크 어노테이션; `add_bookmark` — CJK UTF-16BE 제목 지원 문서 아웃라인/북마크; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; 제목에서 자동 북마크 `auto_bookmarks`; 보안 수정（`set_metadata` 가드, CMap 오버플로, CJK 헤더 측정） |
+| **Next** | FlowDocument 인라인 스타일（굵기/기울기/색상 범위）, AcroForm 필드 읽기, WASM CI, `cargo semver-checks` |
 
 ---
 

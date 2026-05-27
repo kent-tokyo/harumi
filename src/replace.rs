@@ -538,7 +538,7 @@ fn emit_cross_op_replacement(out: &mut Vec<u8>, r: &ResolvedReplacement, co: &Cr
     out.extend_from_slice(&gids_hex(r));
     out.extend_from_slice(b" Tj\n");
     out.push(b'/');
-    out.extend_from_slice(&co.orig_font_name);
+    out.extend_from_slice(&co.font_name);
     out.push(b' ');
     push_number(out, co.font_size);
     out.extend_from_slice(b" Tf\n");
@@ -658,7 +658,7 @@ fn orig_width(
 ) -> f32 {
     let Some(fi) = existing_fonts.get(font_name) else { return 0.0 };
     let mut total = 0.0f32;
-    if fi.bytes_per_char == 2 && bytes.len() % 2 == 0 {
+    if fi.bytes_per_char == 2 && bytes.len().is_multiple_of(2) {
         for chunk in bytes.chunks(2) {
             let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
             total += fi.advance_width(gid) as f32 / 1000.0 * font_size;
@@ -694,7 +694,7 @@ fn decode_str(
     let Some(fi) = existing_fonts.get(font_name) else { return String::new() };
     let mut text = String::new();
     if fi.bytes_per_char == 2 {
-        if bytes.len() % 2 == 0 {
+        if bytes.len().is_multiple_of(2) {
             for chunk in bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                 if let Some(&ch) = fi.to_unicode.get(&gid) {
@@ -847,6 +847,8 @@ struct CharSegment {
 }
 
 /// A replacement match (with new font) that spans multiple consecutive Tj/TJ operators.
+/// A replacement match that spans multiple consecutive Tj/TJ operators.
+/// Used by both the font-switching and font-preserving replacement paths.
 struct CrossOpMatch {
     replacement_idx: usize,
     first_op: usize,
@@ -856,18 +858,6 @@ struct CrossOpMatch {
     /// Raw bytes of chars in `last_op` that come after the match end.
     suffix_raw: Vec<u8>,
     /// Sum of `advance_width(gid) / 1000` for each matched char (unscaled).
-    orig_width: f32,
-    font_size: f32,
-    orig_font_name: Vec<u8>,
-}
-
-/// A font-preserving replacement match that spans multiple consecutive Tj/TJ operators.
-struct CrossOpMatchPreserve {
-    replacement_idx: usize,
-    first_op: usize,
-    last_op: usize,
-    prefix_raw: Vec<u8>,
-    suffix_raw: Vec<u8>,
     orig_width: f32,
     font_size: f32,
     font_name: Vec<u8>,
@@ -886,7 +876,7 @@ fn push_chars_from_bytes(
         None => return,
     };
     if fi.bytes_per_char == 2 {
-        if str_bytes.len() % 2 == 0 {
+        if str_bytes.len().is_multiple_of(2) {
             for chunk in str_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                 if let Some(&ch) = fi.to_unicode.get(&gid) {
@@ -969,9 +959,11 @@ fn collect_char_segments(
 
 /// Find all matches of each replacement that span multiple Tj/TJ operators
 /// (single-op matches are handled by the existing per-op logic).
-fn find_cross_op_matches(
+/// Core loop shared by `find_cross_op_matches` and `find_cross_op_matches_preserve`.
+/// `old_texts` is a parallel slice of the old-text patterns, one per replacement entry.
+fn find_cross_op_matches_inner(
     ops: &[Op],
-    replacements: &[ResolvedReplacement],
+    old_texts: &[&str],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
 ) -> Vec<CrossOpMatch> {
     let mut result = Vec::new();
@@ -984,8 +976,8 @@ fn find_cross_op_matches(
             None => continue,
         };
 
-        for (r_idx, r) in replacements.iter().enumerate() {
-            let pattern_chars: Vec<char> = r.old_text.chars().collect();
+        for (r_idx, &old_text) in old_texts.iter().enumerate() {
+            let pattern_chars: Vec<char> = old_text.chars().collect();
             let plen = pattern_chars.len();
             if plen == 0 { continue; }
 
@@ -994,7 +986,7 @@ fn find_cross_op_matches(
                 if text_chars[pos..pos + plen] == pattern_chars[..] {
                     let char_end = pos + plen;
                     let first_op = seg.chars[pos].op_idx;
-                    let last_op = seg.chars[char_end - 1].op_idx;
+                    let last_op  = seg.chars[char_end - 1].op_idx;
 
                     if first_op != last_op {
                         // Only accept cross-op matches where all intermediate ops are Tj/TJ.
@@ -1033,7 +1025,7 @@ fn find_cross_op_matches(
                                 suffix_raw,
                                 orig_width,
                                 font_size: seg.font_size,
-                                orig_font_name: seg.font_name.clone(),
+                                font_name: seg.font_name.clone(),
                             });
                         }
                     }
@@ -1047,81 +1039,22 @@ fn find_cross_op_matches(
     result
 }
 
-/// Like `find_cross_op_matches` but for font-preserving replacements.
+fn find_cross_op_matches(
+    ops: &[Op],
+    replacements: &[ResolvedReplacement],
+    existing_fonts: &HashMap<Vec<u8>, FontInfo>,
+) -> Vec<CrossOpMatch> {
+    let old_texts: Vec<&str> = replacements.iter().map(|r| r.old_text.as_str()).collect();
+    find_cross_op_matches_inner(ops, &old_texts, existing_fonts)
+}
+
 fn find_cross_op_matches_preserve(
     ops: &[Op],
     replacements: &[TextReplacePreserveOp],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
-) -> Vec<CrossOpMatchPreserve> {
-    let mut result = Vec::new();
-    let segments = collect_char_segments(ops, existing_fonts);
-
-    for seg in &segments {
-        let text_chars: Vec<char> = seg.chars.iter().map(|e| e.ch).collect();
-        let fi = match existing_fonts.get(&seg.font_name) {
-            Some(fi) => fi,
-            None => continue,
-        };
-
-        for (r_idx, r) in replacements.iter().enumerate() {
-            let pattern_chars: Vec<char> = r.old_text.chars().collect();
-            let plen = pattern_chars.len();
-            if plen == 0 { continue; }
-
-            let mut pos = 0usize;
-            while pos + plen <= text_chars.len() {
-                if text_chars[pos..pos + plen] == pattern_chars[..] {
-                    let char_end = pos + plen;
-                    let first_op = seg.chars[pos].op_idx;
-                    let last_op = seg.chars[char_end - 1].op_idx;
-
-                    if first_op != last_op {
-                        let all_text = ops[first_op + 1..last_op]
-                            .iter()
-                            .all(|o| matches!(o.keyword.as_slice(), b"Tj" | b"TJ"));
-
-                        if all_text {
-                            let prefix_raw: Vec<u8> = seg.chars[..pos]
-                                .iter()
-                                .filter(|e| e.op_idx == first_op)
-                                .flat_map(|e| e.raw_bytes.iter().copied())
-                                .collect();
-
-                            let suffix_raw: Vec<u8> = seg.chars[char_end..]
-                                .iter()
-                                .filter(|e| e.op_idx == last_op)
-                                .flat_map(|e| e.raw_bytes.iter().copied())
-                                .collect();
-
-                            let orig_width: f32 = seg.chars[pos..char_end].iter().map(|e| {
-                                let gid = if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
-                                    u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
-                                } else if !e.raw_bytes.is_empty() {
-                                    e.raw_bytes[0] as u16
-                                } else { 0 };
-                                fi.advance_width(gid) as f32 / 1000.0
-                            }).sum();
-
-                            result.push(CrossOpMatchPreserve {
-                                replacement_idx: r_idx,
-                                first_op,
-                                last_op,
-                                prefix_raw,
-                                suffix_raw,
-                                orig_width,
-                                font_size: seg.font_size,
-                                font_name: seg.font_name.clone(),
-                            });
-                        }
-                    }
-                    pos = char_end;
-                } else {
-                    pos += 1;
-                }
-            }
-        }
-    }
-    result
+) -> Vec<CrossOpMatch> {
+    let old_texts: Vec<&str> = replacements.iter().map(|r| r.old_text.as_str()).collect();
+    find_cross_op_matches_inner(ops, &old_texts, existing_fonts)
 }
 
 // ---------------------------------------------------------------------------

@@ -770,7 +770,8 @@ fn parse_bfrange_line(line: &str, map: &mut BTreeMap<u16, char>) {
         let Ok(dst_start) = u32::from_str_radix(dst_hex, 16) else { return };
         for i in 0..=(hi as u32).saturating_sub(lo as u32) {
             let code = lo + i as u16;
-            let cp = dst_start + i;
+            // Guard against adversarially crafted CMaps with dst_start near u32::MAX.
+            let Some(cp) = dst_start.checked_add(i) else { break };
             if let Some(ch) = char::from_u32(cp) {
                 map.insert(code, ch);
             }
@@ -1054,7 +1055,7 @@ pub(crate) fn decode_hex_bytes(hex: &[u8]) -> Vec<u8> {
     let cleaned: Vec<u8> =
         hex.iter().filter(|&&b| !is_pdf_whitespace(b)).copied().collect();
     let mut padded = cleaned;
-    if padded.len() % 2 != 0 { padded.push(b'0'); }
+    if !padded.len().is_multiple_of(2) { padded.push(b'0'); }
     padded
         .chunks(2)
         .filter_map(|chunk| {
@@ -1212,6 +1213,7 @@ fn parse_content_stream(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
 fn decode_chars_to_fragment(
     char_bytes: &[u8],
     font_name: &[u8],
@@ -1230,7 +1232,7 @@ fn decode_chars_to_fragment(
 
     match font_info.bytes_per_char {
         2 => {
-            if char_bytes.len() % 2 != 0 { return None; }
+            if !char_bytes.len().is_multiple_of(2) { return None; }
             for chunk in char_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                 let Some(&ch) = font_info.to_unicode.get(&gid) else { continue };

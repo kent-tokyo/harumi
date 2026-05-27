@@ -127,7 +127,7 @@ pub(crate) fn ellipse_stream(
 ) -> Vec<u8> {
     let stroke = stroke_width > 0.0;
     // k = 4*(sqrt(2)-1)/3 ≈ 0.5523 — standard cubic Bézier approximation for a quarter-arc
-    const K: f32 = 0.5522847498;
+    const K: f32 = 0.552_285; // 4*(√2-1)/3, cubic Bézier quarter-arc approximation
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
     let cx = x + w / 2.0;
     let cy = y + h / 2.0;
