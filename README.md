@@ -60,6 +60,11 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need rotated text (watermarks, stamps at an angle) | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | Need to replace text spanning multiple Tj operators | `replace_text` / `replace_text_preserve_font` — cross-operator matching supported |
 | Need to extract an embedded image from a scanned PDF | `extract_page_image` returns JPEG or PNG bytes (`image` feature); scanned PDFs only |
+| Need clickable URL links in a PDF | `add_link_url([x, y, w, h], url)` — invisible URI annotation; click opens the URL in any viewer |
+| Need internal navigation links (TOC) | `add_link_internal([x, y, w, h], target_page)` — jumps to a page within the same document |
+| Need a bookmarks / navigation outline | `add_bookmark(title, page, y)` — flat PDF outline entries; CJK titles stored as UTF-16BE automatically |
+| Need page numbers / running headers–footers on every page | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` with `HeaderFooter` (`flow` feature); `{{page}}` / `{{total}}` substituted at render |
+| Need headings to auto-generate outline entries | `FlowOptions { auto_bookmarks: true, .. }` (default) — every `push_heading` creates a bookmark |
 
 ---
 
@@ -79,7 +84,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "0.3"
+harumi = "0.5"
 ```
 
 ### Invisible OCR text layer
@@ -279,7 +284,7 @@ doc.save("report_with_meta.pdf")?;
 ### Draw shapes (`draw` feature)
 
 ```toml
-harumi = { version = "0.3", features = ["draw"] }
+harumi = { version = "0.5", features = ["draw"] }
 ```
 
 ```rust
@@ -335,7 +340,7 @@ doc.page(1)?.add_text_with_rotation(
 ### Embed images (`image` feature)
 
 ```toml
-harumi = { version = "0.3", features = ["image"] }
+harumi = { version = "0.5", features = ["image"] }
 ```
 
 ```rust
@@ -373,7 +378,7 @@ println!("{}×{} pixels", img.width, img.height);
 ### Build a structured document with auto-pagination (`flow` feature)
 
 ```toml
-harumi = { version = "0.3", features = ["flow"] }
+harumi = { version = "0.5", features = ["flow"] }
 ```
 
 ```rust
@@ -399,10 +404,55 @@ let pdf_bytes = doc.render()?;
 
 Supports Japanese / Chinese / Korean out of the box — pass a CJK TTF font and text wraps at any character boundary.
 
+### Header / footer with page numbers (`flow` feature)
+
+```rust
+use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+
+let opts = FlowOptions {
+    // Left "harumi docs", right "v0.5" on every page
+    header: Some(HeaderFooter {
+        left:  Some("harumi docs".into()),
+        right: Some("v0.5".into()),
+        ..Default::default()
+    }),
+    // Centred "1 / 3" page counter
+    footer: Some(HeaderFooter::page_number()),
+    // push_heading() automatically creates a bookmark entry (default: true)
+    auto_bookmarks: true,
+    ..Default::default()
+};
+
+let mut doc = FlowDocument::new(font, opts)?;
+doc.push_heading("Chapter 1", 1)?;
+doc.push_paragraph("Body text here.")?;
+let pdf_bytes = doc.render()?;
+```
+
+### Link annotations
+
+```rust
+// Clickable URL region (x, y, width, height)
+doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
+
+// Internal link: clicking the area jumps to page 3 of the same document
+doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+### Document bookmarks (outline)
+
+```rust
+// Builds the bookmarks panel in PDF viewers.
+// Non-ASCII titles (CJK, accented Latin…) are encoded as UTF-16BE automatically.
+doc.add_bookmark("Chapter 1",   1, 800.0)?;   // title, page (1-indexed), y coord
+doc.add_bookmark("第2章 概要",  2, 800.0)?;
+doc.save("report.pdf")?;
+```
+
 ### Convert HTML to PDF (`html` feature)
 
 ```toml
-harumi = { version = "0.3", features = ["html"] }
+harumi = { version = "0.5", features = ["html"] }
 ```
 
 ```rust
@@ -491,6 +541,13 @@ let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
 let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
 // Read-only scan: returns match count or Err(FontCharNotMapped)
 let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
+
+// Link annotations (no feature gate)
+doc.page(1)?.add_link_url([x, y, w, h], "https://example.com")?;   // URL link
+doc.page(1)?.add_link_internal([x, y, w, h], target_page)?;         // in-document link
+
+// Document outline / bookmarks (no feature gate)
+doc.add_bookmark("Section Title", page, y)?;  // appends a flat outline entry
 ```
 
 ### Coordinate system
@@ -498,7 +555,7 @@ let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
 Coordinates are in **PDF points** (1 pt = 1/72 inch), origin at the **bottom-left** of the page. If your OCR engine (e.g. Tesseract / hOCR) gives pixel coordinates from the top-left, use the `ocr` feature helper:
 
 ```toml
-harumi = { version = "0.2", features = ["ocr"] }
+harumi = { version = "0.5", features = ["ocr"] }
 ```
 
 ### Feature flags
@@ -509,7 +566,7 @@ harumi = { version = "0.2", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
-| `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`) | none |
+| `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`); `HeaderFooter` for per-page header/footer with `{{page}}`/`{{total}}` substitution; `auto_bookmarks` for automatic outline from headings | none |
 | `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`) | `scraper` |
 
 ```rust
@@ -574,19 +631,12 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 
 | Version | Scope |
 |---|---|
-| **v0.1** | TrueType fonts, invisible + visible text, batch placement, `page.size()`, `save_to_bytes()`, GID remapping fix, OTF accepted |
-| **v0.2** | `draw` feature (`add_rect`, `add_line`), `image` feature (`add_image`, `add_image_with_opacity`), CFF2 early error, TTC magic detection, MediaBox parent-chain traversal |
-| **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`; security hardening (NaN guards, double-save protection, indirect Contents array, JPEG marker parser fix, PNG overflow) |
-| **v0.4** | PNG true transparency (SMask) — transparent PNGs rendered without white background |
-| **v0.5** | `add_text_with_opacity`, `add_text_box_aligned` (VerticalAlign), `add_polyline`, `add_text_box_with_opacity` — **Done** |
-| **v0.6** | Page manipulation — `rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages` — **Done** |
-| **v0.7** | `merge_from` (PDF merging), `remove_page` correctness & orphan-object fix — **Done** |
-| **v0.8** | `Document::new` (blank PDF from scratch), `extract_pages` (page splitting) — **Done** |
-| **v0.9** | `extract_text_runs` (CID + standard simple fonts), PDF metadata read/write (`metadata()`, `set_metadata()`, `PdfMetadata`) — **Done** |
-| **v0.10** | `replace_text` — true in-stream text replacement: Tj/TJ rewrite, automatic font-switching, Td width compensation — **Done** |
-| **v0.11** | `flow` feature (`FlowDocument` push-style builder, auto-pagination, CJK) + `html` feature (`render_html_to_pdf`, h1–h6 / table / list / page-break) — **Done** |
-| **v0.12** | `extract_page_image` — extract the largest embedded Image XObject from a scanned PDF page; JPEG returned as-is, FlateDecode pixels re-encoded as PNG (`image` feature) — **Done** |
-| **Next** | WASM CI, `cargo semver-checks` in CI |
+| **v0.1** | TrueType fonts, invisible + visible text, batch placement, `page.size()`, `save_to_bytes()`, GID remapping, OTF accepted |
+| **v0.2** | `draw` feature (`add_rect`, `add_line`), `image` feature (`add_image`, PNG SMask transparency), page manipulation (`rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages`) |
+| **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path`; `add_text_with_rotation`; security hardening; `merge_from`; `Document::new`; `extract_pages` |
+| **v0.4** | `extract_text_runs` (CID + standard fonts), PDF metadata r/w, `replace_text` (Tj/TJ rewrite, cross-operator matching, width compensation, preserve-font mode), `flow` feature (`FlowDocument`, CJK auto-pagination), `html` feature, `extract_page_image` |
+| **v0.5** *(current)* | `add_link_url`, `add_link_internal` — clickable PDF link annotations; `add_bookmark` — document outline/bookmarks with CJK UTF-16BE titles; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; `auto_bookmarks` from headings; security fixes (`set_metadata` guard, CMap overflow, CJK header measurement) |
+| **Next** | FlowDocument inline styles (bold/italic/color spans), AcroForm field reading, WASM CI, `cargo semver-checks` |
 
 ---
 

@@ -26,7 +26,7 @@ pub mod html;
 use ttf_parser::Face;
 
 use crate::{
-    document::wrap_paragraph,
+    document::{glyph_advance_pt, wrap_paragraph},
     Document, FontHandle, Result,
 };
 
@@ -48,6 +48,58 @@ impl Margins {
     /// Standard 20 mm (≈ 56.7 pt) margins suitable for A4 documents.
     pub fn a4_standard() -> Self {
         Margins::uniform(56.7)
+    }
+}
+
+/// Header or footer text rendered on every page of a [`FlowDocument`].
+///
+/// Set via [`FlowOptions::header`] and [`FlowOptions::footer`]. The placeholder
+/// strings `{{page}}` and `{{total}}` are substituted with the current page number
+/// and total page count at render time.
+///
+/// # Example
+/// ```no_run
+/// # #[cfg(feature = "flow")]
+/// # fn main() -> harumi::Result<()> {
+/// use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+///
+/// let font = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+/// let mut doc = FlowDocument::new(font.as_ref(), FlowOptions {
+///     footer: Some(HeaderFooter {
+///         center: Some("{{page}} / {{total}}".into()),
+///         ..Default::default()
+///     }),
+///     ..Default::default()
+/// })?;
+/// doc.push_paragraph("Hello!")?;
+/// let pdf = doc.render()?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct HeaderFooter {
+    /// Text aligned to the left of the area. `None` = no left text.
+    pub left: Option<String>,
+    /// Text centered horizontally. `None` = no center text.
+    pub center: Option<String>,
+    /// Text aligned to the right. `None` = no right text.
+    pub right: Option<String>,
+    /// Font size in PDF points. Default: `9.0`.
+    pub font_size: f32,
+    /// RGB color `[r, g, b]` in `0.0..=1.0`. Default: `[0.3, 0.3, 0.3]` (dark gray).
+    pub color: [f32; 3],
+}
+
+impl Default for HeaderFooter {
+    fn default() -> Self {
+        HeaderFooter { left: None, center: None, right: None, font_size: 9.0, color: [0.3, 0.3, 0.3] }
+    }
+}
+
+impl HeaderFooter {
+    /// A centered footer showing `"page / total"` in dark gray at 9 pt.
+    pub fn page_number() -> Self {
+        HeaderFooter { center: Some("{{page}} / {{total}}".into()), ..Default::default() }
     }
 }
 
@@ -74,6 +126,13 @@ pub struct FlowOptions {
     /// Prevents unbounded page creation when rendering untrusted HTML.
     /// Default: 2000. Set to `u32::MAX` to disable.
     pub max_pages: u32,
+    /// Optional header rendered at the top margin of every page. Default: `None`.
+    pub header: Option<HeaderFooter>,
+    /// Optional footer rendered at the bottom margin of every page. Default: `None`.
+    pub footer: Option<HeaderFooter>,
+    /// Auto-generate PDF bookmarks from headings pushed via [`FlowDocument::push_heading`].
+    /// Default: `true`.
+    pub auto_bookmarks: bool,
 }
 
 impl Default for FlowOptions {
@@ -87,6 +146,9 @@ impl Default for FlowOptions {
             paragraph_spacing: 6.0,
             table_key_ratio: 0.3,
             max_pages: 2000,
+            header: None,
+            footer: None,
+            auto_bookmarks: true,
         }
     }
 }
@@ -105,6 +167,9 @@ pub struct FlowDocument {
     current_page: u32,
     /// Distance from the top of the content area (positive = downward).
     content_y: f32,
+    /// Pending bookmark entries collected from push_heading calls.
+    /// Each entry is (title, page, pdf_y) where pdf_y is at the top of the heading.
+    outline_entries: Vec<(String, u32, f32)>,
 }
 
 impl FlowDocument {
@@ -123,6 +188,7 @@ impl FlowDocument {
             options,
             current_page: 1,
             content_y: 0.0,
+            outline_entries: Vec::new(),
         })
     }
 
@@ -207,6 +273,13 @@ impl FlowDocument {
         // on the same page (content_y > 0 means we didn't just start a fresh page).
         if self.content_y > 0.0 {
             self.content_y += pre_spacing;
+        }
+
+        // Record a bookmark anchored at the top of this heading block (before rendering).
+        if self.options.auto_bookmarks {
+            let bm_y = self.pdf_top_y(self.content_y);
+            let bm_page = self.current_page;
+            self.outline_entries.push((text.to_owned(), bm_page, bm_y));
         }
 
         let x = self.options.margins.left;
@@ -353,7 +426,103 @@ impl FlowDocument {
     }
 
     /// Finalizes the document and returns the PDF as a byte vector.
+    ///
+    /// Headers, footers, and bookmarks accumulated during content-push calls are
+    /// written to the document at this point.
     pub fn render(mut self) -> Result<Vec<u8>> {
+        let total_pages = self.inner.page_count();
+        let body_font = self.body_font;
+
+        // Parse the face once for text-width measurement in header/footer.
+        let font_bytes_owned: Vec<u8> = self.body_font_bytes.clone();
+        let face: Option<Face<'_>> = Face::parse(&font_bytes_owned, 0).ok();
+
+        // Render header on every page.
+        if let Some(ref hdr) = self.options.header.clone() {
+            for pg in 1..=total_pages {
+                render_hf_on_page(&mut self.inner, pg, hdr, total_pages, true, body_font,
+                    self.options.page_size, self.options.margins, face.as_ref())?;
+            }
+        }
+        // Render footer on every page.
+        if let Some(ref ftr) = self.options.footer.clone() {
+            for pg in 1..=total_pages {
+                render_hf_on_page(&mut self.inner, pg, ftr, total_pages, false, body_font,
+                    self.options.page_size, self.options.margins, face.as_ref())?;
+            }
+        }
+
+        // Register bookmarks gathered from push_heading.
+        for (title, page, y) in self.outline_entries.drain(..) {
+            self.inner.add_bookmark(&title, page, y)?;
+        }
+
         self.inner.save_to_bytes()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Header/footer renderer (free function to avoid borrow-checker conflicts)
+// ---------------------------------------------------------------------------
+
+/// Substitute `{{page}}` and `{{total}}` in a template string.
+fn hf_subst(tmpl: &str, page: u32, total: u32) -> String {
+    tmpl.replace("{{page}}", &page.to_string())
+        .replace("{{total}}", &total.to_string())
+}
+
+/// Measure the rendered width of `text` in PDF points given a parsed face.
+fn hf_measure(face: Option<&Face<'_>>, text: &str, font_size: f32) -> f32 {
+    match face {
+        Some(f) => text.chars().map(|ch| glyph_advance_pt(f, ch, font_size)).sum(),
+        // Fallback: use character count (not byte length) so CJK multi-byte chars don't
+        // over-estimate the width and mis-position right-aligned / centered text.
+        None => text.chars().count() as f32 * font_size * 0.5,
+    }
+}
+
+/// Renders one header or footer row onto a single page.
+#[allow(clippy::too_many_arguments)]
+fn render_hf_on_page(
+    inner: &mut Document,
+    page_num: u32,
+    hf: &HeaderFooter,
+    total_pages: u32,
+    is_header: bool,
+    font: FontHandle,
+    page_size: (f32, f32),
+    margins: Margins,
+    face: Option<&Face<'_>>,
+) -> Result<()> {
+    let fs = if hf.font_size > 0.0 { hf.font_size } else { 9.0 };
+    let color = hf.color;
+    let margin_left = margins.left;
+    let margin_right = margins.right;
+    let content_w = page_size.0 - margin_left - margin_right;
+
+    // Vertical position: centered in the top/bottom margin band.
+    let y = if is_header {
+        page_size.1 - margins.top * 0.5
+    } else {
+        margins.bottom * 0.5
+    };
+
+    if let Some(ref tmpl) = hf.left {
+        let text = hf_subst(tmpl, page_num, total_pages);
+        inner.page(page_num)?.add_text(&text, font, [margin_left, y], fs, color)?;
+    }
+    if let Some(ref tmpl) = hf.center {
+        let text = hf_subst(tmpl, page_num, total_pages);
+        let w = hf_measure(face, &text, fs);
+        let x = margin_left + (content_w - w) / 2.0;
+        inner.page(page_num)?.add_text(&text, font, [x, y], fs, color)?;
+    }
+    if let Some(ref tmpl) = hf.right {
+        let text = hf_subst(tmpl, page_num, total_pages);
+        let w = hf_measure(face, &text, fs);
+        let x = page_size.0 - margin_right - w;
+        inner.page(page_num)?.add_text(&text, font, [x, y], fs, color)?;
+    }
+
+    Ok(())
 }

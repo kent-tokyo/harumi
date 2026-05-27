@@ -60,6 +60,11 @@ doc.save("searchable.pdf")?;
 | テキストを回転させたい（透かし・斜めスタンプ） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
 | 複数の `Tj` 演算子にまたがるテキストを置換したい | `replace_text` / `replace_text_preserve_font` — クロス演算子マッチングに対応 |
 | スキャン PDF から埋め込み画像を取り出したい | `extract_page_image` で JPEG または PNG バイト列を取得（`image` feature）。スキャン PDF 専用 |
+| PDF にクリッカブルな URL リンクを付けたい | `add_link_url([x, y, w, h], url)` — 不可視 URI アノテーション。任意のビューアでクリックすると URL が開く |
+| PDF 内ページへの内部ナビゲーションリンクが必要 | `add_link_internal([x, y, w, h], target_page)` — 同一ドキュメント内の指定ページへジャンプ |
+| ブックマーク（ナビゲーションアウトライン）が必要 | `add_bookmark(title, page, y)` — フラットな PDF アウトラインエントリ。CJK タイトルは UTF-16BE で自動エンコード |
+| 全ページにページ番号付きヘッダ/フッタを付けたい | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` に `HeaderFooter` を指定（`flow` feature）。`{{page}}`/`{{total}}` をレンダリング時に展開 |
+| 見出しからアウトラインエントリを自動生成したい | `FlowOptions { auto_bookmarks: true, .. }`（デフォルト） — `push_heading` のたびにブックマークが作成される |
 
 ---
 
@@ -79,7 +84,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "0.3"
+harumi = "0.5"
 ```
 
 ### 不可視のOCRテキストレイヤー
@@ -198,10 +203,15 @@ excerpt.save("excerpt.pdf")?;
 ```rust
 let doc = Document::from_file("existing.pdf")?;
 let runs = doc.extract_text_runs(1)?;
-for fragment in &runs {
-    println!("{:?} at ({:.1}, {:.1})", fragment.text, fragment.x, fragment.y);
+for frag in &runs {
+    println!(
+        "{:?} at ({:.1}, {:.1}) font={} color={:?} invisible={}",
+        frag.text, frag.x, frag.y, frag.font_name, frag.color, frag.invisible,
+    );
 }
 ```
+
+各 `TextFragment` が持つフィールド：`text`、`x`/`y`（PDF ポイント座標）、`width`、`font_size`、**`font_name`**（PDF リソース名。例：`"HR0"`）、**`color`**（RGB フィル `[f32; 3]`）、**`invisible`**（OCR `Tr 3` テキストの場合 `true`）。
 
 harumi が出力したPDF（Identity-H CIDフォント）だけでなく、任意の既存PDFにも対応。Type1・TrueTypeなど標準シンプルフォント（WinAnsiEncoding・MacRomanEncoding・StandardEncoding・`/Differences` 辞書）も解析できます。
 
@@ -271,7 +281,7 @@ doc.save("report_with_meta.pdf")?;
 ### 図形描画（`draw` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["draw"] }
+harumi = { version = "0.5", features = ["draw"] }
 ```
 
 ```rust
@@ -325,7 +335,7 @@ doc.page(1)?.add_text_with_rotation(
 ### 画像埋め込み（`image` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["image"] }
+harumi = { version = "0.5", features = ["image"] }
 ```
 
 ```rust
@@ -363,7 +373,7 @@ println!("{}×{} ピクセル", img.width, img.height);
 ### 自動改ページ付き構造化ドキュメントの生成（`flow` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["flow"] }
+harumi = { version = "0.5", features = ["flow"] }
 ```
 
 ```rust
@@ -389,10 +399,55 @@ let pdf_bytes = doc.render()?;
 
 日本語・中国語・韓国語もそのまま利用可能。CJKフォントを渡すと任意の文字位置で折り返します。
 
+### ページ番号付きヘッダ/フッタ（`flow` feature）
+
+```rust
+use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+
+let opts = FlowOptions {
+    // 全ページの左に "harumi docs"、右に "v0.5" を表示
+    header: Some(HeaderFooter {
+        left:  Some("harumi docs".into()),
+        right: Some("v0.5".into()),
+        ..Default::default()
+    }),
+    // 中央に "1 / 3" 形式のページカウンタ
+    footer: Some(HeaderFooter::page_number()),
+    // push_heading() が自動的にブックマークエントリを作成（デフォルト: true）
+    auto_bookmarks: true,
+    ..Default::default()
+};
+
+let mut doc = FlowDocument::new(font, opts)?;
+doc.push_heading("第1章", 1)?;
+doc.push_paragraph("本文テキスト。")?;
+let pdf_bytes = doc.render()?;
+```
+
+### リンクアノテーション
+
+```rust
+// クリッカブルな URL 領域（x, y, 幅, 高さ）
+doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
+
+// 内部リンク：該当領域をクリックすると同一ドキュメントの3ページ目へジャンプ
+doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+### ブックマーク（ドキュメントアウトライン）
+
+```rust
+// PDF ビューアのブックマークパネルを構築する。
+// ASCII 以外のタイトル（CJK、アクセント付きラテン文字など）は UTF-16BE で自動エンコード。
+doc.add_bookmark("第1章",    1, 800.0)?;   // タイトル、ページ（1始まり）、Y座標
+doc.add_bookmark("第2章 概要", 2, 800.0)?;
+doc.save("report.pdf")?;
+```
+
 ### HTML→PDF変換（`html` feature）
 
 ```toml
-harumi = { version = "0.3", features = ["html"] }
+harumi = { version = "0.5", features = ["html"] }
 ```
 
 ```rust
@@ -475,8 +530,19 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 let meta: PdfMetadata = doc.metadata()?;
 doc.set_metadata(&PdfMetadata { title: Some("...".into()), ..Default::default() })?;
 
-// 既存コンテントストリームのテキスト置換（シングルオペレータマッチング）
-doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 既存コンテントストリームのテキスト置換（シングルオペレータマッチング）。マッチ件数を返す
+let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
+// 元の埋め込みフォントで置換。グリフ検証は即時実行。マッチ件数を返す
+let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
+// 読み取り専用スキャン：マッチ件数または Err(FontCharNotMapped) を返す
+let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
+
+// リンクアノテーション（feature フラグ不要）
+doc.page(1)?.add_link_url([x, y, w, h], "https://example.com")?;   // URL リンク
+doc.page(1)?.add_link_internal([x, y, w, h], target_page)?;         // ドキュメント内リンク
+
+// ドキュメントアウトライン / ブックマーク（feature フラグ不要）
+doc.add_bookmark("セクションタイトル", page, y)?;  // フラットなアウトラインエントリを追加
 ```
 
 ### 座標系について
@@ -484,7 +550,7 @@ doc.page(1)?.replace_text(old_text, new_text, font)?;
 座標は **PDFポイント**（1pt = 1/72インチ）で、原点はページ**左下**です。Tesseract / hOCR など左上原点のピクセル座標を使う場合は `ocr` featureのヘルパーを使ってください：
 
 ```toml
-harumi = { version = "0.3", features = ["ocr"] }
+harumi = { version = "0.5", features = ["ocr"] }
 ```
 
 ### Feature flags
@@ -495,7 +561,7 @@ harumi = { version = "0.3", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 画像埋め込み；`extract_page_image` — スキャン PDF から画像を取り出す（`draw` を有効化） | `image` クレート |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
-| `flow` | `FlowDocument` push 型ドキュメントビルダー・自動改ページ（`push_heading`・`push_paragraph`・`push_key_value_table`・`push_list`・`push_page_break`・`render`） | なし |
+| `flow` | `FlowDocument` push 型ビルダー・自動改ページ（`push_heading`・`push_paragraph`・`push_key_value_table`・`push_list`・`push_page_break`・`render`）；`HeaderFooter` によるページごとのヘッダ/フッタ（`{{page}}`/`{{total}}` 展開）；見出しから自動ブックマーク生成（`auto_bookmarks`） | なし |
 | `html` | `render_html_to_pdf` — HTML→PDF変換（h1–h6・p・table・ul/ol・改ページ。`flow` を有効化） | `scraper` |
 
 ```rust
@@ -558,19 +624,12 @@ harumi
 
 | バージョン | スコープ |
 |---|---|
-| **v0.1** | TrueType、不可視・可視テキスト、バッチ配置、`page.size()`、`save_to_bytes()`、GIDバグ修正、OTF受け付け |
-| **v0.2** | `draw` feature（`add_rect`、`add_line`）、`image` feature（`add_image`、`add_image_with_opacity`）、CFF2早期エラー、TTCマジック検出、MediaBox親チェーン走査 |
-| **v0.3** | `add_text_box`・`add_rect_stroke`・`add_polygon`; セキュリティ強化（NaNガード・二重保存防止・間接Contents配列対応・JPEGマーカー修正・PNG整数オーバーフロー修正） |
-| **v0.4** | PNG真の透明度（SMask）— 透明背景PNGが白背景なしで正しく描画される |
-| **v0.5** | `add_text_with_opacity`、`add_text_box_aligned`（VerticalAlign）、`add_polyline`、`add_text_box_with_opacity` — **完了** |
-| **v0.6** | ページ操作 — `rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages` — **完了** |
-| **v0.7** | `merge_from`（PDF結合）、`remove_page` 正確性・オーファンオブジェクト修正 — **完了** |
-| **v0.8** | `Document::new`（白紙PDFの作成）、`extract_pages`（ページ分割） — **完了** |
-| **v0.9** | `extract_text_runs`（CIDフォント＋標準シンプルフォント対応）、PDFメタデータ読み書き（`metadata()`、`set_metadata()`、`PdfMetadata`） — **完了** |
-| **v0.10** | `replace_text` — コンテントストリームの真のテキスト置換：Tj/TJ書き換え、フォント自動切替、Td幅補正 — **完了** |
-| **v0.11** | `flow` feature（`FlowDocument` push 型ビルダー・自動改ページ・CJK対応）＋ `html` feature（`render_html_to_pdf`、h1–h6 / table / list / 改ページ）— **完了** |
-| **v0.12** | `extract_page_image` — スキャン PDF ページから最大の Image XObject を取り出す。JPEG はそのまま返し、FlateDecode ピクセルは PNG に再エンコード（`image` feature）— **完了** |
-| **Next** | WASM CI、`cargo semver-checks` CI 組み込み |
+| **v0.1** | TrueType フォント、不可視・可視テキスト、バッチ配置、`page.size()`、`save_to_bytes()`、GID 再採番、OTF 受け付け |
+| **v0.2** | `draw` feature（`add_rect`、`add_line`）、`image` feature（`add_image`、PNG SMask 透明度）、ページ操作（`rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages`） |
+| **v0.3** | `add_text_box`・`add_rect_stroke`・`add_polygon`・`add_ellipse`・`add_path`；`add_text_with_rotation`；セキュリティ強化；`merge_from`；`Document::new`；`extract_pages` |
+| **v0.4** | `extract_text_runs`（CIDフォント＋標準シンプルフォント）、PDF メタデータ読み書き、`replace_text`（Tj/TJ 書き換え・クロスオペレータマッチング・幅補正・フォント保持モード）、`flow` feature（`FlowDocument`、CJK 自動改ページ）、`html` feature、`extract_page_image` |
+| **v0.5** *(current)* | `add_link_url`・`add_link_internal` — クリッカブルな PDF リンクアノテーション；`add_bookmark` — CJK UTF-16BE タイトル対応のドキュメントアウトライン；`HeaderFooter` + `{{page}}`/`{{total}}` の `FlowDocument` 対応；見出しからの `auto_bookmarks`；セキュリティ修正（`set_metadata` ガード・CMap オーバーフロー・CJK ヘッダ計測） |
+| **Next** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）、AcroForm フィールド読み取り、WASM CI、`cargo semver-checks` |
 
 ---
 

@@ -80,7 +80,7 @@ pub use font::FontHandle;
 pub use extract_image::{PageImage, PageImageFormat};
 
 #[cfg(feature = "flow")]
-pub use flow::{FlowDocument, FlowOptions, Margins};
+pub use flow::{FlowDocument, FlowOptions, HeaderFooter, Margins};
 
 #[cfg(feature = "html")]
 pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};

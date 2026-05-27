@@ -11,6 +11,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] — 2026-05-27
+
+### Added
+
+- **`Document::add_bookmark`** — appends a named PDF document outline entry (flat bookmarks list).
+  Bookmarks are visible in the PDF viewer's navigation/outline panel.
+  Title strings containing non-ASCII characters (CJK, accented Latin, etc.) are automatically
+  encoded as UTF-16BE with BOM for full Unicode compatibility.
+
+- **`PageHandle::add_link_url`** — adds an invisible URI link annotation to a page.
+  Clicking the area in a PDF viewer navigates to the given URL. Uses the standard `/A /URI` action.
+
+- **`PageHandle::add_link_internal`** — adds an invisible internal link annotation that jumps to
+  a specific page number within the same document. Uses a `/Dest [pageRef /XYZ]` destination.
+
+- **`HeaderFooter`** (`flow` feature) — header/footer configuration struct for [`FlowDocument`].
+  Set `FlowOptions::header` or `FlowOptions::footer` to render left / center / right text on
+  every page. Supports `{{page}}` and `{{total}}` placeholder substitution at render time.
+  Includes a `HeaderFooter::page_number()` convenience constructor.
+
+- **`FlowOptions::header` / `FlowOptions::footer`** (`flow` feature) — `Option<HeaderFooter>`
+  fields on `FlowOptions` (both default to `None`).
+
+- **`FlowOptions::auto_bookmarks`** (`flow` feature) — when `true` (default), every
+  `push_heading` call automatically records a PDF bookmark pointing to the top of that heading.
+  Set to `false` to suppress outline generation.
+
+### Fixed
+
+- **`build_outlines_from_bookmarks`** now **merges** new bookmarks into an existing `/Outlines`
+  tree instead of overwriting it. Loading a PDF that already has bookmarks and calling
+  `add_bookmark()` no longer silently discards the original outline entries.
+- **`set_metadata()`** now returns `Error::InvalidInput` when called after `save()` / `save_to_bytes()`,
+  matching the `finalized` guard on all other mutating methods.
+- **`hf_measure` fallback** in `FlowDocument` now uses `text.chars().count()` instead of
+  `text.len()` (byte length). This fixes right-aligned and centered header/footer text being
+  mis-positioned when the font face is unavailable and the text contains CJK or other multi-byte
+  characters.
+- **`parse_bfrange_line`** now uses `checked_add` to guard against `u32` overflow in adversarially
+  crafted ToUnicode CMap streams. Overflow silently broke Unicode extraction; now the range is
+  truncated instead.
+
+### Changed
+
+- **`add_link_url`** doc comment adds an explicit security note: callers are responsible for
+  ensuring `url` does not contain `javascript:`, `data:`, or other potentially unsafe URI schemes.
+
+### Internal
+
+- `pdf_text_string` helper: ASCII strings use literal encoding; non-ASCII strings use UTF-16BE
+  with BOM for /Title and similar text-string fields.
+- `build_link_annot_base` + `append_annotation_to_page` helpers handle direct/indirect /Annots
+  arrays and missing /Annots entries on existing pages.
+- `find_cross_op_matches` and `find_cross_op_matches_preserve` merged into a shared
+  `find_cross_op_matches_inner` function, eliminating ~150 lines of duplicated logic.
+  `CrossOpMatchPreserve` struct removed; `CrossOpMatch` now used by both code paths.
+- All Clippy warnings resolved (`is_multiple_of`, `excessive_precision`, `needless_late_init`,
+  `too_many_arguments`).
+
+---
+
 ## [0.4.2] — 2026-05-23
 
 ### Fixed
