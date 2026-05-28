@@ -221,6 +221,7 @@
           <button class="tool-btn active" id="tool-text"  onclick="selectTool('text')">T Text</button>
           <button class="tool-btn"        id="tool-rect"  onclick="selectTool('rect')">&#9645; Rect</button>
           <button class="tool-btn"        id="tool-line"  onclick="selectTool('line')">&#9585; Line</button>
+          <button class="tool-btn"        id="tool-pen"   onclick="selectTool('pen')">&#9998; Pen</button>
         </div>
 
         <div class="tool-opts visible" id="opts-text">
@@ -238,7 +239,7 @@
               <input type="color" id="t-color" value="#cc0000">
             </div>
           </div>
-          <p class="hint">Click on the PDF to place text.</p>
+          <p class="hint" id="hint-text"></p>
         </div>
 
         <div class="tool-opts" id="opts-rect">
@@ -252,7 +253,7 @@
               <input type="number" id="r-opacity" value="0.3" min="0.05" max="1" step="0.05">
             </div>
           </div>
-          <p class="hint">Click and drag on the PDF.</p>
+          <p class="hint" id="hint-line-rect"></p>
         </div>
 
         <div class="tool-opts" id="opts-line">
@@ -270,12 +271,28 @@
             <label>Opacity</label>
             <input type="number" id="l-opacity" value="1" min="0.05" max="1" step="0.05">
           </div>
-          <p class="hint">Click and drag on the PDF.</p>
+          <p class="hint" id="hint-rect"></p>
         </div>
 
-        <button class="add-btn" id="add-btn" disabled onclick="activateDraw()">
-          + Add to page <span id="cur-page-label">1</span>
-        </button>
+        <div class="tool-opts" id="opts-pen">
+          <div class="row2">
+            <div class="field">
+              <label>Color</label>
+              <input type="color" id="p-color" value="#000000">
+            </div>
+            <div class="field">
+              <label>Width (pt)</label>
+              <input type="number" id="p-width" value="2" min="0.5" max="20" step="0.5">
+            </div>
+          </div>
+          <div class="field">
+            <label>Opacity</label>
+            <input type="number" id="p-opacity" value="1" min="0.05" max="1" step="0.05">
+          </div>
+          <p class="hint" id="hint-pen"></p>
+        </div>
+
+        <p class="hint" id="drawing-hint" style="margin-top:0.5rem;text-align:center;color:#3b82f6;min-height:1.1rem"></p>
       </div>
 
       <div class="card">
@@ -311,10 +328,10 @@
 
   <script type="module">
     import init, { apply_annotations } from './pkg/harumi_wasm_demo.js';
-    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs';
 
     pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
 
     let wasmReady = false;
     let defaultFontBytes = null;
@@ -348,24 +365,29 @@
     document.getElementById('pdf-file').addEventListener('change', async function() {
       const f = this.files[0];
       if (!f) return;
-      pdfBytes = new Uint8Array(await f.arrayBuffer());
-      annotations = [];
-      renderAnnotationList();
+      setStatus('Loading PDF…');
+      try {
+        pdfBytes = new Uint8Array(await f.arrayBuffer());
+        annotations = [];
+        renderAnnotationList();
 
-      const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
-      pdfDoc = await loadingTask.promise;
-      totalPages = pdfDoc.numPages;
-      currentPage = 1;
-      await renderPage(currentPage);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+        pdfDoc = await loadingTask.promise;
+        totalPages = pdfDoc.numPages;
+        currentPage = 1;
+        await renderPage(currentPage);
 
-      document.getElementById('upload-prompt').style.display = 'none';
-      document.getElementById('canvas-stack').style.display = 'inline-block';
-      document.getElementById('prev-btn').disabled = false;
-      document.getElementById('next-btn').disabled = false;
-      document.getElementById('add-btn').disabled = false;
-      document.getElementById('apply-btn').disabled = false;
-      updatePageLabel();
-      setStatus('Ready.');
+        document.getElementById('upload-prompt').style.display = 'none';
+        document.getElementById('canvas-stack').style.display = 'inline-block';
+        document.getElementById('prev-btn').disabled = false;
+        document.getElementById('next-btn').disabled = false;
+        document.getElementById('apply-btn').disabled = false;
+        updatePageLabel();
+        activateDraw();
+        setStatus('Ready.');
+      } catch (e) {
+        setStatus('Error loading PDF: ' + e, 'error');
+      }
     });
 
     document.getElementById('font-file').addEventListener('change', function() {
@@ -427,6 +449,22 @@
           ctx.globalAlpha = a.opacity;
           ctx.beginPath(); ctx.moveTo(cx1, cy1); ctx.lineTo(cx2, cy2); ctx.stroke();
           ctx.globalAlpha = 1;
+
+        } else if (a.type === 'pen' && a.points.length >= 2) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = a.width * scale;
+          ctx.globalAlpha = a.opacity;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          const [sx, sy] = pdfToCanvas(a.points[0][0], a.points[0][1]);
+          ctx.moveTo(sx, sy);
+          for (let i = 1; i < a.points.length; i++) {
+            const [cx, cy] = pdfToCanvas(a.points[i][0], a.points[i][1]);
+            ctx.lineTo(cx, cy);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1;
         }
       }
     }
@@ -446,44 +484,34 @@
     // ── Tool selection ────────────────────────────────────────────────────
     window.selectTool = function(t) {
       currentTool = t;
-      cancelDraw();
-      ['text', 'rect', 'line'].forEach(id => {
+      ['text', 'rect', 'line', 'pen'].forEach(id => {
         document.getElementById('tool-' + id).classList.toggle('active', id === t);
         document.getElementById('opts-' + id).classList.toggle('visible', id === t);
       });
+      activateDraw();
     };
 
     window.activateDraw = function() {
       if (!pdfDoc) return;
       drawMode = true;
+      penPoints = [];
       document.getElementById('canvas-stack').classList.add('drawing');
-      const btn = document.getElementById('add-btn');
-      btn.textContent = '';
-      btn.appendChild(document.createTextNode(
-        currentTool === 'text' ? '↑ Click on the PDF' : '↑ Drag on the PDF'
-      ));
+      const hints = { text: 'Click on the PDF to place', rect: 'Drag to draw a rectangle', line: 'Drag to draw a line', pen: 'Draw freely on the PDF' };
+      document.getElementById('drawing-hint').textContent = hints[currentTool] || '';
     };
 
     function cancelDraw() {
       drawMode = false;
       dragStart = null;
+      penPoints = [];
       document.getElementById('canvas-stack').classList.remove('drawing');
       document.getElementById('guide').style.display = 'none';
-      resetAddBtn();
-    }
-
-    function resetAddBtn() {
-      const btn = document.getElementById('add-btn');
-      btn.textContent = '';
-      btn.appendChild(document.createTextNode('+ Add to page '));
-      const span = document.createElement('span');
-      span.id = 'cur-page-label';
-      span.textContent = String(currentPage);
-      btn.appendChild(span);
+      document.getElementById('drawing-hint').textContent = '';
     }
 
     // ── Pointer events ────────────────────────────────────────────────────
     const ovl = document.getElementById('overlay');
+    let penPoints = [];   // canvas coords collected during pen stroke
 
     ovl.addEventListener('mousedown', e => {
       if (!drawMode) return;
@@ -495,17 +523,46 @@
         cancelDraw();
         return;
       }
+      if (currentTool === 'pen') {
+        penPoints = [c];
+        return;
+      }
       dragStart = c;
     });
 
     ovl.addEventListener('mousemove', e => {
-      if (!drawMode || !dragStart) return;
-      showGuide(dragStart, canvasCoords(e));
+      if (!drawMode) return;
+      const c = canvasCoords(e);
+
+      if (currentTool === 'pen' && penPoints.length > 0) {
+        const last = penPoints[penPoints.length - 1];
+        if (Math.hypot(c.x - last.x, c.y - last.y) >= 3) {
+          penPoints.push(c);
+          drawPenPreview();
+        }
+        return;
+      }
+      if (dragStart) showGuide(dragStart, c);
     });
 
     ovl.addEventListener('mouseup', e => {
-      if (!drawMode || !dragStart) return;
+      if (!drawMode) return;
       const c = canvasCoords(e);
+
+      if (currentTool === 'pen') {
+        if (penPoints.length >= 2) {
+          const pdfPoints = penPoints.map(p => {
+            const [px, py] = canvasToPdf(p.x, p.y);
+            return [round1(px), round1(py)];
+          });
+          addAnnotation(buildPenAnnotation(pdfPoints));
+        }
+        penPoints = [];
+        cancelDraw();
+        return;
+      }
+
+      if (!dragStart) return;
       const [px1, py1] = canvasToPdf(dragStart.x, dragStart.y);
       const [px2, py2] = canvasToPdf(c.x, c.y);
 
@@ -521,6 +578,25 @@
       }
       cancelDraw();
     });
+
+    function drawPenPreview() {
+      // draw only the in-progress pen stroke on top of overlay
+      const canvas = document.getElementById('overlay');
+      const ctx = canvas.getContext('2d');
+      // redraw all committed annotations first
+      redrawOverlay();
+      if (penPoints.length < 2) return;
+      ctx.strokeStyle = document.getElementById('p-color').value;
+      ctx.lineWidth = (parseFloat(document.getElementById('p-width').value) || 2) * scale;
+      ctx.globalAlpha = parseFloat(document.getElementById('p-opacity').value) || 1;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(penPoints[0].x, penPoints[0].y);
+      for (let i = 1; i < penPoints.length; i++) ctx.lineTo(penPoints[i].x, penPoints[i].y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     function showGuide(a, b) {
       const guide = document.getElementById('guide');
@@ -564,6 +640,15 @@
         opacity: parseFloat(document.getElementById('l-opacity').value) || 1,
       };
     }
+    function buildPenAnnotation(pdfPoints) {
+      return {
+        type: 'pen', page: currentPage,
+        points: pdfPoints,
+        color: document.getElementById('p-color').value,
+        width: parseFloat(document.getElementById('p-width').value) || 2,
+        opacity: parseFloat(document.getElementById('p-opacity').value) || 1,
+      };
+    }
     function round1(v) { return Math.round(v * 10) / 10; }
 
     // ── Annotation list ───────────────────────────────────────────────────
@@ -571,6 +656,8 @@
       annotations.push(a);
       renderAnnotationList();
       redrawOverlay();
+      // re-enter draw mode immediately so user can keep annotating
+      activateDraw();
     }
 
     function renderAnnotationList() {
@@ -619,6 +706,7 @@
     function annotationLabel(a) {
       if (a.type === 'text') return '"' + a.text + '" ' + a.size + 'pt';
       if (a.type === 'rect') return 'rect ' + Math.round(a.w) + '\xd7' + Math.round(a.h);
+      if (a.type === 'pen') return 'pen (' + a.points.length + ' pts)';
       return 'line';
     }
 
@@ -627,17 +715,18 @@
       const next = currentPage + delta;
       if (next < 1 || next > totalPages) return;
       currentPage = next;
-      cancelDraw();
+      penPoints = [];
+      dragStart = null;
+      document.getElementById('guide').style.display = 'none';
       await renderPage(currentPage);
       updatePageLabel();
+      activateDraw();
     };
 
     function updatePageLabel() {
       document.getElementById('page-label').textContent = currentPage + ' / ' + totalPages;
       document.getElementById('prev-btn').disabled = currentPage <= 1;
       document.getElementById('next-btn').disabled = currentPage >= totalPages;
-      const lbl = document.getElementById('cur-page-label');
-      if (lbl) lbl.textContent = String(currentPage);
     }
 
     // ── Apply via WASM ────────────────────────────────────────────────────
@@ -672,10 +761,13 @@
           } else if (a.type === 'rect') {
             return { type: 'rect', page: a.page, x: a.x, y: a.y,
                      w: a.w, h: a.h, r, g, b, opacity: a.opacity };
-          } else {
+          } else if (a.type === 'line') {
             return { type: 'line', page: a.page,
                      x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
                      r, g, b, width: a.width, opacity: a.opacity };
+          } else {
+            return { type: 'pen', page: a.page,
+                     points: a.points, r, g, b, width: a.width, opacity: a.opacity };
           }
         });
 
