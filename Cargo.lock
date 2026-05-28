@@ -658,7 +658,7 @@ checksum = "c3531d702d6c1a3ba92a5fb55a404c7b8c476c8e7ca249951077afcbe4bc807f"
 
 [[package]]
 name = "harumi"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "allsorts",
  "axum",
