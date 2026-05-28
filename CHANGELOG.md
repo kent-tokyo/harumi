@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1] — 2026-05-28
+
+### Changed
+
+- **WASM demo** — replaced the simple stamp/OCR form with a full annotation editor:
+  text placement, rectangle highlight, straight line, and freehand pen tools.
+  PDF.js renders a live preview; annotations are applied via harumi's `draw` API
+  and downloaded as a modified PDF.
+- **WASM demo** — default Hack Regular font bundled; no font upload required.
+- **CI** — fixed macOS-only `Geneva.ttf` test skipping on Linux runners.
+
+---
+
 ## [0.5.0] — 2026-05-27
 
 ### Added
