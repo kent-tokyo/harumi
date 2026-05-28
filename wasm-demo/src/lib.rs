@@ -93,6 +93,12 @@ pub fn apply_annotations(pdf: &[u8], font: &[u8], annotations_json: &str) -> Res
                     .add_line([*x1, *y1], [*x2, *y2], [*r, *g, *b], *width, *opacity)
                     .map_err(err)?;
             }
+            Annotation::Pen { page, points, r, g, b, width, opacity } => {
+                doc.page(*page)
+                    .map_err(err)?
+                    .add_polyline(points, [*r, *g, *b], *width, *opacity)
+                    .map_err(err)?;
+            }
         }
     }
 
@@ -129,6 +135,15 @@ enum Annotation {
         y1: f32,
         x2: f32,
         y2: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        width: f32,
+        opacity: f32,
+    },
+    Pen {
+        page: u32,
+        points: Vec<[f32; 2]>,
         r: f32,
         g: f32,
         b: f32,
