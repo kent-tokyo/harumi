@@ -5,247 +5,709 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>harumi WASM demo</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: system-ui, sans-serif;
-      background: #f5f5f5;
+      background: #f0f2f5;
       color: #222;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 2rem 1rem;
+      padding: 1.5rem 1rem;
+      gap: 1rem;
     }
-    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
-    .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+    h1 { font-size: 1.5rem; }
+    .subtitle { color: #666; font-size: 0.85rem; }
+
+    .workspace {
+      display: flex;
+      gap: 1rem;
+      width: 100%;
+      max-width: 1100px;
+      align-items: flex-start;
+    }
+    .sidebar {
+      flex: 0 0 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
     .card {
       background: white;
       border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      padding: 1.5rem;
-      width: 100%;
-      max-width: 540px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      padding: 1rem;
     }
-    .field { margin-bottom: 1.1rem; }
-    label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 0.9rem; }
-    input[type="file"], input[type="text"], input[type="number"] {
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #888;
+      margin-bottom: 0.6rem;
+    }
+    label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 0.3rem; }
+    input[type="file"], input[type="text"], input[type="number"], input[type="color"] {
       width: 100%;
-      padding: 0.5rem 0.75rem;
+      padding: 0.4rem 0.6rem;
       border: 1.5px solid #ddd;
       border-radius: 6px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
+    input[type="color"] { height: 2.2rem; cursor: pointer; }
     input[type="file"] { cursor: pointer; }
-    .modes { display: flex; gap: 0.75rem; margin-bottom: 1.1rem; }
-    .mode-btn {
+    .field { margin-bottom: 0.7rem; }
+    .field:last-child { margin-bottom: 0; }
+    .hint { font-size: 0.75rem; color: #999; margin-top: 0.2rem; }
+
+    .tools { display: flex; gap: 0.4rem; }
+    .tool-btn {
       flex: 1;
-      padding: 0.55rem;
+      padding: 0.45rem 0;
       border: 1.5px solid #ddd;
       background: white;
       border-radius: 6px;
-      font-size: 0.9rem;
+      font-size: 0.8rem;
       cursor: pointer;
-      transition: all 0.15s;
+      transition: all 0.12s;
     }
-    .mode-btn.active { border-color: #3b82f6; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
-    .coords { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    #coords-row { display: none; }
-    button#run {
+    .tool-btn.active { border-color: #3b82f6; background: #eff6ff; color: #1d4ed8; font-weight: 700; }
+
+    .tool-opts { display: none; margin-top: 0.6rem; }
+    .tool-opts.visible { display: block; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+
+    .add-btn {
       width: 100%;
-      padding: 0.7rem;
+      padding: 0.55rem;
       background: #3b82f6;
       color: white;
       border: none;
       border-radius: 6px;
-      font-size: 1rem;
+      font-size: 0.9rem;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
+      margin-top: 0.6rem;
     }
-    button#run:hover:not(:disabled) { background: #2563eb; }
-    button#run:disabled { background: #93c5fd; cursor: not-allowed; }
-    #status { margin-top: 1rem; font-size: 0.9rem; color: #555; min-height: 1.4rem; text-align: center; }
-    #status.error { color: #dc2626; }
-    #status.ok { color: #16a34a; }
-    #download-row { margin-top: 1rem; display: none; justify-content: center; }
-    #download-btn {
-      padding: 0.55rem 1.5rem;
+    .add-btn:hover { background: #2563eb; }
+    .add-btn:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    #ann-list { display: flex; flex-direction: column; gap: 0.4rem; max-height: 220px; overflow-y: auto; }
+    .ann-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      background: #f8f9fa;
+      border-radius: 6px;
+      padding: 0.35rem 0.5rem;
+    }
+    .ann-swatch {
+      width: 14px; height: 14px;
+      border-radius: 3px;
+      flex-shrink: 0;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .ann-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ann-del {
+      background: none; border: none; cursor: pointer;
+      color: #dc2626; font-size: 1rem; line-height: 1; padding: 0 2px;
+    }
+    .ann-del:hover { color: #991b1b; }
+    #no-anns { font-size: 0.8rem; color: #bbb; text-align: center; padding: 0.5rem 0; }
+
+    .apply-btn {
+      width: 100%;
+      padding: 0.65rem;
       background: #16a34a;
       color: white;
       border: none;
       border-radius: 6px;
       font-size: 0.95rem;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
-      text-decoration: none;
     }
-    #download-btn:hover { background: #15803d; }
-    .hint { font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
+    .apply-btn:hover:not(:disabled) { background: #15803d; }
+    .apply-btn:disabled { background: #86efac; cursor: not-allowed; }
+    #status { font-size: 0.85rem; color: #555; min-height: 1.3rem; text-align: center; margin-top: 0.4rem; }
+    #status.error { color: #dc2626; }
+    #status.ok { color: #16a34a; }
+
+    .viewer-wrap {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .page-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.85rem;
+      color: #555;
+    }
+    .nav-btn {
+      padding: 0.25rem 0.7rem;
+      border: 1.5px solid #ddd;
+      background: white;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .canvas-stack {
+      position: relative;
+      display: inline-block;
+      cursor: crosshair;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      background: white;
+    }
+    #pdf-canvas { display: block; }
+    #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+    .canvas-stack.drawing #overlay { pointer-events: auto; cursor: crosshair; }
+
+    #guide {
+      position: absolute;
+      pointer-events: none;
+      border: 2px dashed rgba(59,130,246,0.7);
+      display: none;
+    }
+    .upload-prompt {
+      display: flex; align-items: center; justify-content: center;
+      width: 520px; height: 380px;
+      background: white; border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      color: #ccc; font-size: 1rem;
+    }
+
     .font-badge {
       display: inline-block;
-      font-size: 0.75rem;
-      background: #eff6ff;
-      color: #1d4ed8;
-      border: 1px solid #bfdbfe;
-      border-radius: 4px;
-      padding: 0.1rem 0.4rem;
-      margin-left: 0.4rem;
-      font-weight: 400;
+      font-size: 0.72rem;
+      background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+      border-radius: 4px; padding: 0.08rem 0.35rem; margin-left: 0.3rem; font-weight: 400;
     }
   </style>
 </head>
 <body>
   <h1>harumi WASM demo</h1>
-  <p class="subtitle">Pure-Rust PDF processing — running entirely in your browser</p>
+  <p class="subtitle">Pure-Rust PDF annotations — running entirely in your browser</p>
 
-  <div class="card">
-    <div class="field">
-      <label>PDF file</label>
-      <input type="file" id="pdf-file" accept=".pdf">
-    </div>
+  <div class="workspace">
+    <div class="sidebar">
 
-    <div class="field">
-      <label>
-        Font file
-        <span class="font-badge" id="font-badge">built-in (Hack, Latin)</span>
-      </label>
-      <input type="file" id="font-file" accept=".ttf,.otf,.ttc">
-      <p class="hint">Optional — leave blank to use the built-in font. Upload a CJK font (e.g. Noto Sans JP) for Japanese/Chinese/Korean.</p>
-    </div>
-
-    <div class="field">
-      <label>Mode</label>
-      <div class="modes">
-        <button class="mode-btn active" id="mode-stamp" onclick="setMode('stamp')">Stamp text</button>
-        <button class="mode-btn" id="mode-ocr" onclick="setMode('ocr')">OCR layer</button>
-      </div>
-    </div>
-
-    <div class="field">
-      <label id="text-label">Stamp text</label>
-      <input type="text" id="text-input" value="DRAFT" placeholder="Text to overlay">
-    </div>
-
-    <div class="field" id="coords-row">
-      <label>Position (points, origin bottom-left)</label>
-      <div class="coords">
-        <div>
-          <label style="font-weight:400">X</label>
-          <input type="number" id="x-input" value="72" step="1">
+      <div class="card">
+        <div class="card-title">Files</div>
+        <div class="field">
+          <label>PDF file</label>
+          <input type="file" id="pdf-file" accept=".pdf">
         </div>
-        <div>
-          <label style="font-weight:400">Y</label>
-          <input type="number" id="y-input" value="72" step="1">
+        <div class="field">
+          <label>
+            Font
+            <span class="font-badge" id="font-badge">built-in (Hack)</span>
+          </label>
+          <input type="file" id="font-file" accept=".ttf,.otf,.ttc">
+          <p class="hint">Optional — upload a CJK font (e.g. Noto Sans JP) for non-Latin text.</p>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-title">Annotation tool</div>
+        <div class="tools">
+          <button class="tool-btn active" id="tool-text"  onclick="selectTool('text')">T Text</button>
+          <button class="tool-btn"        id="tool-rect"  onclick="selectTool('rect')">&#9645; Rect</button>
+          <button class="tool-btn"        id="tool-line"  onclick="selectTool('line')">&#9585; Line</button>
+        </div>
+
+        <div class="tool-opts visible" id="opts-text">
+          <div class="field">
+            <label>Text</label>
+            <input type="text" id="t-text" value="DRAFT" placeholder="Annotation text">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label>Size (pt)</label>
+              <input type="number" id="t-size" value="24" min="4" max="200" step="1">
+            </div>
+            <div class="field">
+              <label>Color</label>
+              <input type="color" id="t-color" value="#cc0000">
+            </div>
+          </div>
+          <p class="hint">Click on the PDF to place text.</p>
+        </div>
+
+        <div class="tool-opts" id="opts-rect">
+          <div class="row2">
+            <div class="field">
+              <label>Color</label>
+              <input type="color" id="r-color" value="#ffff00">
+            </div>
+            <div class="field">
+              <label>Opacity</label>
+              <input type="number" id="r-opacity" value="0.3" min="0.05" max="1" step="0.05">
+            </div>
+          </div>
+          <p class="hint">Click and drag on the PDF.</p>
+        </div>
+
+        <div class="tool-opts" id="opts-line">
+          <div class="row2">
+            <div class="field">
+              <label>Color</label>
+              <input type="color" id="l-color" value="#0000cc">
+            </div>
+            <div class="field">
+              <label>Width (pt)</label>
+              <input type="number" id="l-width" value="2" min="0.5" max="20" step="0.5">
+            </div>
+          </div>
+          <div class="field">
+            <label>Opacity</label>
+            <input type="number" id="l-opacity" value="1" min="0.05" max="1" step="0.05">
+          </div>
+          <p class="hint">Click and drag on the PDF.</p>
+        </div>
+
+        <button class="add-btn" id="add-btn" disabled onclick="activateDraw()">
+          + Add to page <span id="cur-page-label">1</span>
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Annotations (<span id="ann-count">0</span>)</div>
+        <div id="ann-list">
+          <div id="no-anns">None yet — use tools above.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <button class="apply-btn" id="apply-btn" disabled onclick="applyAnnotations()">Apply &amp; Download</button>
+        <div id="status">Load a PDF to begin.</div>
+      </div>
+
     </div>
 
-    <button id="run" onclick="run()" disabled>Process PDF</button>
-    <div id="status"></div>
-    <div id="download-row">
-      <a id="download-btn" href="#" download="output.pdf">Download output.pdf</a>
+    <div class="viewer-wrap">
+      <div class="page-nav">
+        <button class="nav-btn" id="prev-btn" onclick="changePage(-1)" disabled>&#9664;</button>
+        <span id="page-label">&#8212; / &#8212;</span>
+        <button class="nav-btn" id="next-btn" onclick="changePage(+1)" disabled>&#9654;</button>
+      </div>
+
+      <div id="upload-prompt" class="upload-prompt">Open a PDF to preview it here</div>
+
+      <div class="canvas-stack" id="canvas-stack" style="display:none">
+        <canvas id="pdf-canvas"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="guide"></div>
+      </div>
     </div>
   </div>
 
   <script type="module">
-    import init, { stamp_pdf, ocr_layer, page_count } from './pkg/harumi_wasm_demo.js';
+    import init, { apply_annotations } from './pkg/harumi_wasm_demo.js';
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
 
-    let mode = 'stamp';
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+
     let wasmReady = false;
     let defaultFontBytes = null;
 
+    let pdfBytes = null;
+    let pdfDoc = null;
+    let currentPage = 1;
+    let totalPages = 0;
+    let viewport = null;
+    let scale = 1.0;
+
+    let annotations = [];
+    let currentTool = 'text';
+    let drawMode = false;
+    let dragStart = null;
+
+    // ── Boot ─────────────────────────────────────────────────────────────
     async function boot() {
       setStatus('Loading WASM…');
       await init();
       wasmReady = true;
-      document.getElementById('run').disabled = false;
-      setStatus('Ready.');
+      setStatus('Load a PDF to begin.');
 
-      // Pre-fetch the built-in font in the background (cached after first load).
       fetch('./fonts/Hack-Regular.ttf')
         .then(r => r.arrayBuffer())
         .then(buf => { defaultFontBytes = new Uint8Array(buf); })
         .catch(() => {});
     }
 
-    // Update font badge when a custom font is selected or cleared.
+    // ── PDF load ──────────────────────────────────────────────────────────
+    document.getElementById('pdf-file').addEventListener('change', async function() {
+      const f = this.files[0];
+      if (!f) return;
+      pdfBytes = new Uint8Array(await f.arrayBuffer());
+      annotations = [];
+      renderAnnotationList();
+
+      const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+      pdfDoc = await loadingTask.promise;
+      totalPages = pdfDoc.numPages;
+      currentPage = 1;
+      await renderPage(currentPage);
+
+      document.getElementById('upload-prompt').style.display = 'none';
+      document.getElementById('canvas-stack').style.display = 'inline-block';
+      document.getElementById('prev-btn').disabled = false;
+      document.getElementById('next-btn').disabled = false;
+      document.getElementById('add-btn').disabled = false;
+      document.getElementById('apply-btn').disabled = false;
+      updatePageLabel();
+      setStatus('Ready.');
+    });
+
     document.getElementById('font-file').addEventListener('change', function() {
       const badge = document.getElementById('font-badge');
       if (this.files[0]) {
         badge.textContent = this.files[0].name;
-        badge.style.background = '#f0fdf4';
-        badge.style.color = '#15803d';
-        badge.style.borderColor = '#bbf7d0';
+        badge.style.cssText = 'background:#f0fdf4;color:#15803d;border-color:#bbf7d0';
       } else {
-        badge.textContent = 'built-in (Hack, Latin)';
-        badge.style.background = '';
-        badge.style.color = '';
-        badge.style.borderColor = '';
+        badge.textContent = 'built-in (Hack)';
+        badge.style.cssText = '';
       }
     });
 
-    window.setMode = function(m) {
-      mode = m;
-      document.getElementById('mode-stamp').classList.toggle('active', m === 'stamp');
-      document.getElementById('mode-ocr').classList.toggle('active', m === 'ocr');
-      document.getElementById('text-label').textContent = m === 'stamp' ? 'Stamp text' : 'Invisible OCR text';
-      document.getElementById('coords-row').style.display = m === 'ocr' ? 'block' : 'none';
+    // ── Page rendering ────────────────────────────────────────────────────
+    async function renderPage(n) {
+      const page = await pdfDoc.getPage(n);
+      const maxW = Math.min(window.innerWidth - 310, 680);
+      scale = maxW / page.getViewport({ scale: 1 }).width;
+      viewport = page.getViewport({ scale });
+
+      const pdfCanvas = document.getElementById('pdf-canvas');
+      const ovl = document.getElementById('overlay');
+      pdfCanvas.width = ovl.width  = Math.round(viewport.width);
+      pdfCanvas.height = ovl.height = Math.round(viewport.height);
+
+      await page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
+      redrawOverlay();
+    }
+
+    // ── Overlay ───────────────────────────────────────────────────────────
+    function redrawOverlay() {
+      const canvas = document.getElementById('overlay');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const a of annotations) {
+        if (a.page !== currentPage) continue;
+        const color = hexToRgbStr(a.color);
+
+        if (a.type === 'text') {
+          const [cx, cy] = pdfToCanvas(a.x, a.y);
+          ctx.font = `${a.size * scale}px sans-serif`;
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 1;
+          ctx.fillText(a.text, cx, cy);
+
+        } else if (a.type === 'rect') {
+          const [cx, cy] = pdfToCanvas(a.x, a.y + a.h);
+          ctx.fillStyle = color;
+          ctx.globalAlpha = a.opacity;
+          ctx.fillRect(cx, cy, a.w * scale, a.h * scale);
+          ctx.globalAlpha = 1;
+
+        } else if (a.type === 'line') {
+          const [cx1, cy1] = pdfToCanvas(a.x1, a.y1);
+          const [cx2, cy2] = pdfToCanvas(a.x2, a.y2);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = a.width * scale;
+          ctx.globalAlpha = a.opacity;
+          ctx.beginPath(); ctx.moveTo(cx1, cy1); ctx.lineTo(cx2, cy2); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // ── Coordinate helpers ────────────────────────────────────────────────
+    function pdfToCanvas(px, py) {
+      return viewport.convertToViewportPoint(px, py);
+    }
+    function canvasToPdf(cx, cy) {
+      return viewport.convertToPdfPoint(cx, cy);
+    }
+    function canvasCoords(e) {
+      const rect = document.getElementById('overlay').getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    // ── Tool selection ────────────────────────────────────────────────────
+    window.selectTool = function(t) {
+      currentTool = t;
+      cancelDraw();
+      ['text', 'rect', 'line'].forEach(id => {
+        document.getElementById('tool-' + id).classList.toggle('active', id === t);
+        document.getElementById('opts-' + id).classList.toggle('visible', id === t);
+      });
     };
 
-    window.run = async function() {
-      if (!wasmReady) return;
+    window.activateDraw = function() {
+      if (!pdfDoc) return;
+      drawMode = true;
+      document.getElementById('canvas-stack').classList.add('drawing');
+      const btn = document.getElementById('add-btn');
+      btn.textContent = '';
+      btn.appendChild(document.createTextNode(
+        currentTool === 'text' ? '↑ Click on the PDF' : '↑ Drag on the PDF'
+      ));
+    };
 
-      const pdfFile = document.getElementById('pdf-file').files[0];
-      const fontFile = document.getElementById('font-file').files[0];
-      const text = document.getElementById('text-input').value.trim();
+    function cancelDraw() {
+      drawMode = false;
+      dragStart = null;
+      document.getElementById('canvas-stack').classList.remove('drawing');
+      document.getElementById('guide').style.display = 'none';
+      resetAddBtn();
+    }
 
-      if (!pdfFile) { setStatus('Please select a PDF file.', 'error'); return; }
-      if (!text) { setStatus('Please enter text.', 'error'); return; }
+    function resetAddBtn() {
+      const btn = document.getElementById('add-btn');
+      btn.textContent = '';
+      btn.appendChild(document.createTextNode('+ Add to page '));
+      const span = document.createElement('span');
+      span.id = 'cur-page-label';
+      span.textContent = String(currentPage);
+      btn.appendChild(span);
+    }
+
+    // ── Pointer events ────────────────────────────────────────────────────
+    const ovl = document.getElementById('overlay');
+
+    ovl.addEventListener('mousedown', e => {
+      if (!drawMode) return;
+      const c = canvasCoords(e);
+
+      if (currentTool === 'text') {
+        const [px, py] = canvasToPdf(c.x, c.y);
+        addAnnotation(buildTextAnnotation(px, py));
+        cancelDraw();
+        return;
+      }
+      dragStart = c;
+    });
+
+    ovl.addEventListener('mousemove', e => {
+      if (!drawMode || !dragStart) return;
+      showGuide(dragStart, canvasCoords(e));
+    });
+
+    ovl.addEventListener('mouseup', e => {
+      if (!drawMode || !dragStart) return;
+      const c = canvasCoords(e);
+      const [px1, py1] = canvasToPdf(dragStart.x, dragStart.y);
+      const [px2, py2] = canvasToPdf(c.x, c.y);
+
+      if (currentTool === 'rect') {
+        const x = Math.min(px1, px2);
+        const y = Math.min(py1, py2);
+        const w = Math.abs(px2 - px1);
+        const h = Math.abs(py2 - py1);
+        if (w > 2 && h > 2) addAnnotation(buildRectAnnotation(x, y, w, h));
+      } else if (currentTool === 'line') {
+        if (Math.hypot(px2 - px1, py2 - py1) > 2)
+          addAnnotation(buildLineAnnotation(px1, py1, px2, py2));
+      }
+      cancelDraw();
+    });
+
+    function showGuide(a, b) {
+      const guide = document.getElementById('guide');
+      if (currentTool === 'rect') {
+        Object.assign(guide.style, {
+          display: 'block',
+          left: Math.min(a.x, b.x) + 'px',
+          top: Math.min(a.y, b.y) + 'px',
+          width: Math.abs(b.x - a.x) + 'px',
+          height: Math.abs(b.y - a.y) + 'px',
+        });
+      } else {
+        guide.style.display = 'none';
+      }
+    }
+
+    // ── Build annotations ─────────────────────────────────────────────────
+    function buildTextAnnotation(x, y) {
+      return {
+        type: 'text', page: currentPage,
+        x: round1(x), y: round1(y),
+        text: document.getElementById('t-text').value || 'Text',
+        size: parseFloat(document.getElementById('t-size').value) || 24,
+        color: document.getElementById('t-color').value,
+      };
+    }
+    function buildRectAnnotation(x, y, w, h) {
+      return {
+        type: 'rect', page: currentPage,
+        x: round1(x), y: round1(y), w: round1(w), h: round1(h),
+        color: document.getElementById('r-color').value,
+        opacity: parseFloat(document.getElementById('r-opacity').value) || 0.3,
+      };
+    }
+    function buildLineAnnotation(x1, y1, x2, y2) {
+      return {
+        type: 'line', page: currentPage,
+        x1: round1(x1), y1: round1(y1), x2: round1(x2), y2: round1(y2),
+        color: document.getElementById('l-color').value,
+        width: parseFloat(document.getElementById('l-width').value) || 2,
+        opacity: parseFloat(document.getElementById('l-opacity').value) || 1,
+      };
+    }
+    function round1(v) { return Math.round(v * 10) / 10; }
+
+    // ── Annotation list ───────────────────────────────────────────────────
+    function addAnnotation(a) {
+      annotations.push(a);
+      renderAnnotationList();
+      redrawOverlay();
+    }
+
+    function renderAnnotationList() {
+      const list = document.getElementById('ann-list');
+      document.getElementById('ann-count').textContent = String(annotations.length);
+
+      while (list.firstChild) list.removeChild(list.firstChild);
+
+      if (annotations.length === 0) {
+        const msg = document.createElement('div');
+        msg.id = 'no-anns';
+        msg.textContent = 'None yet — use tools above.';
+        list.appendChild(msg);
+        return;
+      }
+
+      annotations.forEach((a, i) => {
+        const item = document.createElement('div');
+        item.className = 'ann-item';
+
+        const swatch = document.createElement('div');
+        swatch.className = 'ann-swatch';
+        swatch.style.background = a.color;
+
+        const lbl = document.createElement('span');
+        lbl.className = 'ann-label';
+        const labelText = annotationLabel(a);
+        lbl.title = labelText;
+        lbl.textContent = 'p' + a.page + ' ' + labelText;
+
+        const del = document.createElement('button');
+        del.className = 'ann-del';
+        del.textContent = '✕';
+        del.title = 'Remove';
+        del.addEventListener('click', () => {
+          annotations.splice(i, 1);
+          renderAnnotationList();
+          redrawOverlay();
+        });
+
+        item.append(swatch, lbl, del);
+        list.appendChild(item);
+      });
+    }
+
+    function annotationLabel(a) {
+      if (a.type === 'text') return '"' + a.text + '" ' + a.size + 'pt';
+      if (a.type === 'rect') return 'rect ' + Math.round(a.w) + '\xd7' + Math.round(a.h);
+      return 'line';
+    }
+
+    // ── Page navigation ───────────────────────────────────────────────────
+    window.changePage = async function(delta) {
+      const next = currentPage + delta;
+      if (next < 1 || next > totalPages) return;
+      currentPage = next;
+      cancelDraw();
+      await renderPage(currentPage);
+      updatePageLabel();
+    };
+
+    function updatePageLabel() {
+      document.getElementById('page-label').textContent = currentPage + ' / ' + totalPages;
+      document.getElementById('prev-btn').disabled = currentPage <= 1;
+      document.getElementById('next-btn').disabled = currentPage >= totalPages;
+      const lbl = document.getElementById('cur-page-label');
+      if (lbl) lbl.textContent = String(currentPage);
+    }
+
+    // ── Apply via WASM ────────────────────────────────────────────────────
+    window.applyAnnotations = async function() {
+      if (!wasmReady || !pdfBytes || annotations.length === 0) {
+        setStatus('Add at least one annotation first.', 'error');
+        return;
+      }
 
       setStatus('Processing…');
-      document.getElementById('run').disabled = true;
-      document.getElementById('download-row').style.display = 'none';
+      document.getElementById('apply-btn').disabled = true;
 
       try {
         let fontBytes;
+        const fontFile = document.getElementById('font-file').files[0];
         if (fontFile) {
           fontBytes = new Uint8Array(await fontFile.arrayBuffer());
         } else if (defaultFontBytes) {
           fontBytes = defaultFontBytes;
         } else {
-          // Not yet cached — fetch now.
           const r = await fetch('./fonts/Hack-Regular.ttf');
           if (!r.ok) throw new Error('Built-in font unavailable. Please upload a font file.');
           defaultFontBytes = new Uint8Array(await r.arrayBuffer());
           fontBytes = defaultFontBytes;
         }
 
-        const pdf = new Uint8Array(await pdfFile.arrayBuffer());
+        const payload = annotations.map(a => {
+          const [r, g, b] = hexToRgb(a.color);
+          if (a.type === 'text') {
+            return { type: 'text', page: a.page, x: a.x, y: a.y,
+                     text: a.text, size: a.size, r, g, b };
+          } else if (a.type === 'rect') {
+            return { type: 'rect', page: a.page, x: a.x, y: a.y,
+                     w: a.w, h: a.h, r, g, b, opacity: a.opacity };
+          } else {
+            return { type: 'line', page: a.page,
+                     x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
+                     r, g, b, width: a.width, opacity: a.opacity };
+          }
+        });
 
-        let result;
-        if (mode === 'stamp') {
-          result = stamp_pdf(pdf, fontBytes, text);
-        } else {
-          const x = parseFloat(document.getElementById('x-input').value) || 72;
-          const y = parseFloat(document.getElementById('y-input').value) || 72;
-          result = ocr_layer(pdf, fontBytes, text, x, y);
-        }
-
-        const pages = page_count(result);
+        const result = apply_annotations(pdfBytes, fontBytes, JSON.stringify(payload));
         const blob = new Blob([result], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
-        const dl = document.getElementById('download-btn');
-        dl.href = url;
-        dl.download = pdfFile.name.replace(/\.pdf$/i, '') + '_harumi.pdf';
-        document.getElementById('download-row').style.display = 'flex';
-        setStatus(`Done — ${pages} page${pages !== 1 ? 's' : ''}.`, 'ok');
+
+        const link = document.createElement('a');
+        link.href = url;
+        const pdfFile = document.getElementById('pdf-file').files[0];
+        link.download = (pdfFile ? pdfFile.name.replace(/\.pdf$/i, '') : 'output') + '_annotated.pdf';
+        link.click();
+
+        setStatus('Done — ' + annotations.length + ' annotation' +
+          (annotations.length !== 1 ? 's' : '') + ' applied.', 'ok');
       } catch (e) {
         setStatus('Error: ' + e, 'error');
       } finally {
-        document.getElementById('run').disabled = false;
+        document.getElementById('apply-btn').disabled = false;
       }
     };
 
+    // ── Utilities ─────────────────────────────────────────────────────────
+    function hexToRgb(hex) {
+      const v = parseInt(hex.slice(1), 16);
+      return [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255];
+    }
+    function hexToRgbStr(hex) {
+      const [r, g, b] = hexToRgb(hex);
+      return 'rgba(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' +
+             Math.round(b * 255) + ',1)';
+    }
     function setStatus(msg, cls) {
       const el = document.getElementById('status');
       el.textContent = msg;
