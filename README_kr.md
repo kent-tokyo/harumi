@@ -10,7 +10,7 @@
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
-**[브라우저에서 데모 체험하기 →](https://kent-tokyo.github.io/harumi/)**
+**[브라우저에서 데모 체험하기 →](https://kent-tokyo.github.io/harumi/)** — 텍스트·사각형·직선·자유 펜 어노테이션 편집기 (WASM으로 브라우저 완결)
 
 ---
 

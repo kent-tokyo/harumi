@@ -10,7 +10,7 @@
 
 [English](README.md) | [中文](README_zh.md) | [한국어](README_kr.md)
 
-**[ブラウザでデモを試す →](https://kent-tokyo.github.io/harumi/)**
+**[ブラウザでデモを試す →](https://kent-tokyo.github.io/harumi/)** — テキスト・矩形・直線・フリーハンドペンのアノテーションエディタ（WASMでブラウザ完結）
 
 ---
 

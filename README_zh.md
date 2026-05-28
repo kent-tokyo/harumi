@@ -10,7 +10,7 @@
 
 [English](README.md) | [日本語](README_ja.md) | [한국어](README_kr.md)
 
-**[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)**
+**[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)** — 注释编辑器（文字・矩形・直线・自由笔）完全通过 WASM 在浏览器中运行
 
 ---
 
