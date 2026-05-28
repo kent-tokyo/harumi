@@ -6,3 +6,7 @@ AGENTS.md
 # Added by cargo
 
 /target
+
+# wasm-pack output (generated build artifact)
+wasm-demo/www/pkg/
+wasm-demo/target/

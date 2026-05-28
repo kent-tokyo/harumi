@@ -15,7 +15,7 @@ categories = ["encoding", "text-processing"]
 
 [dependencies]
 lopdf = "0.40"
-allsorts = "0.17"
+allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
 ttf-parser = "0.25"
 thiserror = "2"
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
@@ -29,5 +29,10 @@ ocr = []
 flow = ["draw"]
 html = ["flow", "dep:scraper"]
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [dev-dependencies]
 lopdf = "0.40"
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
