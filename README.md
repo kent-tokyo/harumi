@@ -10,6 +10,8 @@ Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-r
 
 [日本語](README_ja.md) | [中文](README_zh.md) | [한국어](README_kr.md)
 
+**[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)**
+
 ---
 
 ## What harumi solves
