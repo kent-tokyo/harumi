@@ -6,6 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://kent-tokyo.github.io/harumi/)
 
 [English](README.md) | [中文](README_zh.md) | [한국어](README_kr.md)
 
