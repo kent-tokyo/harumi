@@ -81,6 +81,17 @@
     }
     #download-btn:hover { background: #15803d; }
     .hint { font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
+    .font-badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      margin-left: 0.4rem;
+      font-weight: 400;
+    }
   </style>
 </head>
 <body>
@@ -94,9 +105,12 @@
     </div>
 
     <div class="field">
-      <label>Font file <span style="font-weight:400;color:#888">(TTF / OTF — Latin fonts work; for Japanese use a CJK font)</span></label>
+      <label>
+        Font file
+        <span class="font-badge" id="font-badge">built-in (Hack, Latin)</span>
+      </label>
       <input type="file" id="font-file" accept=".ttf,.otf,.ttc">
-      <p class="hint">Tip: <a href="https://fonts.google.com/specimen/Noto+Sans" target="_blank">Noto Sans</a> (Latin) or Noto Sans CJK for Japanese/Chinese/Korean</p>
+      <p class="hint">Optional — leave blank to use the built-in font. Upload a CJK font (e.g. Noto Sans JP) for Japanese/Chinese/Korean.</p>
     </div>
 
     <div class="field">
@@ -138,6 +152,7 @@
 
     let mode = 'stamp';
     let wasmReady = false;
+    let defaultFontBytes = null;
 
     async function boot() {
       setStatus('Loading WASM…');
@@ -145,7 +160,29 @@
       wasmReady = true;
       document.getElementById('run').disabled = false;
       setStatus('Ready.');
+
+      // Pre-fetch the built-in font in the background (cached after first load).
+      fetch('./fonts/Hack-Regular.ttf')
+        .then(r => r.arrayBuffer())
+        .then(buf => { defaultFontBytes = new Uint8Array(buf); })
+        .catch(() => {});
     }
+
+    // Update font badge when a custom font is selected or cleared.
+    document.getElementById('font-file').addEventListener('change', function() {
+      const badge = document.getElementById('font-badge');
+      if (this.files[0]) {
+        badge.textContent = this.files[0].name;
+        badge.style.background = '#f0fdf4';
+        badge.style.color = '#15803d';
+        badge.style.borderColor = '#bbf7d0';
+      } else {
+        badge.textContent = 'built-in (Hack, Latin)';
+        badge.style.background = '';
+        badge.style.color = '';
+        badge.style.borderColor = '';
+      }
+    });
 
     window.setMode = function(m) {
       mode = m;
@@ -163,7 +200,6 @@
       const text = document.getElementById('text-input').value.trim();
 
       if (!pdfFile) { setStatus('Please select a PDF file.', 'error'); return; }
-      if (!fontFile) { setStatus('Please select a font file.', 'error'); return; }
       if (!text) { setStatus('Please enter text.', 'error'); return; }
 
       setStatus('Processing…');
@@ -171,21 +207,28 @@
       document.getElementById('download-row').style.display = 'none';
 
       try {
-        const [pdfBuf, fontBuf] = await Promise.all([
-          pdfFile.arrayBuffer(),
-          fontFile.arrayBuffer(),
-        ]);
+        let fontBytes;
+        if (fontFile) {
+          fontBytes = new Uint8Array(await fontFile.arrayBuffer());
+        } else if (defaultFontBytes) {
+          fontBytes = defaultFontBytes;
+        } else {
+          // Not yet cached — fetch now.
+          const r = await fetch('./fonts/Hack-Regular.ttf');
+          if (!r.ok) throw new Error('Built-in font unavailable. Please upload a font file.');
+          defaultFontBytes = new Uint8Array(await r.arrayBuffer());
+          fontBytes = defaultFontBytes;
+        }
 
-        const pdf = new Uint8Array(pdfBuf);
-        const font = new Uint8Array(fontBuf);
+        const pdf = new Uint8Array(await pdfFile.arrayBuffer());
 
         let result;
         if (mode === 'stamp') {
-          result = stamp_pdf(pdf, font, text);
+          result = stamp_pdf(pdf, fontBytes, text);
         } else {
           const x = parseFloat(document.getElementById('x-input').value) || 72;
           const y = parseFloat(document.getElementById('y-input').value) || 72;
-          result = ocr_layer(pdf, font, text, x, y);
+          result = ocr_layer(pdf, fontBytes, text, x, y);
         }
 
         const pages = page_count(result);
