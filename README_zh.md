@@ -10,6 +10,8 @@
 
 [English](README.md) | [日本語](README_ja.md) | [한국어](README_kr.md)
 
+**[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)**
+
 ---
 
 ## harumi 解决了什么
