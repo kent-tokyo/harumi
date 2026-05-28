@@ -22,8 +22,10 @@ fn roundtrip_no_modification() {
 /// the resulting PDF has a Type0 font object in the page resources.
 #[test]
 fn embed_font_and_invisible_text_ascii() {
-    let font_bytes = std::fs::read("/System/Library/Fonts/Geneva.ttf")
-        .expect("Geneva.ttf not found — skipping (macOS only)");
+    let Ok(font_bytes) = std::fs::read("/System/Library/Fonts/Geneva.ttf") else {
+        eprintln!("Geneva.ttf not found — skipping (macOS only)");
+        return;
+    };
 
     let pdf_bytes = helpers::minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&pdf_bytes).expect("load");
@@ -138,8 +140,10 @@ fn embed_font_and_invisible_text_japanese() {
 /// contains "0 Tr" and the RGB color operator.
 #[test]
 fn add_text_visible_with_color() {
-    let font_bytes = std::fs::read("/System/Library/Fonts/Geneva.ttf")
-        .expect("Geneva.ttf not found — macOS only");
+    let Ok(font_bytes) = std::fs::read("/System/Library/Fonts/Geneva.ttf") else {
+        eprintln!("Geneva.ttf not found — skipping (macOS only)");
+        return;
+    };
 
     let pdf_bytes = helpers::minimal_pdf_bytes();
     let mut doc = harumi::Document::from_bytes(&pdf_bytes).expect("load");
@@ -178,8 +182,10 @@ fn page_size_a4() {
 /// save_to_bytes() round-trip: reload and verify page count and font resource.
 #[test]
 fn save_to_bytes_roundtrip() {
-    let font_bytes = std::fs::read("/System/Library/Fonts/Geneva.ttf")
-        .expect("Geneva.ttf not found — macOS only");
+    let Ok(font_bytes) = std::fs::read("/System/Library/Fonts/Geneva.ttf") else {
+        eprintln!("Geneva.ttf not found — skipping (macOS only)");
+        return;
+    };
 
     let pdf_bytes = helpers::minimal_pdf_bytes();
     let mut doc = harumi::Document::from_bytes(&pdf_bytes).expect("load");
