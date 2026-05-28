@@ -108,8 +108,10 @@ fn smoke_add_line_content_stream() {
 #[cfg(feature = "draw")]
 #[test]
 fn smoke_rect_and_text_same_page() {
-    let font_bytes = std::fs::read("/System/Library/Fonts/Geneva.ttf")
-        .expect("Geneva.ttf not found — macOS only");
+    let Ok(font_bytes) = std::fs::read("/System/Library/Fonts/Geneva.ttf") else {
+        eprintln!("Geneva.ttf not found — skipping (macOS only)");
+        return;
+    };
 
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
