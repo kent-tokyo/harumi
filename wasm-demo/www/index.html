@@ -190,6 +190,18 @@
       background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
       border-radius: 4px; padding: 0.08rem 0.35rem; margin-left: 0.3rem; font-weight: 400;
     }
+
+    @media (max-width: 720px) {
+      body { padding: 1rem 0.5rem; }
+      h1   { font-size: 1.25rem; }
+      .workspace { flex-direction: column; }
+      .sidebar   { flex: none; width: 100%; }
+      .tools     { flex-wrap: wrap; }
+      .tool-btn  { flex: 0 0 calc(50% - 0.2rem); min-height: 2.6rem; font-size: 0.85rem; }
+      .upload-prompt { width: 100%; min-height: 160px; height: auto; }
+      #ann-list  { max-height: 130px; }
+      .viewer-wrap { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -404,7 +416,8 @@
     // ── Page rendering ────────────────────────────────────────────────────
     async function renderPage(n) {
       const page = await pdfDoc.getPage(n);
-      const maxW = Math.min(window.innerWidth - 310, 680);
+      const sidebarOffset = window.innerWidth >= 720 ? 310 : 32;
+      const maxW = Math.min(window.innerWidth - sidebarOffset, 680);
       scale = maxW / page.getViewport({ scale: 1 }).width;
       viewport = page.getViewport({ scale });
 
@@ -478,7 +491,8 @@
     }
     function canvasCoords(e) {
       const rect = document.getElementById('overlay').getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const src = e.touches ? e.touches[0] : (e.changedTouches ? e.changedTouches[0] : e);
+      return { x: src.clientX - rect.left, y: src.clientY - rect.top };
     }
 
     // ── Tool selection ────────────────────────────────────────────────────
@@ -509,31 +523,24 @@
       document.getElementById('drawing-hint').textContent = '';
     }
 
-    // ── Pointer events ────────────────────────────────────────────────────
+    // ── Pointer events (mouse + touch) ────────────────────────────────────
     const ovl = document.getElementById('overlay');
     let penPoints = [];   // canvas coords collected during pen stroke
 
-    ovl.addEventListener('mousedown', e => {
+    function handleDown(c) {
       if (!drawMode) return;
-      const c = canvasCoords(e);
-
       if (currentTool === 'text') {
         const [px, py] = canvasToPdf(c.x, c.y);
         addAnnotation(buildTextAnnotation(px, py));
         cancelDraw();
         return;
       }
-      if (currentTool === 'pen') {
-        penPoints = [c];
-        return;
-      }
+      if (currentTool === 'pen') { penPoints = [c]; return; }
       dragStart = c;
-    });
+    }
 
-    ovl.addEventListener('mousemove', e => {
+    function handleMove(c) {
       if (!drawMode) return;
-      const c = canvasCoords(e);
-
       if (currentTool === 'pen' && penPoints.length > 0) {
         const last = penPoints[penPoints.length - 1];
         if (Math.hypot(c.x - last.x, c.y - last.y) >= 3) {
@@ -543,12 +550,10 @@
         return;
       }
       if (dragStart) showGuide(dragStart, c);
-    });
+    }
 
-    ovl.addEventListener('mouseup', e => {
+    function handleUp(c) {
       if (!drawMode) return;
-      const c = canvasCoords(e);
-
       if (currentTool === 'pen') {
         if (penPoints.length >= 2) {
           const pdfPoints = penPoints.map(p => {
@@ -561,23 +566,26 @@
         cancelDraw();
         return;
       }
-
       if (!dragStart) return;
       const [px1, py1] = canvasToPdf(dragStart.x, dragStart.y);
       const [px2, py2] = canvasToPdf(c.x, c.y);
-
       if (currentTool === 'rect') {
-        const x = Math.min(px1, px2);
-        const y = Math.min(py1, py2);
-        const w = Math.abs(px2 - px1);
-        const h = Math.abs(py2 - py1);
+        const x = Math.min(px1, px2), y = Math.min(py1, py2);
+        const w = Math.abs(px2 - px1), h = Math.abs(py2 - py1);
         if (w > 2 && h > 2) addAnnotation(buildRectAnnotation(x, y, w, h));
       } else if (currentTool === 'line') {
         if (Math.hypot(px2 - px1, py2 - py1) > 2)
           addAnnotation(buildLineAnnotation(px1, py1, px2, py2));
       }
       cancelDraw();
-    });
+    }
+
+    ovl.addEventListener('mousedown', e => handleDown(canvasCoords(e)));
+    ovl.addEventListener('mousemove', e => handleMove(canvasCoords(e)));
+    ovl.addEventListener('mouseup',   e => handleUp(canvasCoords(e)));
+    ovl.addEventListener('touchstart', e => { e.preventDefault(); handleDown(canvasCoords(e)); }, { passive: false });
+    ovl.addEventListener('touchmove',  e => { e.preventDefault(); handleMove(canvasCoords(e)); }, { passive: false });
+    ovl.addEventListener('touchend',   e => { e.preventDefault(); handleUp(canvasCoords(e));   }, { passive: false });
 
     function drawPenPreview() {
       // draw only the in-progress pen stroke on top of overlay
