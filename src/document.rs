@@ -184,9 +184,12 @@ impl Document {
     /// # Errors
     /// Returns [`Error::Io`] if the file cannot be read, or [`Error::Pdf`] if
     /// the file is not a valid PDF.
+    fn from_inner(inner: lopdf::Document) -> Self {
+        Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None }
+    }
+
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let inner = lopdf::Document::load(path)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Self::from_inner(lopdf::Document::load(path)?))
     }
 
     /// Loads a PDF from an in-memory byte slice.
@@ -194,8 +197,7 @@ impl Document {
     /// # Errors
     /// Returns [`Error::Pdf`] if the bytes do not represent a valid PDF.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let inner = lopdf::Document::load_from(bytes)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Self::from_inner(lopdf::Document::load_from(bytes)?))
     }
 
     /// Loads a password-protected PDF from a file path.
@@ -208,7 +210,7 @@ impl Document {
     pub fn from_file_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
         let inner = lopdf::Document::load_with_password(path, password)
             .map_err(map_lopdf_password_err)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Self::from_inner(inner))
     }
 
     /// Loads a password-protected PDF from an in-memory byte slice.
@@ -221,7 +223,7 @@ impl Document {
     pub fn from_bytes_with_password(bytes: &[u8], password: &str) -> Result<Self> {
         let inner = lopdf::Document::load_from_with_password(bytes, password)
             .map_err(map_lopdf_password_err)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Self::from_inner(inner))
     }
 
     /// Configures the document to be saved with password protection.
@@ -307,7 +309,7 @@ impl Document {
 
         inner.trailer.set("Root", Object::Reference(catalog_id));
 
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Self::from_inner(inner))
     }
 
     /// Returns the number of pages in the document.
@@ -762,7 +764,7 @@ impl Document {
         catalog.remove(b"OpenAction");
         catalog.remove(b"StructTreeRoot");
 
-        Ok(Document { inner: new_inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+        Ok(Document::from_inner(new_inner))
     }
 
     /// Returns the document's `/Info` metadata fields.
@@ -1857,6 +1859,7 @@ impl<'doc> PageHandle<'doc> {
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
     pub fn add_highlight(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_highlight")?;
+        check_positive_size(rect[2], rect[3], "add_highlight")?;
         let d = build_markup_annot(b"Highlight", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
@@ -1868,6 +1871,7 @@ impl<'doc> PageHandle<'doc> {
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
     pub fn add_underline(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_underline")?;
+        check_positive_size(rect[2], rect[3], "add_underline")?;
         let d = build_markup_annot(b"Underline", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
@@ -1879,6 +1883,7 @@ impl<'doc> PageHandle<'doc> {
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
     pub fn add_strikeout(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_strikeout")?;
+        check_positive_size(rect[2], rect[3], "add_strikeout")?;
         let d = build_markup_annot(b"StrikeOut", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
@@ -1890,6 +1895,7 @@ impl<'doc> PageHandle<'doc> {
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
     pub fn add_squiggly(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_squiggly")?;
+        check_positive_size(rect[2], rect[3], "add_squiggly")?;
         let d = build_markup_annot(b"Squiggly", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
@@ -2733,10 +2739,7 @@ fn collect_field_ids_recursive(
         let Ok(fd) = field_obj.as_dict() else { continue };
 
         let partial = fd.get(b"T").ok()
-            .and_then(|o| match o {
-                Object::String(b, _) => String::from_utf8(b.clone()).ok(),
-                _ => None,
-            })
+            .and_then(lopdf_string_to_rust)
             .unwrap_or_default();
 
         let full_name = if parent_name.is_empty() {
@@ -2750,6 +2753,11 @@ fn collect_field_ids_recursive(
         if let Ok(kids_obj) = fd.get(b"Kids") {
             let kids: Vec<Object> = match kids_obj {
                 Object::Array(arr) => arr.clone(),
+                Object::Reference(kid_id) => {
+                    doc.get_object(*kid_id).ok()
+                        .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
+                        .unwrap_or_default()
+                }
                 _ => vec![],
             };
             collect_field_ids_recursive(doc, &kids, &full_name, out);
@@ -2870,6 +2878,9 @@ fn append_annotation_to_page(
 fn read_page_box(doc: &lopdf::Document, page_id: ObjectId, key: &[u8]) -> Result<Option<[f32; 4]>> {
     let dict = doc.get_object(page_id)?.as_dict()?;
     match dict.get(key).ok().cloned() {
+        Some(Object::Reference(ref_id)) => {
+            parse_box_array(doc.get_object(ref_id)?).map(Some)
+        }
         Some(obj) => parse_box_array(&obj).map(Some),
         None => Ok(None),
     }
@@ -2913,6 +2924,10 @@ fn generate_file_id() -> [u8; 16] {
         .as_nanos();
     let pid = std::process::id() as u128;
     // LCG mix so that docs saved at the same nanosecond differ.
+    // Mix time + PID using Knuth's MMIX LCG constants (a=6364136223846793005,
+    // c=1442695040888963407) so that docs saved in the same process at similar
+    // times produce distinct IDs. Not cryptographically secure, but sufficient
+    // for PDF's /ID uniqueness requirement (PDF spec §14.4).
     let mixed = nanos
         .wrapping_mul(6364136223846793005u128)
         .wrapping_add(pid.wrapping_mul(1442695040888963407u128));
@@ -2932,6 +2947,15 @@ fn map_lopdf_password_err(e: lopdf::Error) -> Error {
 fn check_finite(values: &[f32], label: &str) -> Result<()> {
     if values.iter().any(|v| !v.is_finite()) {
         return Err(Error::InvalidInput(format!("{label} contains NaN or Infinity")));
+    }
+    Ok(())
+}
+
+fn check_positive_size(width: f32, height: f32, label: &str) -> Result<()> {
+    if width <= 0.0 || height <= 0.0 {
+        return Err(Error::InvalidInput(format!(
+            "{label}: rect width and height must be positive, got ({width}, {height})"
+        )));
     }
     Ok(())
 }
