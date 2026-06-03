@@ -155,6 +155,8 @@ pub struct Document {
     /// Set to true after the first successful `finalize()`. Prevents silent corruption
     /// when new ops are queued after a `save()` call (font subsets would mismatch).
     finalized: bool,
+    /// Pending encryption: (user_password, owner_password). Applied just before save.
+    pending_encryption: Option<(String, String)>,
 }
 
 fn lopdf_string_to_rust(obj: &lopdf::Object) -> Option<String> {
@@ -184,7 +186,7 @@ impl Document {
     /// the file is not a valid PDF.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let inner = lopdf::Document::load(path)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
     }
 
     /// Loads a PDF from an in-memory byte slice.
@@ -193,7 +195,7 @@ impl Document {
     /// Returns [`Error::Pdf`] if the bytes do not represent a valid PDF.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let inner = lopdf::Document::load_from(bytes)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
     }
 
     /// Loads a password-protected PDF from a file path.
@@ -206,7 +208,7 @@ impl Document {
     pub fn from_file_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
         let inner = lopdf::Document::load_with_password(path, password)
             .map_err(map_lopdf_password_err)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
     }
 
     /// Loads a password-protected PDF from an in-memory byte slice.
@@ -219,7 +221,27 @@ impl Document {
     pub fn from_bytes_with_password(bytes: &[u8], password: &str) -> Result<Self> {
         let inner = lopdf::Document::load_from_with_password(bytes, password)
             .map_err(map_lopdf_password_err)?;
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
+    }
+
+    /// Configures the document to be saved with password protection.
+    ///
+    /// Encryption is applied at [`save`](Document::save) time using 128-bit RC4
+    /// (PDF standard revision 3, compatible with all PDF readers).
+    ///
+    /// Pass an empty `user_password` to allow anyone to open the file while still
+    /// restricting editing with the owner password.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
+    pub fn set_encryption(&mut self, user_password: &str, owner_password: &str) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "set_encryption() called after save(); create a new Document".into(),
+            ));
+        }
+        self.pending_encryption = Some((user_password.to_owned(), owner_password.to_owned()));
+        Ok(())
     }
 
     /// Returns `true` if the PDF was encrypted when it was loaded.
@@ -285,7 +307,7 @@ impl Document {
 
         inner.trailer.set("Root", Object::Reference(catalog_id));
 
-        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
     }
 
     /// Returns the number of pages in the document.
@@ -740,7 +762,7 @@ impl Document {
         catalog.remove(b"OpenAction");
         catalog.remove(b"StructTreeRoot");
 
-        Ok(Document { inner: new_inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+        Ok(Document { inner: new_inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None })
     }
 
     /// Returns the document's `/Info` metadata fields.
@@ -1017,6 +1039,7 @@ impl Document {
     /// Propagates font subsetting, PDF mutation, or I/O errors.
     pub fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
         self.finalize()?;
+        self.apply_pending_encryption()?;
         self.inner.save(path)?;
         Ok(())
     }
@@ -1063,7 +1086,37 @@ impl Document {
     /// ```
     pub fn save_to_writer(&mut self, writer: &mut impl std::io::Write) -> Result<()> {
         self.finalize()?;
+        self.apply_pending_encryption()?;
         self.inner.save_to(writer)?;
+        Ok(())
+    }
+
+    /// Applies `pending_encryption` to the inner document if set.
+    fn apply_pending_encryption(&mut self) -> Result<()> {
+        let Some((user_pw, owner_pw)) = self.pending_encryption.take() else {
+            return Ok(());
+        };
+        use lopdf::{EncryptionState, EncryptionVersion, Object, Permissions, StringFormat};
+
+        // /ID is required for encryption key derivation.
+        if self.inner.trailer.get(b"ID").is_err() {
+            let id = generate_file_id();
+            self.inner.trailer.set("ID", Object::Array(vec![
+                Object::String(id.to_vec(), StringFormat::Hexadecimal),
+                Object::String(id.to_vec(), StringFormat::Hexadecimal),
+            ]));
+        }
+
+        let version = EncryptionVersion::V2 {
+            document: &self.inner,
+            owner_password: &owner_pw,
+            user_password: &user_pw,
+            key_length: 128,
+            permissions: Permissions::all(),
+        };
+        let state = EncryptionState::try_from(version)
+            .map_err(|e| Error::InvalidInput(format!("encryption setup: {e}")))?;
+        self.inner.encrypt(&state).map_err(Error::Pdf)?;
         Ok(())
     }
 
@@ -1831,6 +1884,17 @@ impl<'doc> PageHandle<'doc> {
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
     }
 
+    /// Adds a squiggly (wavy underline) annotation under the given area.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
+    pub fn add_squiggly(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_squiggly")?;
+        let d = build_markup_annot(b"Squiggly", rect, color);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
     /// Adds a text (sticky-note) annotation at the given point.
     ///
     /// `point` is `[x, y]` in PDF points (origin: bottom-left). The icon
@@ -2038,6 +2102,91 @@ impl<'doc> PageHandle<'doc> {
         }
         Err(Error::Pdf(lopdf::Error::DictKey("MediaBox".to_string())))
     }
+
+    // -----------------------------------------------------------------------
+    // Page boxes (CropBox, MediaBox, TrimBox, BleedBox, ArtBox)
+    // -----------------------------------------------------------------------
+
+    /// Returns the `/CropBox` of this page in `[x, y, width, height]` format (PDF points).
+    ///
+    /// Returns `None` when no `/CropBox` is set on this page (the visible area is
+    /// then determined by the [`MediaBox`](Self::media_box)).
+    pub fn crop_box(&self) -> Result<Option<[f32; 4]>> {
+        read_page_box(&self.doc.inner, self.page_id, b"CropBox")
+    }
+
+    /// Sets the `/CropBox` of this page. The crop box clips the visible area.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if coordinates contain NaN/Infinity.
+    pub fn set_crop_box(&mut self, rect: [f32; 4]) -> Result<()> {
+        check_finite(&rect, "set_crop_box")?;
+        set_page_box(&mut self.doc.inner, self.page_id, b"CropBox", rect)
+    }
+
+    /// Returns the `/MediaBox` of this page in `[x, y, width, height]` format (PDF points).
+    ///
+    /// Walks up the page tree to find an inherited value, like [`size`](Self::size) does.
+    pub fn media_box(&self) -> Result<[f32; 4]> {
+        let mut current_id = self.page_id;
+        for _ in 0..32 {
+            let (mb_opt, parent_opt) = {
+                let dict = self.doc.inner.get_object(current_id)?.as_dict()?;
+                (dict.get(b"MediaBox").ok().cloned(), dict.get(b"Parent").ok().cloned())
+            };
+            if let Some(mb) = mb_opt {
+                return parse_box_array(&mb);
+            }
+            match parent_opt {
+                Some(Object::Reference(id)) => current_id = id,
+                _ => break,
+            }
+        }
+        Err(Error::Pdf(lopdf::Error::DictKey("MediaBox".to_string())))
+    }
+
+    /// Overrides the `/MediaBox` of this page.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if coordinates contain NaN/Infinity.
+    pub fn set_media_box(&mut self, rect: [f32; 4]) -> Result<()> {
+        check_finite(&rect, "set_media_box")?;
+        set_page_box(&mut self.doc.inner, self.page_id, b"MediaBox", rect)
+    }
+
+    /// Returns the `/TrimBox` of this page, or `None` if unset.
+    pub fn trim_box(&self) -> Result<Option<[f32; 4]>> {
+        read_page_box(&self.doc.inner, self.page_id, b"TrimBox")
+    }
+
+    /// Sets the `/TrimBox` of this page (intended print area after trimming).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if coordinates contain NaN/Infinity.
+    pub fn set_trim_box(&mut self, rect: [f32; 4]) -> Result<()> {
+        check_finite(&rect, "set_trim_box")?;
+        set_page_box(&mut self.doc.inner, self.page_id, b"TrimBox", rect)
+    }
+
+    /// Returns the `/BleedBox` of this page, or `None` if unset.
+    pub fn bleed_box(&self) -> Result<Option<[f32; 4]>> {
+        read_page_box(&self.doc.inner, self.page_id, b"BleedBox")
+    }
+
+    /// Sets the `/BleedBox` of this page (area for bleed in print production).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if coordinates contain NaN/Infinity.
+    pub fn set_bleed_box(&mut self, rect: [f32; 4]) -> Result<()> {
+        check_finite(&rect, "set_bleed_box")?;
+        set_page_box(&mut self.doc.inner, self.page_id, b"BleedBox", rect)
+    }
+
+    // -----------------------------------------------------------------------
 
     fn push_op(&mut self, op: PendingOp) {
         let page_id = self.page_id;
@@ -2714,6 +2863,62 @@ fn append_annotation_to_page(
         }
     }
     Ok(())
+}
+
+/// Reads a named page box (e.g. CropBox) from the page dict.
+/// Returns `None` when the key is absent. Parses `[x1 y1 x2 y2]` → `[x, y, w, h]`.
+fn read_page_box(doc: &lopdf::Document, page_id: ObjectId, key: &[u8]) -> Result<Option<[f32; 4]>> {
+    let dict = doc.get_object(page_id)?.as_dict()?;
+    match dict.get(key).ok().cloned() {
+        Some(obj) => parse_box_array(&obj).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn parse_box_array(obj: &Object) -> Result<[f32; 4]> {
+    let arr = obj.as_array()?;
+    if arr.len() < 4 {
+        return Err(Error::Pdf(lopdf::Error::DictKey("box array too short".to_string())));
+    }
+    let get = |i: usize| -> f32 {
+        match &arr[i] {
+            Object::Integer(v) => *v as f32,
+            Object::Real(v) => *v,
+            _ => 0.0,
+        }
+    };
+    let (x1, y1, x2, y2) = (get(0), get(1), get(2), get(3));
+    Ok([x1, y1, x2 - x1, y2 - y1])
+}
+
+/// Writes a named page box (e.g. CropBox) to the page dict.
+/// Accepts `[x, y, w, h]` and stores as `[x1 y1 x2 y2]`.
+fn set_page_box(doc: &mut lopdf::Document, page_id: ObjectId, key: &[u8], rect: [f32; 4]) -> Result<()> {
+    let box_arr = Object::Array(vec![
+        Object::Real(rect[0]),
+        Object::Real(rect[1]),
+        Object::Real(rect[0] + rect[2]),
+        Object::Real(rect[1] + rect[3]),
+    ]);
+    doc.get_object_mut(page_id)?.as_dict_mut()?.set(key, box_arr);
+    Ok(())
+}
+
+/// Returns a 16-byte pseudo-random document ID using system time + PID.
+/// Used as the /ID trailer entry required by PDF encryption (RC4/AES).
+fn generate_file_id() -> [u8; 16] {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id() as u128;
+    // LCG mix so that docs saved at the same nanosecond differ.
+    let mixed = nanos
+        .wrapping_mul(6364136223846793005u128)
+        .wrapping_add(pid.wrapping_mul(1442695040888963407u128));
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&mixed.to_le_bytes());
+    id
 }
 
 fn map_lopdf_password_err(e: lopdf::Error) -> Error {
