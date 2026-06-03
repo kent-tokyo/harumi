@@ -68,6 +68,14 @@ doc.save("searchable.pdf")?;
 | ブックマーク（ナビゲーションアウトライン）が必要 | `add_bookmark(title, page, y)` — フラットな PDF アウトラインエントリ。CJK タイトルは UTF-16BE で自動エンコード |
 | 全ページにページ番号付きヘッダ/フッタを付けたい | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` に `HeaderFooter` を指定（`flow` feature）。`{{page}}`/`{{total}}` をレンダリング時に展開 |
 | 見出しからアウトラインエントリを自動生成したい | `FlowOptions { auto_bookmarks: true, .. }`（デフォルト） — `push_heading` のたびにブックマークが作成される |
+| パスワード付き PDF を読み込みたい | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — ユーザー・オーナーパスワード両対応 |
+| PDF をパスワード保護して保存したい | `doc.set_encryption(user_pw, owner_pw)` — `save()` 時に 128-bit RC4 で暗号化 |
+| PDF が暗号化されていたか確認したい | `doc.is_encrypted()` — 復号後も `true` を返す |
+| テキストをハイライト・下線・取り消し線で強調したい | `add_highlight` / `add_underline` / `add_strikeout` / `add_squiggly` — QuadPoints 付き PDF マークアップ注釈 |
+| ページに付箋コメントを貼り付けたい | `add_sticky_note([x, y], "テキスト")` — Unicode 対応の Text 注釈 |
+| PDF フォームのフィールド値を読み取りたい | `doc.form_fields()` — `Vec<FormField>` を返す（名前・種別・現在値） |
+| PDF フォームをプログラムから記入したい | `doc.fill_form(&[("フィールド名", "値")])` — NeedAppearances を自動設定 |
+| ページのクロップボックスや印刷用ボックスを操作したい | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 全ボックス種別に対応（`[x,y,w,h]` 形式） |
 
 ---
 
@@ -87,7 +95,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "0.5"
+harumi = "0.7"
 ```
 
 ### 不可視のOCRテキストレイヤー
@@ -631,8 +639,10 @@ harumi
 | **v0.2** | `draw` feature（`add_rect`、`add_line`）、`image` feature（`add_image`、PNG SMask 透明度）、ページ操作（`rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages`） |
 | **v0.3** | `add_text_box`・`add_rect_stroke`・`add_polygon`・`add_ellipse`・`add_path`；`add_text_with_rotation`；セキュリティ強化；`merge_from`；`Document::new`；`extract_pages` |
 | **v0.4** | `extract_text_runs`（CIDフォント＋標準シンプルフォント）、PDF メタデータ読み書き、`replace_text`（Tj/TJ 書き換え・クロスオペレータマッチング・幅補正・フォント保持モード）、`flow` feature（`FlowDocument`、CJK 自動改ページ）、`html` feature、`extract_page_image` |
-| **v0.5** *(current)* | `add_link_url`・`add_link_internal` — クリッカブルな PDF リンクアノテーション；`add_bookmark` — CJK UTF-16BE タイトル対応のドキュメントアウトライン；`HeaderFooter` + `{{page}}`/`{{total}}` の `FlowDocument` 対応；見出しからの `auto_bookmarks`；セキュリティ修正（`set_metadata` ガード・CMap オーバーフロー・CJK ヘッダ計測） |
-| **Next** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）、AcroForm フィールド読み取り、WASM CI、`cargo semver-checks` |
+| **v0.5** | `add_link_url`・`add_link_internal` — クリッカブルな PDF リンクアノテーション；`add_bookmark` — CJK UTF-16BE タイトル対応のドキュメントアウトライン；`HeaderFooter` + `{{page}}`/`{{total}}` の `FlowDocument` 対応；見出しからの `auto_bookmarks`；セキュリティ修正 |
+| **v0.6** | 暗号化 PDF 読み込み（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；マークアップ注釈（ハイライト・下線・取り消し線・付箋）；AcroForm `form_fields()` / `fill_form()`；AGL テーブル +116 エントリ（中欧文字・合字・euro）；Identity-H テキスト抽出フォールバック |
+| **v0.7** *(current)* | `set_encryption` — パスワード保護付き PDF の書き出し；`add_squiggly` — 波線下線注釈；ページボックス全種対応（`crop_box`・`trim_box`・`bleed_box`・`media_box` 読み書き） |
+| **Next** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）、`cargo semver-checks` CI |
 
 ---
 

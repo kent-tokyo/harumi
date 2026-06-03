@@ -68,6 +68,14 @@ doc.save("searchable.pdf")?;
 | 需要书签/文档大纲 | `add_bookmark(title, page, y)` — 平铺式 PDF 大纲条目；CJK 标题自动存储为 UTF-16BE |
 | 需要在每一页添加带页码的页眉/页脚 | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` 配合 `HeaderFooter`（`flow` feature）；渲染时自动替换 `{{page}}` / `{{total}}` |
 | 需要标题自动生成书签 | `FlowOptions { auto_bookmarks: true, .. }`（默认启用）— 每次 `push_heading` 自动创建书签条目 |
+| 需要加载密码保护的 PDF | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — 同时支持用户密码和所有者密码 |
+| 需要保存加密 PDF | `doc.set_encryption(user_pw, owner_pw)` — 在 `save()` 时使用 128-bit RC4 加密 |
+| 需要检测 PDF 是否原来已加密 | `doc.is_encrypted()` — 成功解密后仍返回 `true` |
+| 需要为文字添加高亮/下划线/删除线 | `add_highlight` / `add_underline` / `add_strikeout` / `add_squiggly`（带 QuadPoints 的 PDF 标记注释） |
+| 需要为页面添加便利贴注释 | `add_sticky_note([x, y], "注释内容")` — 支持 Unicode 的 Text 注释 |
+| 需要读取 PDF 表单字段值 | `doc.form_fields()` — 返回 `Vec<FormField>`（名称、类型、当前值） |
+| 需要以程序方式填写 PDF 表单 | `doc.fill_form(&[("字段名", "值")])` — 自动设置 NeedAppearances |
+| 需要操作页面裁切框和印刷框 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 所有框类型均以 `[x,y,w,h]` 格式处理 |
 
 ---
 
@@ -87,7 +95,7 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 
 ```toml
 [dependencies]
-harumi = "0.5"
+harumi = "0.7"
 ```
 
 ### 不可见 OCR 文本层
@@ -566,8 +574,10 @@ harumi
 | **v0.2** | `draw` feature（`add_rect`、`add_line`），`image` feature（`add_image`、PNG SMask 透明度），页面操作（`rotate_page`、`remove_page`、`insert_blank_page`、`reorder_pages`） |
 | **v0.3** | `add_text_box`、`add_rect_stroke`、`add_polygon`、`add_ellipse`、`add_path`；`add_text_with_rotation`；安全加固；`merge_from`；`Document::new`；`extract_pages` |
 | **v0.4** | `extract_text_runs`（CID + 标准字体），PDF 元数据读写，`replace_text`（Tj/TJ 重写、跨算子匹配、宽度补偿、保留字体模式），`flow` feature（`FlowDocument`、CJK 自动分页），`html` feature，`extract_page_image` |
-| **v0.5** *（当前）* | `add_link_url`、`add_link_internal` — 可点击 PDF 链接注释；`add_bookmark` — 含 CJK UTF-16BE 标题的文档大纲/书签；`HeaderFooter` + `{{page}}`/`{{total}}` 用于 `FlowDocument`；`auto_bookmarks` 从标题自动生成大纲；安全修复（`set_metadata` 守护、CMap 溢出、CJK 页眉度量） |
-| **Next** | FlowDocument 内联样式（粗体/斜体/颜色），AcroForm 字段读取，WASM CI，`cargo semver-checks` |
+| **v0.5** | `add_link_url`、`add_link_internal` — 可点击 PDF 链接注释；`add_bookmark` — 含 CJK UTF-16BE 标题的文档大纲/书签；`HeaderFooter` + `{{page}}`/`{{total}}`；安全修复 |
+| **v0.6** | 加密 PDF 读取（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；标记注释（高亮、下划线、删除线、便利贴）；AcroForm `form_fields()` / `fill_form()`；AGL 表格 +116 条目；Identity-H 文字提取回退 |
+| **v0.7** *（当前）* | `set_encryption` — 写入密码保护 PDF；`add_squiggly` — 波浪下划线注释；页面框全类型支持（裁切框、修边框、出血框、媒体框读写） |
+| **Next** | FlowDocument 内联样式（粗体/斜体/颜色），`cargo semver-checks` CI |
 
 ---
 
