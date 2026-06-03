@@ -1272,6 +1272,7 @@ mod tests {
             dw: 1000,
             w_runs: vec![],
             bytes_per_char,
+            identity_fallback: false,
         }
     }
 

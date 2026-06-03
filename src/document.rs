@@ -97,6 +97,40 @@ pub struct PdfMetadata {
     pub creator: Option<String>,
 }
 
+/// The type of a PDF form field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldType {
+    /// Single-line or multiline text input (`/Tx`).
+    Text,
+    /// Checkbox or push-button (`/Btn`, non-radio).
+    Checkbox,
+    /// Radio button group (`/Btn` with radio flag set).
+    Radio,
+    /// Drop-down list or list box (`/Ch`).
+    Choice,
+    /// Digital signature field (`/Sig`).
+    Signature,
+    /// Unknown or unsupported field type.
+    Unknown,
+}
+
+/// A PDF form field returned by [`Document::form_fields`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct FormField {
+    /// The field name. For nested fields this is the dotted path,
+    /// e.g. `"address.city"`.
+    pub name: String,
+    /// The kind of input widget.
+    pub field_type: FieldType,
+    /// The field's current string value.
+    ///
+    /// For text fields this is the entered text. For checkboxes/radio buttons
+    /// this is the appearance state name (`"Yes"`, `"Off"`, etc.). For choice
+    /// fields this is the selected option. Empty string when no value is set.
+    pub value: String,
+}
+
 /// Raw font data stored before subsetting.
 struct RawFont {
     ttf_bytes: Vec<u8>,
@@ -160,6 +194,42 @@ impl Document {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let inner = lopdf::Document::load_from(bytes)?;
         Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+    }
+
+    /// Loads a password-protected PDF from a file path.
+    ///
+    /// The document is decrypted during loading. Both owner and user passwords are accepted.
+    ///
+    /// # Errors
+    /// Returns [`Error::WrongPassword`] if the password is incorrect, or [`Error::Pdf`] /
+    /// [`Error::Io`] for other failures.
+    pub fn from_file_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
+        let inner = lopdf::Document::load_with_password(path, password)
+            .map_err(map_lopdf_password_err)?;
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+    }
+
+    /// Loads a password-protected PDF from an in-memory byte slice.
+    ///
+    /// The document is decrypted during loading. Both owner and user passwords are accepted.
+    ///
+    /// # Errors
+    /// Returns [`Error::WrongPassword`] if the password is incorrect, or [`Error::Pdf`] for
+    /// other failures.
+    pub fn from_bytes_with_password(bytes: &[u8], password: &str) -> Result<Self> {
+        let inner = lopdf::Document::load_from_with_password(bytes, password)
+            .map_err(map_lopdf_password_err)?;
+        Ok(Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false })
+    }
+
+    /// Returns `true` if the PDF was encrypted when it was loaded.
+    ///
+    /// A document opened with [`from_file_with_password`](Document::from_file_with_password)
+    /// is decrypted in memory and this method still returns `true`.
+    /// A document opened with [`from_file`](Document::from_file) that required no password
+    /// returns `false`.
+    pub fn is_encrypted(&self) -> bool {
+        self.inner.was_encrypted()
     }
 
     /// Creates a new single-page blank PDF document.
@@ -738,6 +808,109 @@ impl Document {
         let info_id = self.inner.add_object(Object::Dictionary(dict));
         self.inner.trailer.set("Info", Object::Reference(info_id));
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // AcroForm
+    // -----------------------------------------------------------------------
+
+    /// Returns all interactive form fields present in the document.
+    ///
+    /// Fields are collected recursively from the `/AcroForm` field tree.
+    /// Leaf fields carry a [`FieldType`] and their current string value.
+    /// Non-interactive documents (no `/AcroForm`) return an empty `Vec`.
+    ///
+    /// # Errors
+    /// Returns [`Error::Pdf`] only on structurally malformed AcroForm data.
+    pub fn form_fields(&self) -> Result<Vec<FormField>> {
+        let Some(acroform_id) = acroform_id(&self.inner) else {
+            return Ok(Vec::new());
+        };
+        let Ok(acroform) = self.inner.get_object(acroform_id)?.as_dict() else {
+            return Ok(Vec::new());
+        };
+        let Ok(fields_obj) = acroform.get(b"Fields") else {
+            return Ok(Vec::new());
+        };
+        let field_refs: Vec<Object> = match fields_obj {
+            Object::Array(arr) => arr.clone(),
+            Object::Reference(id) => {
+                match self.inner.get_object(*id)? {
+                    Object::Array(arr) => arr.clone(),
+                    _ => return Ok(Vec::new()),
+                }
+            }
+            _ => return Ok(Vec::new()),
+        };
+        let mut out = Vec::new();
+        collect_fields_recursive(&self.inner, &field_refs, "", &mut out);
+        Ok(out)
+    }
+
+    /// Fills one or more form fields by name.
+    ///
+    /// `values` is a slice of `(field_name, value_string)` pairs.
+    ///
+    /// For **text fields** the string is used as-is. For **checkboxes** the
+    /// strings `"true"`, `"yes"`, `"on"`, `"1"` (case-insensitive) set the field
+    /// to its `/Yes` state; everything else sets it to `/Off`.
+    ///
+    /// The method sets `/NeedAppearances true` on the `/AcroForm` dictionary
+    /// so that PDF viewers regenerate the visual appearance.
+    ///
+    /// Returns the number of fields that were updated.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
+    pub fn fill_form(&mut self, values: &[(&str, &str)]) -> Result<usize> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "fill_form() called after save(); create a new Document".into(),
+            ));
+        }
+        if values.is_empty() {
+            return Ok(0);
+        }
+        let Some(acroform_id) = acroform_id(&self.inner) else {
+            return Ok(0);
+        };
+
+        // Collect field IDs and their types so we can update them.
+        let field_ids = collect_field_ids(&self.inner, acroform_id);
+
+        let mut updated = 0usize;
+        for (name, value) in values {
+            for (id, ft, _partial_name) in &field_ids {
+                if _partial_name == name {
+                    if let Ok(dict) = self.inner.get_object_mut(*id)?.as_dict_mut() {
+                        match ft {
+                            FieldType::Checkbox | FieldType::Radio => {
+                                let on = matches!(
+                                    value.to_ascii_lowercase().as_str(),
+                                    "true" | "yes" | "on" | "1"
+                                );
+                                let state = if on { b"Yes".as_ref() } else { b"Off".as_ref() };
+                                dict.set("V",  Object::Name(state.to_vec()));
+                                dict.set("AS", Object::Name(state.to_vec()));
+                            }
+                            _ => {
+                                dict.set("V", pdf_text_string(value));
+                            }
+                        }
+                        updated += 1;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Signal viewers to regenerate appearances.
+        if updated > 0 {
+            if let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+                d.set("NeedAppearances", Object::Boolean(true));
+            }
+        }
+        Ok(updated)
     }
 
     /// Appends a named bookmark (PDF document outline entry) pointing to a
@@ -1618,6 +1791,73 @@ impl<'doc> PageHandle<'doc> {
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
     }
 
+    // -----------------------------------------------------------------------
+    // Markup annotations (Highlight / Underline / StrikeOut)
+    // -----------------------------------------------------------------------
+
+    /// Adds a highlight annotation over the given area.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points. `color` is an RGB
+    /// triple in `0.0..=1.0`; a typical yellow highlight is `[1.0, 1.0, 0.0]`.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
+    pub fn add_highlight(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_highlight")?;
+        let d = build_markup_annot(b"Highlight", rect, color);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    /// Adds an underline annotation under the given area.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
+    pub fn add_underline(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_underline")?;
+        let d = build_markup_annot(b"Underline", rect, color);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    /// Adds a strikeout (strikethrough) annotation over the given area.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
+    pub fn add_strikeout(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_strikeout")?;
+        let d = build_markup_annot(b"StrikeOut", rect, color);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    /// Adds a text (sticky-note) annotation at the given point.
+    ///
+    /// `point` is `[x, y]` in PDF points (origin: bottom-left). The icon
+    /// appears at the given position; viewers typically display a 20×20 pt icon.
+    /// `contents` is the note body (Unicode, UTF-16BE encoded in the PDF).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
+    pub fn add_sticky_note(&mut self, point: [f32; 2], contents: &str) -> Result<()> {
+        check_finite(&[point[0], point[1]], "add_sticky_note")?;
+        let mut d = Dictionary::new();
+        d.set("Type",     Object::Name(b"Annot".to_vec()));
+        d.set("Subtype",  Object::Name(b"Text".to_vec()));
+        d.set("Rect", Object::Array(vec![
+            Object::Real(point[0]),
+            Object::Real(point[1]),
+            Object::Real(point[0] + 20.0),
+            Object::Real(point[1] + 20.0),
+        ]));
+        d.set("Contents", pdf_text_string(contents));
+        d.set("Open",     Object::Boolean(false));
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    // -----------------------------------------------------------------------
+
     /// Overlays multi-line visible text within a bounding box.
     ///
     /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
@@ -2213,6 +2453,206 @@ fn pdf_text_string(s: &str) -> Object {
     Object::String(bytes, StringFormat::Literal)
 }
 
+/// Returns the ObjectId of the /AcroForm dictionary if one exists.
+fn acroform_id(doc: &lopdf::Document) -> Option<ObjectId> {
+    let root_ref = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
+    let catalog = doc.get_object(root_ref).ok()?.as_dict().ok()?;
+    catalog.get(b"AcroForm").ok()?.as_reference().ok()
+}
+
+/// Recursively collects `FormField` entries from a PDF field array.
+fn collect_fields_recursive(
+    doc: &lopdf::Document,
+    field_refs: &[Object],
+    parent_name: &str,
+    out: &mut Vec<FormField>,
+) {
+    for obj in field_refs {
+        let id = match obj {
+            Object::Reference(id) => *id,
+            _ => continue,
+        };
+        let Ok(field_obj) = doc.get_object(id) else { continue };
+        let Ok(fd) = field_obj.as_dict() else { continue };
+
+        let partial = fd.get(b"T").ok()
+            .and_then(|o| match o {
+                Object::String(b, _) => String::from_utf8(b.clone()).ok().or_else(|| {
+                    if b.starts_with(&[0xFE, 0xFF]) {
+                        let units: Vec<u16> = b[2..].chunks(2)
+                            .map(|c| u16::from_be_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
+                            .collect();
+                        String::from_utf16(&units).ok()
+                    } else { None }
+                }),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let full_name = if parent_name.is_empty() {
+            partial.clone()
+        } else if partial.is_empty() {
+            parent_name.to_owned()
+        } else {
+            format!("{parent_name}.{partial}")
+        };
+
+        // If /Kids present: intermediate node, recurse.
+        if let Ok(kids_obj) = fd.get(b"Kids") {
+            let kids: Vec<Object> = match kids_obj {
+                Object::Array(arr) => arr.clone(),
+                Object::Reference(kid_id) => {
+                    doc.get_object(*kid_id).ok()
+                        .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
+                        .unwrap_or_default()
+                }
+                _ => vec![],
+            };
+            collect_fields_recursive(doc, &kids, &full_name, out);
+            continue;
+        }
+
+        // Leaf field.
+        let ft = fd.get(b"FT").ok()
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+
+        let field_type = match ft {
+            Some(b"Tx") => FieldType::Text,
+            Some(b"Btn") => {
+                let flags = fd.get(b"Ff").ok()
+                    .and_then(|o| o.as_i64().ok())
+                    .unwrap_or(0);
+                if flags & (1 << 15) != 0 { FieldType::Radio } else { FieldType::Checkbox }
+            }
+            Some(b"Ch") => FieldType::Choice,
+            Some(b"Sig") => FieldType::Signature,
+            _ => FieldType::Unknown,
+        };
+
+        let value = fd.get(b"V").ok()
+            .map(|v| match v {
+                Object::String(b, _) => {
+                    if b.starts_with(&[0xFE, 0xFF]) {
+                        let units: Vec<u16> = b[2..].chunks(2)
+                            .map(|c| u16::from_be_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
+                            .collect();
+                        String::from_utf16(&units).unwrap_or_default()
+                    } else {
+                        String::from_utf8(b.clone()).unwrap_or_default()
+                    }
+                }
+                Object::Name(n) => String::from_utf8_lossy(n).into_owned(),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+
+        if !full_name.is_empty() {
+            out.push(FormField { name: full_name, field_type, value });
+        }
+    }
+}
+
+/// Collects (ObjectId, FieldType, full_name) for all leaf fields under /AcroForm.
+fn collect_field_ids(doc: &lopdf::Document, acroform_id: ObjectId) -> Vec<(ObjectId, FieldType, String)> {
+    let Ok(acroform) = doc.get_object(acroform_id).and_then(|o| o.as_dict()) else {
+        return vec![];
+    };
+    let field_refs: Vec<Object> = match acroform.get(b"Fields") {
+        Ok(Object::Array(arr)) => arr.clone(),
+        Ok(Object::Reference(id)) => {
+            doc.get_object(*id).ok()
+                .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
+                .unwrap_or_default()
+        }
+        _ => return vec![],
+    };
+
+    let mut out = Vec::new();
+    collect_field_ids_recursive(doc, &field_refs, "", &mut out);
+    out
+}
+
+fn collect_field_ids_recursive(
+    doc: &lopdf::Document,
+    field_refs: &[Object],
+    parent_name: &str,
+    out: &mut Vec<(ObjectId, FieldType, String)>,
+) {
+    for obj in field_refs {
+        let id = match obj { Object::Reference(id) => *id, _ => continue };
+        let Ok(field_obj) = doc.get_object(id) else { continue };
+        let Ok(fd) = field_obj.as_dict() else { continue };
+
+        let partial = fd.get(b"T").ok()
+            .and_then(|o| match o {
+                Object::String(b, _) => String::from_utf8(b.clone()).ok(),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let full_name = if parent_name.is_empty() {
+            partial.clone()
+        } else if partial.is_empty() {
+            parent_name.to_owned()
+        } else {
+            format!("{parent_name}.{partial}")
+        };
+
+        if let Ok(kids_obj) = fd.get(b"Kids") {
+            let kids: Vec<Object> = match kids_obj {
+                Object::Array(arr) => arr.clone(),
+                _ => vec![],
+            };
+            collect_field_ids_recursive(doc, &kids, &full_name, out);
+            continue;
+        }
+
+        let ft = fd.get(b"FT").ok()
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+        let field_type = match ft {
+            Some(b"Tx") => FieldType::Text,
+            Some(b"Btn") => {
+                let flags = fd.get(b"Ff").ok().and_then(|o| o.as_i64().ok()).unwrap_or(0);
+                if flags & (1 << 15) != 0 { FieldType::Radio } else { FieldType::Checkbox }
+            }
+            Some(b"Ch") => FieldType::Choice,
+            Some(b"Sig") => FieldType::Signature,
+            _ => FieldType::Unknown,
+        };
+
+        if !full_name.is_empty() {
+            out.push((id, field_type, full_name));
+        }
+    }
+}
+
+/// Builds a markup annotation dictionary (Highlight, Underline, StrikeOut).
+fn build_markup_annot(subtype: &[u8], rect: [f32; 4], color: [f32; 3]) -> Dictionary {
+    let x2 = rect[0] + rect[2];
+    let y2 = rect[1] + rect[3];
+    let mut d = Dictionary::new();
+    d.set("Type",    Object::Name(b"Annot".to_vec()));
+    d.set("Subtype", Object::Name(subtype.to_vec()));
+    d.set("Rect", Object::Array(vec![
+        Object::Real(rect[0]), Object::Real(rect[1]),
+        Object::Real(x2),      Object::Real(y2),
+    ]));
+    // QuadPoints: upper-left, upper-right, lower-left, lower-right (Acrobat convention)
+    d.set("QuadPoints", Object::Array(vec![
+        Object::Real(rect[0]), Object::Real(y2),
+        Object::Real(x2),      Object::Real(y2),
+        Object::Real(rect[0]), Object::Real(rect[1]),
+        Object::Real(x2),      Object::Real(rect[1]),
+    ]));
+    d.set("C", Object::Array(vec![
+        Object::Real(color[0]), Object::Real(color[1]), Object::Real(color[2]),
+    ]));
+    d.set("Border", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0), Object::Integer(0),
+    ]));
+    d
+}
+
 /// Builds the common fields of a /Link annotation dictionary (without the /A or /Dest key).
 fn build_link_annot_base(rect: [f32; 4]) -> Dictionary {
     let mut d = Dictionary::new();
@@ -2274,6 +2714,14 @@ fn append_annotation_to_page(
         }
     }
     Ok(())
+}
+
+fn map_lopdf_password_err(e: lopdf::Error) -> Error {
+    match e {
+        lopdf::Error::InvalidPassword => Error::WrongPassword,
+        lopdf::Error::IO(io_err) => Error::Io(io_err),
+        other => Error::Pdf(other),
+    }
 }
 
 fn check_finite(values: &[f32], label: &str) -> Result<()> {

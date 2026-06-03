@@ -39,6 +39,9 @@ pub(crate) struct FontInfo {
     pub(crate) w_runs: Vec<WidthRun>,
     /// 1 for simple fonts (Type1, TrueType), 2 for CID fonts (Type0).
     pub(crate) bytes_per_char: u8,
+    /// For Type0 fonts with Identity-H/V encoding and no ToUnicode: treat the 2-byte GID
+    /// directly as a Unicode scalar value (char::from_u32). Best-effort heuristic.
+    pub(crate) identity_fallback: bool,
 }
 
 pub(crate) struct WidthRun {
@@ -178,6 +181,9 @@ fn collect_fonts_inner(
 
 fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo> {
     let to_unicode = try_parse_to_unicode(fd, doc).unwrap_or_default();
+    // When ToUnicode is absent and the encoding is Identity-H/V, fall back to treating
+    // the 2-byte character code directly as a Unicode scalar (best-effort).
+    let identity_fallback = to_unicode.is_empty() && is_identity_cmap(fd);
 
     let desc_obj = fd.get(b"DescendantFonts").ok()?;
     let Object::Array(desc_arr) = desc_obj else { return None };
@@ -199,7 +205,17 @@ fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo
         .map(parse_w_array)
         .unwrap_or_default();
 
-    Some(FontInfo { to_unicode, dw, w_runs, bytes_per_char: 2 })
+    Some(FontInfo { to_unicode, dw, w_runs, bytes_per_char: 2, identity_fallback })
+}
+
+/// Returns true when the Type0 font's /Encoding is Identity-H or Identity-V (character code =
+/// CID directly). No /Encoding entry is also treated as Identity-H per common practice.
+fn is_identity_cmap(fd: &Dictionary) -> bool {
+    match fd.get(b"Encoding").ok() {
+        Some(Object::Name(n)) => matches!(n.as_slice(), b"Identity-H" | b"Identity-V"),
+        None => true,
+        _ => false,
+    }
 }
 
 fn collect_simple_font(fd: &Dictionary, doc: &lopdf::Document) -> FontInfo {
@@ -210,7 +226,7 @@ fn collect_simple_font(fd: &Dictionary, doc: &lopdf::Document) -> FontInfo {
     };
 
     let (w_runs, dw) = collect_simple_font_widths(fd, doc);
-    FontInfo { to_unicode, dw, w_runs, bytes_per_char: 1 }
+    FontInfo { to_unicode, dw, w_runs, bytes_per_char: 1, identity_fallback: false }
 }
 
 fn try_parse_to_unicode(
@@ -590,60 +606,95 @@ fn glyph_name_to_char(name: &[u8]) -> Option<char> {
 
 /// Sorted by glyph name (required for binary_search_by_key).
 static AGL_TABLE: &[(&str, char)] = &[
-    ("A", 'A'), ("AE", 'Æ'), ("Aacute", 'Á'), ("Acircumflex", 'Â'),
-    ("Adieresis", 'Ä'), ("Agrave", 'À'), ("Aring", 'Å'), ("Atilde", 'Ã'),
-    ("B", 'B'), ("C", 'C'), ("Ccedilla", 'Ç'), ("D", 'D'), ("Delta", '∆'),
-    ("E", 'E'), ("Eacute", 'É'), ("Ecircumflex", 'Ê'), ("Edieresis", 'Ë'),
-    ("Egrave", 'È'), ("Eth", 'Ð'), ("Euro", '€'),
-    ("F", 'F'), ("G", 'G'), ("H", 'H'),
+    // A
+    ("A", 'A'), ("AE", 'Æ'), ("Aacute", 'Á'), ("Abreve", 'Ă'), ("Acircumflex", 'Â'),
+    ("Adieresis", 'Ä'), ("Agrave", 'À'), ("Amacron", 'Ā'), ("Aogonek", 'Ą'),
+    ("Aring", 'Å'), ("Atilde", 'Ã'),
+    // B–D
+    ("B", 'B'), ("C", 'C'), ("Cacute", 'Ć'), ("Ccaron", 'Č'), ("Ccedilla", 'Ç'),
+    ("D", 'D'), ("Dcaron", 'Ď'), ("Dcroat", 'Đ'), ("Delta", '∆'),
+    // E
+    ("E", 'E'), ("Eacute", 'É'), ("Ecaron", 'Ě'), ("Ecircumflex", 'Ê'), ("Edieresis", 'Ë'),
+    ("Egrave", 'È'), ("Emacron", 'Ē'), ("Eogonek", 'Ę'), ("Eth", 'Ð'), ("Euro", '€'),
+    // F–H
+    ("F", 'F'), ("G", 'G'), ("Gbreve", 'Ğ'), ("H", 'H'),
+    // I–K
     ("I", 'I'), ("Iacute", 'Í'), ("Icircumflex", 'Î'), ("Idieresis", 'Ï'),
-    ("Igrave", 'Ì'), ("J", 'J'), ("K", 'K'), ("L", 'L'), ("Lslash", 'Ł'),
-    ("M", 'M'), ("N", 'N'), ("Ntilde", 'Ñ'),
-    ("O", 'O'), ("OE", 'Œ'), ("Oacute", 'Ó'), ("Ocircumflex", 'Ô'),
-    ("Odieresis", 'Ö'), ("Ograve", 'Ò'), ("Omega", '\u{2126}'),
+    ("Idotaccent", 'İ'), ("Igrave", 'Ì'), ("Imacron", 'Ī'), ("Iogonek", 'Į'),
+    ("J", 'J'), ("K", 'K'),
+    // L
+    ("L", 'L'), ("Lacute", 'Ĺ'), ("Lcaron", 'Ľ'), ("Lcommaaccent", 'Ļ'), ("Lslash", 'Ł'),
+    // M–N
+    ("M", 'M'), ("N", 'N'), ("Nacute", 'Ń'), ("Ncaron", 'Ň'), ("Ncommaaccent", 'Ņ'),
+    ("Ntilde", 'Ñ'),
+    // O
+    ("O", 'O'), ("OE", 'Œ'), ("Oacute", 'Ó'), ("Ocircumflex", 'Ô'), ("Odblacute", 'Ő'),
+    ("Odieresis", 'Ö'), ("Ograve", 'Ò'), ("Omacron", 'Ō'), ("Omega", '\u{2126}'),
     ("Oslash", 'Ø'), ("Otilde", 'Õ'),
-    ("P", 'P'), ("Q", 'Q'), ("R", 'R'),
-    ("S", 'S'), ("Scaron", 'Š'), ("T", 'T'), ("Thorn", 'Þ'),
-    ("U", 'U'), ("Uacute", 'Ú'), ("Ucircumflex", 'Û'), ("Udieresis", 'Ü'),
-    ("Ugrave", 'Ù'), ("V", 'V'), ("W", 'W'), ("X", 'X'),
+    // P–R
+    ("P", 'P'), ("Q", 'Q'), ("R", 'R'), ("Racute", 'Ŕ'), ("Rcaron", 'Ř'),
+    ("Rcommaaccent", 'Ŗ'),
+    // S
+    ("S", 'S'), ("Sacute", 'Ś'), ("Scaron", 'Š'), ("Scedilla", 'Ş'),
+    ("Scommaaccent", 'Ș'),
+    // T
+    ("T", 'T'), ("Tcaron", 'Ť'), ("Tcedilla", 'Ţ'), ("Tcommaaccent", 'Ț'), ("Thorn", 'Þ'),
+    // U
+    ("U", 'U'), ("Uacute", 'Ú'), ("Ucircumflex", 'Û'), ("Udblacute", 'Ű'), ("Udieresis", 'Ü'),
+    ("Ugrave", 'Ù'), ("Umacron", 'Ū'), ("Uogonek", 'Ų'), ("Uring", 'Ů'),
+    ("V", 'V'), ("W", 'W'), ("X", 'X'),
+    // Y–Z
     ("Y", 'Y'), ("Yacute", 'Ý'), ("Ydieresis", 'Ÿ'),
-    ("Z", 'Z'), ("Zcaron", 'Ž'),
-    ("a", 'a'), ("aacute", 'á'), ("acircumflex", 'â'), ("adieresis", 'ä'),
-    ("ae", 'æ'), ("agrave", 'à'), ("ampersand", '&'), ("approxequal", '≈'),
-    ("aring", 'å'), ("asciicircum", '^'), ("asciitilde", '~'),
+    ("Z", 'Z'), ("Zacute", 'Ź'), ("Zcaron", 'Ž'), ("Zdotaccent", 'Ż'),
+    // a
+    ("a", 'a'), ("aacute", 'á'), ("abreve", 'ă'), ("acircumflex", 'â'), ("adieresis", 'ä'),
+    ("ae", 'æ'), ("agrave", 'à'), ("amacron", 'ā'), ("ampersand", '&'), ("aogonek", 'ą'),
+    ("approxequal", '≈'), ("aring", 'å'), ("asciicircum", '^'), ("asciitilde", '~'),
     ("asterisk", '*'), ("at", '@'), ("atilde", 'ã'),
+    // b–c
     ("b", 'b'), ("backslash", '\\'), ("bar", '|'), ("braceleft", '{'),
     ("braceright", '}'), ("bracketleft", '['), ("bracketright", ']'),
     ("breve", '˘'), ("brokenbar", '¦'), ("bullet", '•'),
-    ("c", 'c'), ("caron", 'ˇ'), ("ccedilla", 'ç'), ("cedilla", '¸'),
-    ("cent", '¢'), ("circumflex", 'ˆ'), ("colon", ':'), ("comma", ','),
+    ("c", 'c'), ("cacute", 'ć'), ("caron", 'ˇ'), ("ccaron", 'č'), ("ccedilla", 'ç'),
+    ("cedilla", '¸'), ("cent", '¢'), ("circumflex", 'ˆ'), ("colon", ':'), ("comma", ','),
     ("copyright", '©'), ("currency", '¤'),
-    ("d", 'd'), ("dagger", '†'), ("daggerdbl", '‡'), ("degree", '°'),
-    ("dieresis", '¨'), ("divide", '÷'), ("dollar", '$'),
+    // d
+    ("d", 'd'), ("dagger", '†'), ("daggerdbl", '‡'), ("dcaron", 'ď'), ("dcroat", 'đ'),
+    ("degree", '°'), ("dieresis", '¨'), ("divide", '÷'), ("dollar", '$'),
     ("dotaccent", '˙'), ("dotlessi", 'ı'),
-    ("e", 'e'), ("eacute", 'é'), ("ecircumflex", 'ê'), ("edieresis", 'ë'),
-    ("egrave", 'è'), ("eight", '8'), ("ellipsis", '…'), ("emdash", '—'),
-    ("endash", '–'), ("equal", '='), ("eth", 'ð'), ("exclam", '!'),
-    ("exclamdown", '¡'),
-    ("f", 'f'), ("fi", '\u{FB01}'), ("five", '5'), ("fl", '\u{FB02}'),
-    ("florin", 'ƒ'), ("four", '4'), ("fraction", '⁄'),
-    ("g", 'g'), ("germandbls", 'ß'), ("grave", '`'), ("greater", '>'),
+    // e
+    ("e", 'e'), ("eacute", 'é'), ("ecaron", 'ě'), ("ecircumflex", 'ê'), ("edieresis", 'ë'),
+    ("egrave", 'è'), ("eight", '8'), ("ellipsis", '…'), ("emacron", 'ē'), ("emdash", '—'),
+    ("endash", '–'), ("eogonek", 'ę'), ("equal", '='), ("eth", 'ð'), ("euro", '€'),
+    ("exclam", '!'), ("exclamdown", '¡'),
+    // f
+    ("f", 'f'), ("ff", '\u{FB00}'), ("ffi", '\u{FB03}'), ("ffl", '\u{FB04}'),
+    ("fi", '\u{FB01}'), ("five", '5'), ("fl", '\u{FB02}'), ("florin", 'ƒ'),
+    ("four", '4'), ("fraction", '⁄'),
+    // g
+    ("g", 'g'), ("gbreve", 'ğ'), ("germandbls", 'ß'), ("grave", '`'), ("greater", '>'),
     ("greaterequal", '≥'), ("guillemotleft", '«'), ("guillemotright", '»'),
     ("guilsinglleft", '‹'), ("guilsinglright", '›'),
+    // h–i
     ("h", 'h'), ("hungarumlaut", '˝'), ("hyphen", '-'),
     ("i", 'i'), ("iacute", 'í'), ("icircumflex", 'î'), ("idieresis", 'ï'),
-    ("igrave", 'ì'), ("infinity", '∞'), ("integral", '∫'),
+    ("idotaccent", 'ı'), ("igrave", 'ì'), ("imacron", 'ī'), ("infinity", '∞'),
+    ("integral", '∫'), ("iogonek", 'į'),
+    // j–k
     ("j", 'j'), ("k", 'k'),
-    ("l", 'l'), ("less", '<'), ("lessequal", '≤'), ("logicalnot", '¬'),
-    ("lozenge", '◊'), ("lslash", 'ł'),
+    // l
+    ("l", 'l'), ("lacute", 'ĺ'), ("lcaron", 'ľ'), ("lcommaaccent", 'ļ'),
+    ("less", '<'), ("lessequal", '≤'), ("logicalnot", '¬'), ("lozenge", '◊'), ("lslash", 'ł'),
+    // m–n
     ("m", 'm'), ("macron", '¯'), ("mu", 'µ'), ("multiply", '×'),
-    ("n", 'n'), ("nine", '9'), ("notequal", '≠'), ("ntilde", 'ñ'),
-    ("numbersign", '#'),
-    ("o", 'o'), ("oacute", 'ó'), ("ocircumflex", 'ô'), ("odieresis", 'ö'),
-    ("oe", 'œ'), ("ogonek", '˛'), ("ograve", 'ò'), ("one", '1'),
+    ("n", 'n'), ("nacute", 'ń'), ("ncaron", 'ň'), ("ncommaaccent", 'ņ'), ("nine", '9'),
+    ("notequal", '≠'), ("ntilde", 'ñ'), ("numbersign", '#'),
+    // o
+    ("o", 'o'), ("oacute", 'ó'), ("ocircumflex", 'ô'), ("odblacute", 'ő'), ("odieresis", 'ö'),
+    ("oe", 'œ'), ("ogonek", '˛'), ("ograve", 'ò'), ("omacron", 'ō'), ("one", '1'),
     ("onehalf", '½'), ("onequarter", '¼'), ("onesuperior", '¹'),
-    ("ordfeminine", 'ª'), ("ordmasculine", 'º'), ("oslash", 'ø'),
-    ("otilde", 'õ'),
+    ("ordfeminine", 'ª'), ("ordmasculine", 'º'), ("oslash", 'ø'), ("otilde", 'õ'),
+    // p–q
     ("p", 'p'), ("paragraph", '¶'), ("parenleft", '('), ("parenright", ')'),
     ("partialdiff", '∂'), ("percent", '%'), ("period", '.'),
     ("periodcentered", '·'), ("perthousand", '‰'), ("pi", 'π'),
@@ -651,20 +702,28 @@ static AGL_TABLE: &[(&str, char)] = &[
     ("q", 'q'), ("question", '?'), ("questiondown", '¿'),
     ("quotedbl", '"'), ("quotedblbase", '„'), ("quotedblleft", '"'),
     ("quotedblright", '"'), ("quoteleft", '\u{2018}'),
-    ("quoteright", '\u{2019}'), ("quotesinglbase", '‚'),
-    ("quotesingle", '\''),
-    ("r", 'r'), ("radical", '√'), ("registered", '®'), ("ring", '˚'),
-    ("s", 's'), ("scaron", 'š'), ("section", '§'), ("semicolon", ';'),
+    ("quoteright", '\u{2019}'), ("quotesinglbase", '‚'), ("quotesingle", '\''),
+    // r
+    ("r", 'r'), ("racute", 'ŕ'), ("radical", '√'), ("rcaron", 'ř'), ("rcommaaccent", 'ŗ'),
+    ("registered", '®'), ("ring", '˚'),
+    // s
+    ("s", 's'), ("sacute", 'ś'), ("scaron", 'š'), ("scedilla", 'ş'),
+    ("scommaaccent", 'ș'), ("section", '§'), ("semicolon", ';'),
     ("seven", '7'), ("six", '6'), ("slash", '/'), ("space", ' '),
     ("sterling", '£'), ("summation", '∑'),
-    ("t", 't'), ("thorn", 'þ'), ("three", '3'), ("threequarters", '¾'),
+    // t
+    ("t", 't'), ("tcaron", 'ť'), ("tcedilla", 'ţ'), ("tcommaaccent", 'ț'),
+    ("thorn", 'þ'), ("three", '3'), ("threequarters", '¾'),
     ("threesuperior", '³'), ("tilde", '˜'), ("trademark", '™'),
     ("two", '2'), ("twosuperior", '²'),
-    ("u", 'u'), ("uacute", 'ú'), ("ucircumflex", 'û'), ("udieresis", 'ü'),
-    ("ugrave", 'ù'), ("underscore", '_'),
+    // u
+    ("u", 'u'), ("uacute", 'ú'), ("ucircumflex", 'û'), ("udblacute", 'ű'), ("udieresis", 'ü'),
+    ("ugrave", 'ù'), ("umacron", 'ū'), ("underscore", '_'), ("uogonek", 'ų'), ("uring", 'ů'),
+    // v–x
     ("v", 'v'), ("w", 'w'), ("x", 'x'),
+    // y–z
     ("y", 'y'), ("yacute", 'ý'), ("ydieresis", 'ÿ'), ("yen", '¥'),
-    ("z", 'z'), ("zcaron", 'ž'), ("zero", '0'),
+    ("z", 'z'), ("zacute", 'ź'), ("zcaron", 'ž'), ("zdotaccent", 'ż'), ("zero", '0'),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1235,7 +1294,15 @@ fn decode_chars_to_fragment(
             if !char_bytes.len().is_multiple_of(2) { return None; }
             for chunk in char_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
-                let Some(&ch) = font_info.to_unicode.get(&gid) else { continue };
+                let ch = font_info.to_unicode.get(&gid).copied().or_else(|| {
+                    if font_info.identity_fallback {
+                        char::from_u32(gid as u32)
+                            .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+                    } else {
+                        None
+                    }
+                });
+                let Some(ch) = ch else { continue };
                 text.push(ch);
                 let aw = font_info.advance_width(gid);
                 total_width += aw as f32 / 1000.0 * font_size;
@@ -1393,6 +1460,7 @@ mod tests {
             dw: 1000,
             w_runs: vec![WidthRun { start_gid: 5, widths: vec![600] }],
             bytes_per_char: 2,
+            identity_fallback: false,
         };
         assert_eq!(info.advance_width(5), 600);
         assert_eq!(info.advance_width(0), 1000);
@@ -1424,7 +1492,7 @@ mod tests {
     fn glyph_name_lookup_spot_checks() {
         assert_eq!(glyph_name_to_char(b"space"), Some(' '));
         assert_eq!(glyph_name_to_char(b"eacute"), Some('é'));
-        assert_eq!(glyph_name_to_char(b"euro"), None); // 'euro' not in our table (Euro is)
+        assert_eq!(glyph_name_to_char(b"euro"), Some('€'));
         assert_eq!(glyph_name_to_char(b"Euro"), Some('€'));
         assert_eq!(glyph_name_to_char(b"fi"), Some('\u{FB01}'));
         assert_eq!(glyph_name_to_char(b"nonexistent"), None);

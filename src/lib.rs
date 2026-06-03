@@ -71,7 +71,7 @@ pub mod ocr;
 #[cfg(feature = "flow")]
 pub mod flow;
 
-pub use document::{Document, PageHandle, PdfMetadata, TextRun, VerticalAlign};
+pub use document::{Document, FieldType, FormField, PageHandle, PdfMetadata, TextRun, VerticalAlign};
 pub use error::{Error, Result};
 pub use extract::TextFragment;
 pub use font::FontHandle;

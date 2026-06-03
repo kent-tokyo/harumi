@@ -41,6 +41,10 @@ pub enum Error {
     /// The font may be subsetted and no longer contain the required glyph.
     #[error("char '{ch}' not found in font '{font_name}' ToUnicode mapping; font may be subsetted")]
     FontCharNotMapped { ch: char, font_name: String },
+
+    /// The password provided for an encrypted PDF was incorrect.
+    #[error("wrong password for encrypted PDF")]
+    WrongPassword,
 }
 
 /// Alias for `std::result::Result<T, harumi::Error>`.
