@@ -68,6 +68,14 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need a bookmarks / navigation outline | `add_bookmark(title, page, y)` — flat PDF outline entries; CJK titles stored as UTF-16BE automatically |
 | Need page numbers / running headers–footers on every page | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` with `HeaderFooter` (`flow` feature); `{{page}}` / `{{total}}` substituted at render |
 | Need headings to auto-generate outline entries | `FlowOptions { auto_bookmarks: true, .. }` (default) — every `push_heading` creates a bookmark |
+| Need to load a password-protected PDF | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — decrypts on load; both user and owner passwords accepted |
+| Need to save a PDF with password protection | `doc.set_encryption(user_pw, owner_pw)` — encrypts at `save()` time with 128-bit RC4 |
+| Need to check if a PDF was originally encrypted | `doc.is_encrypted()` — `true` even after successful decryption |
+| Need to highlight / underline / strike through text | `add_highlight` / `add_underline` / `add_strikeout` / `add_squiggly` with color — standard PDF markup annotations with QuadPoints |
+| Need to add a sticky-note comment to a page | `add_sticky_note([x, y], "note text")` — Text annotation, Unicode contents |
+| Need to read PDF form field values | `doc.form_fields()` — returns `Vec<FormField>` with name, type, and current value |
+| Need to fill in a PDF form programmatically | `doc.fill_form(&[("FieldName", "value")])` — sets values and triggers NeedAppearances |
+| Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
 
 ---
 
@@ -87,7 +95,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "0.5"
+harumi = "0.7"
 ```
 
 ### Invisible OCR text layer
@@ -442,6 +450,76 @@ doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
 doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
 ```
 
+### Markup annotations (highlight, underline, strikeout, squiggly)
+
+```rust
+// Yellow highlight
+doc.page(1)?.add_highlight([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0])?;
+
+// Red underline
+doc.page(1)?.add_underline([72.0, 640.0, 200.0, 12.0], [1.0, 0.0, 0.0])?;
+
+// Strikethrough
+doc.page(1)?.add_strikeout([72.0, 590.0, 200.0, 12.0], [0.0, 0.0, 0.0])?;
+
+// Squiggly (wavy) underline
+doc.page(1)?.add_squiggly([72.0, 540.0, 200.0, 12.0], [0.0, 0.6, 0.2])?;
+
+// Sticky-note comment
+doc.page(1)?.add_sticky_note([500.0, 700.0], "Review this section")?;
+doc.save("annotated.pdf")?;
+```
+
+### Password-protected PDFs
+
+```rust
+// Load an encrypted PDF
+let mut doc = Document::from_file_with_password("protected.pdf", "secret")?;
+assert!(doc.is_encrypted());
+
+// Wrong password returns Error::WrongPassword
+match Document::from_bytes_with_password(&bytes, "wrong") {
+    Err(harumi::Error::WrongPassword) => println!("Bad password"),
+    _ => {}
+}
+
+// Save with password protection
+let mut doc = Document::new((595.0, 842.0))?;
+doc.set_encryption("userpass", "ownerpass")?;
+doc.save("protected_output.pdf")?;
+```
+
+### AcroForm: read and fill form fields
+
+```rust
+// Read all form fields
+let mut doc = Document::from_file("form.pdf")?;
+for field in doc.form_fields()? {
+    println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+}
+
+// Fill fields by name
+let updated = doc.fill_form(&[
+    ("FullName",    "Jane Doe"),
+    ("Agree",       "yes"),       // checkbox → /Yes
+    ("Department",  "Engineering"),
+])?;
+println!("{updated} fields updated");
+doc.save("filled_form.pdf")?;
+```
+
+### Page boxes (print workflow)
+
+```rust
+// Read/write CropBox (visible area clip)
+let cb = doc.page(1)?.crop_box()?;   // Option<[f32;4]>
+
+doc.page(1)?.set_crop_box([10.0, 10.0, 575.0, 822.0])?;   // [x,y,w,h]
+doc.page(1)?.set_trim_box([0.0, 0.0, 595.0, 842.0])?;
+doc.page(1)?.set_bleed_box([0.0, 0.0, 601.0, 848.0])?;
+doc.save("print_ready.pdf")?;
+```
+
 ### Document bookmarks (outline)
 
 ```rust
@@ -551,6 +629,31 @@ doc.page(1)?.add_link_internal([x, y, w, h], target_page)?;         // in-docume
 
 // Document outline / bookmarks (no feature gate)
 doc.add_bookmark("Section Title", page, y)?;  // appends a flat outline entry
+
+// Markup annotations (no feature gate)
+doc.page(1)?.add_highlight([x, y, w, h], [r, g, b])?;
+doc.page(1)?.add_underline([x, y, w, h], [r, g, b])?;
+doc.page(1)?.add_strikeout([x, y, w, h], [r, g, b])?;
+doc.page(1)?.add_squiggly([x, y, w, h], [r, g, b])?;
+doc.page(1)?.add_sticky_note([x, y], "comment text")?;
+
+// AcroForm (no feature gate)
+let fields: Vec<FormField> = doc.form_fields()?;
+let n: usize = doc.fill_form(&[("field_name", "value")])?;
+
+// Page boxes (no feature gate)
+let cb: Option<[f32; 4]> = doc.page(1)?.crop_box()?;
+doc.page(1)?.set_crop_box([x, y, w, h])?;
+doc.page(1)?.set_trim_box([x, y, w, h])?;
+doc.page(1)?.set_bleed_box([x, y, w, h])?;
+let mb: [f32; 4] = doc.page(1)?.media_box()?;
+doc.page(1)?.set_media_box([x, y, w, h])?;
+
+// Password protection (no feature gate)
+Document::from_file_with_password(path, password)?;
+Document::from_bytes_with_password(bytes, password)?;
+doc.is_encrypted()                     // true if PDF was encrypted when loaded
+doc.set_encryption(user_pw, owner_pw)?; // encrypt on next save()
 ```
 
 ### Coordinate system
@@ -638,8 +741,10 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 | **v0.2** | `draw` feature (`add_rect`, `add_line`), `image` feature (`add_image`, PNG SMask transparency), page manipulation (`rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages`) |
 | **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path`; `add_text_with_rotation`; security hardening; `merge_from`; `Document::new`; `extract_pages` |
 | **v0.4** | `extract_text_runs` (CID + standard fonts), PDF metadata r/w, `replace_text` (Tj/TJ rewrite, cross-operator matching, width compensation, preserve-font mode), `flow` feature (`FlowDocument`, CJK auto-pagination), `html` feature, `extract_page_image` |
-| **v0.5** *(current)* | `add_link_url`, `add_link_internal` — clickable PDF link annotations; `add_bookmark` — document outline/bookmarks with CJK UTF-16BE titles; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; `auto_bookmarks` from headings; security fixes (`set_metadata` guard, CMap overflow, CJK header measurement) |
-| **Next** | FlowDocument inline styles (bold/italic/color spans), AcroForm field reading, WASM CI, `cargo semver-checks` |
+| **v0.5** | `add_link_url`, `add_link_internal` — clickable PDF link annotations; `add_bookmark` — document outline/bookmarks with CJK UTF-16BE titles; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; `auto_bookmarks` from headings; security fixes |
+| **v0.6** | `from_file_with_password` / `from_bytes_with_password` / `is_encrypted` / `Error::WrongPassword`; markup annotations (highlight, underline, strikeout, sticky-note); AcroForm `form_fields()` / `fill_form()`; AGL table +116 entries (Central EU, ligatures, euro); Identity-H text extraction fallback |
+| **v0.7** *(current)* | `set_encryption` — write password-protected PDFs; `add_squiggly` — wavy underline annotation; full page-box API (`crop_box`, `trim_box`, `bleed_box`, `media_box` read/write) |
+| **Next** | FlowDocument inline styles (bold/italic/color spans), `cargo semver-checks` CI |
 
 ---
 

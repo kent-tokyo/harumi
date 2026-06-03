@@ -11,6 +11,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] — 2026-06-03
+
+### Added
+
+- **`Document::set_encryption(user_password, owner_password)`** — encrypts the document at
+  `save()` / `save_to_bytes()` / `save_to_writer()` time using 128-bit RC4 (PDF revision 3).
+  Pass an empty `user_password` to allow anyone to open the file while still restricting editing
+  to the owner password. The document `/ID` trailer entry required by encryption is generated
+  automatically from system time + process ID.
+  Returns `Error::InvalidInput` if called after `save()`.
+
+- **`PageHandle::add_squiggly(rect, color)`** — wavy underline markup annotation.
+  Completes all four PDF standard text-markup subtypes: Highlight, Underline, StrikeOut, Squiggly.
+
+- **`PageHandle::media_box()`** / **`PageHandle::set_media_box(rect)`** — read (with parent-chain
+  inheritance) and override the page's physical size (`/MediaBox`).
+  
+- **`PageHandle::crop_box()`** / **`PageHandle::set_crop_box(rect)`** — read/write the visible-area
+  clip (`/CropBox`). Returns `None` when unset.
+  
+- **`PageHandle::trim_box()`** / **`PageHandle::set_trim_box(rect)`** — read/write the intended
+  print area (`/TrimBox`). Returns `None` when unset.
+  
+- **`PageHandle::bleed_box()`** / **`PageHandle::set_bleed_box(rect)`** — read/write the bleed area
+  for print production (`/BleedBox`). Returns `None` when unset.
+
+All box methods use `[x, y, width, height]` in PDF points (bottom-left origin), consistent with
+the rest of the harumi API.
+
+---
+
+## [0.6.0] — 2026-06-03
+
+### Added
+
+- **`Document::from_file_with_password(path, password)`** /
+  **`Document::from_bytes_with_password(bytes, password)`** — load and decrypt password-protected
+  PDFs. Both user and owner passwords are accepted; the document is fully decrypted in memory.
+
+- **`Document::is_encrypted()`** — returns `true` if the PDF was encrypted when it was loaded.
+  Remains `true` after a successful `from_*_with_password` call.
+
+- **`Error::WrongPassword`** — dedicated error variant returned when the supplied password does not
+  match the document's user or owner password.
+
+- **`PageHandle::add_highlight(rect, color)`** — highlight markup annotation.
+  Includes auto-generated `QuadPoints` (upper-left → upper-right → lower-left → lower-right order,
+  matching Adobe Acrobat's convention).
+
+- **`PageHandle::add_underline(rect, color)`** — underline markup annotation (with `QuadPoints`).
+
+- **`PageHandle::add_strikeout(rect, color)`** — strikethrough markup annotation (with `QuadPoints`).
+
+- **`PageHandle::add_sticky_note(point, contents)`** — Text (sticky-note) annotation.
+  `contents` is encoded as UTF-16BE for full Unicode support. The icon appears at `[x, y]`
+  in PDF points; default collapsed state (`/Open false`).
+
+- **`Document::form_fields() -> Result<Vec<FormField>>`** — lists all interactive form fields.
+  Recursively traverses the AcroForm `/Fields` tree; only leaf fields are returned with their
+  full dotted name path, `FieldType`, and current string value.
+
+- **`Document::fill_form(values: &[(&str, &str)]) -> Result<usize>`** — fills form fields by name.
+  Text fields receive the string value directly. Checkbox / radio fields are set to
+  `/Yes` for truthy strings (`"true"`, `"yes"`, `"on"`, `"1"`, case-insensitive) and `/Off` for
+  everything else. Automatically sets `/NeedAppearances true` on the AcroForm dictionary so
+  viewers regenerate the visual appearance. Returns the number of updated fields.
+  Returns `Error::InvalidInput` if called after `save()`.
+
+- **`FormField`** — public struct: `name: String`, `field_type: FieldType`, `value: String`.
+  Marked `#[non_exhaustive]`.
+
+- **`FieldType`** enum — `Text`, `Checkbox`, `Radio`, `Choice`, `Signature`, `Unknown`.
+
+- **AGL table expanded 214 → ~330 entries** — adds Central European characters (Abreve/abreve,
+  Cacute/cacute, Dcaron/dcaron, Nacute/nacute, Uring/uring, and ~60 more), the common ligatures
+  `ff` / `ffi` / `ffl`, and lowercase `euro`. Improves `extract_text_runs` coverage for Polish,
+  Czech, Hungarian, Turkish, and Romanian documents.
+
+- **Identity-H GID fallback** in `extract_text_runs` — Type0 CID fonts that lack a `/ToUnicode`
+  CMap entry are now decoded by treating the 2-byte character code directly as a Unicode scalar
+  value (best-effort; correct for BMP characters encoded in Identity-H fonts).
+
+### Fixed
+
+- `from_file_with_password` / `from_bytes_with_password` — `lopdf::Error::IO` is now correctly
+  mapped to `harumi::Error::Io` instead of `harumi::Error::Pdf`.
+
+---
+
 ## [0.5.1] — 2026-05-28
 
 ### Changed

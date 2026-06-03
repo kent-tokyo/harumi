@@ -68,6 +68,14 @@ doc.save("searchable.pdf")?;
 | 북마크/문서 개요를 만들고 싶다 | `add_bookmark(title, page, y)` — 플랫 PDF 아웃라인 항목; CJK 제목은 UTF-16BE로 자동 인코딩 |
 | 모든 페이지에 페이지 번호가 있는 헤더/푸터를 넣고 싶다 | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` + `HeaderFooter`（`flow` feature）; `{{page}}`/`{{total}}` 치환 |
 | 제목에서 자동으로 개요 항목을 생성하고 싶다 | `FlowOptions { auto_bookmarks: true, .. }`（기본값）— `push_heading` 호출마다 자동으로 북마크 생성 |
+| 암호로 보호된 PDF를 불러오고 싶다 | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — 사용자/소유자 비밀번호 모두 지원 |
+| 암호화된 PDF로 저장하고 싶다 | `doc.set_encryption(user_pw, owner_pw)` — `save()` 시 128-bit RC4로 암호화 |
+| PDF가 원래 암호화되어 있었는지 확인하고 싶다 | `doc.is_encrypted()` — 복호화 후에도 `true` 반환 |
+| 텍스트에 하이라이트/밑줄/취소선을 추가하고 싶다 | `add_highlight` / `add_underline` / `add_strikeout` / `add_squiggly` — QuadPoints 포함 PDF 마크업 주석 |
+| 페이지에 포스트잇 메모를 추가하고 싶다 | `add_sticky_note([x, y], "메모 내용")` — 유니코드 지원 텍스트 주석 |
+| PDF 폼 필드 값을 읽고 싶다 | `doc.form_fields()` — `Vec<FormField>` 반환（이름, 종류, 현재 값） |
+| PDF 폼을 프로그래밍으로 채우고 싶다 | `doc.fill_form(&[("필드명", "값")])` — NeedAppearances 자동 설정 |
+| 페이지 크롭 박스와 인쇄 박스를 조작하고 싶다 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — `[x,y,w,h]` 형식으로 모든 박스 타입 지원 |
 
 ---
 
@@ -87,7 +95,7 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 
 ```toml
 [dependencies]
-harumi = "0.5"
+harumi = "0.7"
 ```
 
 ### 보이지 않는 OCR 텍스트 레이어
@@ -565,8 +573,10 @@ harumi
 | **v0.2** | `draw` feature（`add_rect`, `add_line`）, `image` feature（`add_image`, PNG SMask 투명도）, 페이지 조작（`rotate_page`, `remove_page`, `insert_blank_page`, `reorder_pages`） |
 | **v0.3** | `add_text_box`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path`; `add_text_with_rotation`; 보안 강화; `merge_from`; `Document::new`; `extract_pages` |
 | **v0.4** | `extract_text_runs`（CID + 표준 폰트）, PDF 메타데이터 읽기/쓰기, `replace_text`（Tj/TJ 재작성, 크로스 연산자 매칭, 폭 보상, 폰트 유지 모드）, `flow` feature（`FlowDocument`, CJK 자동 줄바꿈）, `html` feature, `extract_page_image` |
-| **v0.5** *（현재）* | `add_link_url`, `add_link_internal` — 클릭 가능한 PDF 링크 어노테이션; `add_bookmark` — CJK UTF-16BE 제목 지원 문서 아웃라인/북마크; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; 제목에서 자동 북마크 `auto_bookmarks`; 보안 수정（`set_metadata` 가드, CMap 오버플로, CJK 헤더 측정） |
-| **Next** | FlowDocument 인라인 스타일（굵기/기울기/색상 범위）, AcroForm 필드 읽기, WASM CI, `cargo semver-checks` |
+| **v0.5** | `add_link_url`, `add_link_internal` — 클릭 가능한 PDF 링크 어노테이션; `add_bookmark` — CJK UTF-16BE 아웃라인; `HeaderFooter`; 보안 수정 |
+| **v0.6** | 암호화 PDF 읽기（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）; 마크업 주석（하이라이트·밑줄·취소선·메모）; AcroForm `form_fields()` / `fill_form()`; AGL 테이블 +116 항목; Identity-H 텍스트 추출 폴백 |
+| **v0.7** *（현재）* | `set_encryption` — 암호화된 PDF 저장; `add_squiggly` — 물결 밑줄 주석; 페이지 박스 전체 지원（크롭·트림·블리드·미디어 박스 읽기/쓰기） |
+| **Next** | FlowDocument 인라인 스타일（굵기/기울기/색상）, `cargo semver-checks` CI |
 
 ---
 
