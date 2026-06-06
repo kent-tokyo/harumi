@@ -105,6 +105,48 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 
 ---
 
+## Comparison with modern Rust PDF alternatives
+
+| Feature | **harumi** | unpdf | pdf_oxide | justpdf-core |
+|---|:---:|:---:|:---:|:---:|
+| **Direction** | Read + Write | Read only | Full lifecycle | Full lifecycle |
+| **Primary use case** | CJK text overlay on existing PDFs | PDF → Markdown/text extraction | Multi-language PDF ops | Comprehensive PDF engine |
+| Pure Rust (zero C/C++ deps) | Yes | Yes | Likely | Yes |
+| WASM support | Yes (verified) | Yes | Yes | Not documented |
+| **Text extraction** |
+| — CID fonts (ToUnicode CMap) | Yes | Yes ⭐ | Yes | Yes |
+| — Simple fonts (Type1/TrueType) | Yes | Yes | Yes | Yes |
+| — Form XObject recursion | No (v1.3) | Yes ⭐ | Yes | Unknown |
+| — Graphic state preservation | No (v1.3) | Yes ⭐ | Yes | Unknown |
+| — `uni<XXXX>` glyph names | No (v1.3) | Yes ⭐ | Unknown | Unknown |
+| — Reading order / XY-Cut | No | Yes ⭐ | Yes | Unknown |
+| — RTL / BiDi support | No | Yes ⭐ | Unknown | Unknown |
+| **Text writing** |
+| — CJK font embedding | Yes ⭐ | N/A | Partial | Yes |
+| — Font subsetting | Yes ⭐ (deferred) | N/A | Unknown | Yes |
+| — Identity-H / Identity-V | Yes ⭐ | N/A | Unknown | Yes |
+| — Type0 CID generation | Yes ⭐ | N/A | Unknown | Yes |
+| **Page operations** | Yes | No | Yes | Yes |
+| **Drawing (shapes, images)** | Yes | No | Yes (partial) | Yes |
+| **Encryption (read)** | Yes (RC4) | Yes (RC4) | Yes | Yes (RC4, AES) |
+| **Encryption (write)** | Yes (RC4-128, AES-256) | No | Yes | Yes (RC4, AES-256) |
+| **Digital signatures** | Partial (metadata) | No | Yes | Yes (PKCS#7/CMS) |
+| **PDF/A compliance** | Planned (v1.3) | No | Yes (validate) | Yes (validate) |
+| **Performance focus** | Correctness | Speed (specialized) | Speed (5× PyMuPDF) | Comprehensive |
+| **Multi-language bindings** | WASM only | None | 7 languages | C FFI only |
+
+**Key differences:**
+- **harumi** — Specialized for *writing* CJK text onto existing PDFs; explicit deferred subsetting strategy; confirmed WASM support
+- **unpdf** — Specialized for *reading* PDFs and extracting clean Markdown/text; superior CJK extraction quality (XY-Cut, RTL, Form XObject)
+- **pdf_oxide** — General-purpose PDF engine with multi-language bindings; 5× faster extraction via zero-copy tokenization; Rust core with Python/JS/Go/C#/Java bindings
+- **justpdf-core** — Full PDF engine; uses region-specific CID orderings (Japan1/GB1/CNS1/Korea1) for legacy PDF compatibility
+
+**Recommendation:** Use **harumi** if you're overlay writing CJK onto existing PDFs (OCR layers, stamps, watermarks). Use **unpdf** if you need to extract text from CJK PDFs and fix garbled characters. Use **pdf_oxide** if you need multi-language support and fast extraction. Use **justpdf-core** if you need a comprehensive PDF engine without specialized CJK focus.
+
+⭐ = unique strength in this category
+
+---
+
 ## Why this gap existed
 
 JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap generation, and text layer composition transparently. In Rust, the existing options force you to choose between:
