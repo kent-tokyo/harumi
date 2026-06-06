@@ -409,7 +409,7 @@ pub(crate) fn resubset_and_replace(
     let gids_changed = old_gid_to_char.iter().any(|(&old_gid, &ch)| {
         new_char_to_gid
             .get(&ch)
-            .map_or(true, |&new_gid| new_gid != old_gid)
+            .is_none_or(|&new_gid| new_gid != old_gid)
     });
 
     if gids_changed {

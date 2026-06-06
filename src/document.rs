@@ -991,10 +991,8 @@ impl Document {
         }
 
         // Signal viewers to regenerate appearances.
-        if updated > 0 {
-            if let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
-                d.set("NeedAppearances", Object::Boolean(true));
-            }
+        if updated > 0 && let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+            d.set("NeedAppearances", Object::Boolean(true));
         }
         Ok(updated)
     }
@@ -1827,6 +1825,7 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// `position` is `[x, y]` in PDF points (origin: bottom-left of page).
     /// `color` is `[r, g, b]` where each component is in `0.0..=1.0`.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_text_styled(
         &mut self,
         text: &str,
