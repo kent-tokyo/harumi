@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use lopdf::{Dictionary, Object, ObjectId, Stream};
+use lopdf::{Dictionary, Object, ObjectId, Stream, StringFormat};
 use ttf_parser::Face;
 
 use crate::{
@@ -132,6 +132,17 @@ pub struct FormField {
     /// this is the appearance state name (`"Yes"`, `"Off"`, etc.). For choice
     /// fields this is the selected option. Empty string when no value is set.
     pub value: String,
+}
+
+/// Options for creating a text field via [`Document::add_text_field`].
+#[derive(Clone, Debug, Default)]
+pub struct TextFieldOptions {
+    /// Initial value of the field (`/V` entry). Default: empty string.
+    pub default_value: String,
+    /// Allow multiline input (`/Ff` bit 12, "Multiline" flag). Default: `false`.
+    pub multiline: bool,
+    /// Mark the field as read-only (`/Ff` bit 0, "ReadOnly" flag). Default: `false`.
+    pub read_only: bool,
 }
 
 /// Raw font data stored before subsetting.
@@ -995,6 +1006,257 @@ impl Document {
             d.set("NeedAppearances", Object::Boolean(true));
         }
         Ok(updated)
+    }
+
+    /// Creates a new text field on the specified page.
+    ///
+    /// The field is added to the document's `/AcroForm` if it doesn't exist,
+    /// and registered in the page's `/Annots` array.
+    ///
+    /// The `rect` parameter is `[x, y, width, height]` in PDF points
+    /// (origin: bottom-left of page).
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if the page number is invalid.
+    /// - [`Error::InvalidInput`] if field creation fails.
+    pub fn add_text_field(
+        &mut self,
+        page: u32,
+        name: &str,
+        rect: [f32; 4],
+        options: &TextFieldOptions,
+    ) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "add_text_field() called after save(); create a new Document".into(),
+            ));
+        }
+
+        let page_id = *self.inner.get_pages()
+            .get(&page)
+            .ok_or(Error::PageNotFound(page))?;
+
+        check_finite(&rect, "add_text_field rect")?;
+
+        let acroform_id = ensure_acroform(&mut self.inner)?;
+
+        // Build widget dictionary
+        let mut widget_dict = Dictionary::new();
+        widget_dict.set("Type", Object::Name(b"Annot".to_vec()));
+        widget_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
+        widget_dict.set("FT", Object::Name(b"Tx".to_vec()));
+        widget_dict.set("T", Object::String(name.as_bytes().to_vec(), StringFormat::Literal));
+        widget_dict.set("Rect", Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(rect[0] + rect[2]),
+            Object::Real(rect[1] + rect[3]),
+        ]));
+        widget_dict.set("P", Object::Reference(page_id));
+        widget_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+
+        // Set flags
+        let mut flags = 0i64;
+        if options.multiline {
+            flags |= 1 << 12;
+        }
+        if options.read_only {
+            flags |= 1;
+        }
+        if flags != 0 {
+            widget_dict.set("Ff", Object::Integer(flags));
+        }
+
+        // Set default value
+        if !options.default_value.is_empty() {
+            widget_dict.set("V", pdf_text_string(&options.default_value));
+        }
+
+        let widget_id = self.inner.add_object(Object::Dictionary(widget_dict));
+
+        // Add to AcroForm /Fields array
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?
+            .as_dict_mut()?;
+        let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
+            let mut arr = arr.clone();
+            arr.push(Object::Reference(widget_id));
+            arr
+        } else {
+            vec![Object::Reference(widget_id)]
+        };
+        acroform_dict.set("Fields", Object::Array(fields_arr));
+
+        // Add to page /Annots array
+        append_annotation_to_page(&mut self.inner, page_id, widget_id)?;
+
+        // Signal viewers to regenerate appearances
+        if let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+            d.set("NeedAppearances", Object::Boolean(true));
+        }
+
+        Ok(())
+    }
+
+    /// Creates a new checkbox field on the specified page.
+    ///
+    /// The `rect` parameter is `[x, y, width, height]` in PDF points.
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if the page number is invalid.
+    /// - [`Error::InvalidInput`] if field creation fails.
+    pub fn add_checkbox(&mut self, page: u32, name: &str, rect: [f32; 4], checked: bool) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "add_checkbox() called after save(); create a new Document".into(),
+            ));
+        }
+
+        let page_id = *self.inner.get_pages()
+            .get(&page)
+            .ok_or(Error::PageNotFound(page))?;
+
+        check_finite(&rect, "add_checkbox rect")?;
+
+        let acroform_id = ensure_acroform(&mut self.inner)?;
+
+        let state = if checked { b"Yes".as_ref() } else { b"Off".as_ref() };
+
+        let mut widget_dict = Dictionary::new();
+        widget_dict.set("Type", Object::Name(b"Annot".to_vec()));
+        widget_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
+        widget_dict.set("FT", Object::Name(b"Btn".to_vec()));
+        widget_dict.set("T", Object::String(name.as_bytes().to_vec(), StringFormat::Literal));
+        widget_dict.set("Rect", Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(rect[0] + rect[2]),
+            Object::Real(rect[1] + rect[3]),
+        ]));
+        widget_dict.set("P", Object::Reference(page_id));
+        widget_dict.set("V", Object::Name(state.to_vec()));
+        widget_dict.set("AS", Object::Name(state.to_vec()));
+        widget_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+
+        let widget_id = self.inner.add_object(Object::Dictionary(widget_dict));
+
+        // Add to AcroForm /Fields array
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?
+            .as_dict_mut()?;
+        let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
+            let mut arr = arr.clone();
+            arr.push(Object::Reference(widget_id));
+            arr
+        } else {
+            vec![Object::Reference(widget_id)]
+        };
+        acroform_dict.set("Fields", Object::Array(fields_arr));
+
+        // Add to page /Annots array
+        append_annotation_to_page(&mut self.inner, page_id, widget_id)?;
+
+        // Signal viewers to regenerate appearances
+        if let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+            d.set("NeedAppearances", Object::Boolean(true));
+        }
+
+        Ok(())
+    }
+
+    /// Creates a new radio button group on the specified page.
+    ///
+    /// Each button in `buttons` is a `(value_name, rect)` pair where `rect` is
+    /// `[x, y, width, height]` in PDF points.
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if the page number is invalid.
+    /// - [`Error::InvalidInput`] if field creation fails or `buttons` is empty.
+    pub fn add_radio_group(
+        &mut self,
+        page: u32,
+        group_name: &str,
+        buttons: &[(&str, [f32; 4])],
+        selected: Option<&str>,
+    ) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "add_radio_group() called after save(); create a new Document".into(),
+            ));
+        }
+
+        if buttons.is_empty() {
+            return Err(Error::InvalidInput("radio group must have at least one button".into()));
+        }
+
+        let page_id = *self.inner.get_pages()
+            .get(&page)
+            .ok_or(Error::PageNotFound(page))?;
+
+        let acroform_id = ensure_acroform(&mut self.inner)?;
+
+        // Determine which button is selected
+        let selected_value = selected.unwrap_or_else(|| buttons[0].0);
+
+        // Create parent field dictionary (intermediate node, no /Subtype)
+        let mut parent_dict = Dictionary::new();
+        parent_dict.set("FT", Object::Name(b"Btn".to_vec()));
+        parent_dict.set("Ff", Object::Integer(1 << 15)); // Radio flag
+        parent_dict.set("T", Object::String(group_name.as_bytes().to_vec(), StringFormat::Literal));
+        parent_dict.set("V", Object::Name(selected_value.as_bytes().to_vec()));
+
+        let parent_id = self.inner.add_object(Object::Dictionary(parent_dict.clone()));
+
+        let mut kids = Vec::new();
+        for (value_name, rect) in buttons {
+            check_finite(rect, "radio button rect")?;
+
+            let is_selected = value_name == &selected_value;
+            let state = if is_selected { b"Yes".as_ref() } else { b"Off".as_ref() };
+
+            let mut button_dict = Dictionary::new();
+            button_dict.set("Type", Object::Name(b"Annot".to_vec()));
+            button_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
+            button_dict.set("Rect", Object::Array(vec![
+                Object::Real(rect[0]),
+                Object::Real(rect[1]),
+                Object::Real(rect[0] + rect[2]),
+                Object::Real(rect[1] + rect[3]),
+            ]));
+            button_dict.set("Parent", Object::Reference(parent_id));
+            button_dict.set("P", Object::Reference(page_id));
+            button_dict.set("AS", Object::Name(state.to_vec()));
+            button_dict.set("V", Object::Name(value_name.as_bytes().to_vec()));
+            button_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+
+            let button_id = self.inner.add_object(Object::Dictionary(button_dict));
+            kids.push(Object::Reference(button_id));
+
+            // Add to page /Annots array
+            append_annotation_to_page(&mut self.inner, page_id, button_id)?;
+        }
+
+        // Update parent dict with /Kids array
+        let parent_dict_mut = self.inner.get_object_mut(parent_id)?
+            .as_dict_mut()?;
+        parent_dict_mut.set("Kids", Object::Array(kids));
+
+        // Add to AcroForm /Fields array
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?
+            .as_dict_mut()?;
+        let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
+            let mut arr = arr.clone();
+            arr.push(Object::Reference(parent_id));
+            arr
+        } else {
+            vec![Object::Reference(parent_id)]
+        };
+        acroform_dict.set("Fields", Object::Array(fields_arr));
+
+        // Signal viewers to regenerate appearances
+        if let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+            d.set("NeedAppearances", Object::Boolean(true));
+        }
+
+        Ok(())
     }
 
     /// Appends a named bookmark (PDF document outline entry) pointing to a
@@ -2912,6 +3174,32 @@ fn acroform_id(doc: &lopdf::Document) -> Option<ObjectId> {
     let root_ref = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
     let catalog = doc.get_object(root_ref).ok()?.as_dict().ok()?;
     catalog.get(b"AcroForm").ok()?.as_reference().ok()
+}
+
+/// Ensures an /AcroForm entry exists in the document catalog.
+/// Returns the ObjectId of the /AcroForm dictionary (either existing or newly created).
+fn ensure_acroform(doc: &mut lopdf::Document) -> Result<ObjectId> {
+    // Check if AcroForm already exists
+    if let Some(id) = acroform_id(doc) {
+        return Ok(id);
+    }
+
+    // Create a new /AcroForm dictionary with an empty /Fields array
+    let mut acroform_dict = Dictionary::new();
+    acroform_dict.set("Fields", Object::Array(Vec::new()));
+    let acroform_id = doc.add_object(Object::Dictionary(acroform_dict));
+
+    // Get the catalog and add the /AcroForm reference
+    let root_ref = doc.trailer.get(b"Root")
+        .ok()
+        .and_then(|o| o.as_reference().ok())
+        .ok_or(Error::InvalidInput("catalog not found".into()))?;
+
+    let catalog = doc.get_object_mut(root_ref)?
+        .as_dict_mut()?;
+    catalog.set("AcroForm", Object::Reference(acroform_id));
+
+    Ok(acroform_id)
 }
 
 /// Recursively collects `FormField` entries from a PDF field array.
