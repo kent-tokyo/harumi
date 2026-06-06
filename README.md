@@ -76,6 +76,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to read PDF form field values | `doc.form_fields()` — returns `Vec<FormField>` with name, type, and current value |
 | Need to fill in a PDF form programmatically | `doc.fill_form(&[("FieldName", "value")])` — sets values and triggers NeedAppearances |
 | Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
+| Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
+| Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts signature metadata (signer, timestamp, field name); cryptographic validation TBD (`digital-signature` feature) |
 
 ---
 
@@ -96,6 +98,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Encryption (read) | Yes (RC4) | Yes | No | Partial | Yes |
 | Encryption (write) | Yes (RC4-128) | Yes | No | No | Yes |
 | Markup annotations | Yes | Partial (basic) | No | No | Yes |
+| CMYK color support | Yes (v1.0+) | Yes | Yes | No | Yes |
+| Digital signature verification | Partial (metadata) | Partial (basic) | No | No | Yes |
 
 > Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature
 
@@ -117,7 +121,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "0.7"
+harumi = "1.1"
 ```
 
 ### Invisible OCR text layer
