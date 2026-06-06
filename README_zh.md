@@ -91,6 +91,25 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 
 ---
 
+## 与同类工具对比
+
+| 功能 | **harumi** | pdf-lib (JS) | printpdf (Rust) | lopdf (Rust) | pdfium-render (Rust) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 纯 Rust（无 C/C++ 依赖） | Yes | N/A | Yes | Yes | No |
+| WASM / 跨平台 | Yes | Yes | Yes | Yes | Partial |
+| 向已有 PDF 添加 CJK 文本 | Yes | Yes | No | No | Yes |
+| 文本提取 | Yes | Partial | No | Partial | Yes |
+| 文本替换（含子集扩展） | Yes | No | No | No | No |
+| 页面操作 | Yes | Yes | Partial | Yes | Yes |
+| 图形绘制 | Yes | Yes | Yes | No | Yes |
+| 流式文档 / 自动分页 | Yes | No | No | No | No |
+| HTML → PDF | Yes | No | No | No | No |
+| 内联粗体/斜体/颜色 | Yes (synthetic) | No | No | No | Yes |
+| 加密（读取） | Yes | Yes | No | Partial | Yes |
+| 加密（写入） | Yes (RC4-128) | Yes | No | No | Yes |
+
+---
+
 ## 快速开始
 
 ```toml
@@ -247,6 +266,30 @@ if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
 doc.save("output.pdf")?;
 ```
 
+### 预检：不修改文档确认可替换性
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+match doc.page(1)?.can_replace_text("Draft", "Final") {
+    Ok(0) => println!("第 1 页未找到 'Draft'"),
+    Ok(n) => println!("找到 {n} 处，字形可用"),
+    Err(e) => println!("字形缺失：{e}"),
+}
+```
+
+### 带字体子集扩展的文本替换
+
+当新文本包含原始字体子集中不存在的字符时，使用 `replace_text_resubset`。传入原始（未子集化的）TTF/OTF 字节，harumi 会扩展子集，重新编码所有内容流，并在一次 `save()` 调用中完成替换。
+
+```rust
+let font_bytes = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = Document::from_file("contract.pdf")?;
+let n = doc.page(1)?.replace_text_resubset("Hello", "中文字", font_bytes)?;
+doc.save("output.pdf")?;
+```
+
+> 需要提供原始未子集化的字体文件。仅支持 CIDFontType2（harumi 嵌入格式）。
+
 ### 读写 PDF 元数据
 
 ```rust
@@ -378,6 +421,92 @@ let mut doc = FlowDocument::new(font, opts)?;
 doc.push_heading("第一章", 1)?;
 doc.push_paragraph("正文内容。")?;
 let pdf_bytes = doc.render()?;
+```
+
+### FlowDocument 内联文本样式（`flow` feature）
+
+```rust
+use harumi::{FlowDocument, FlowOptions, InlineSpan};
+
+let mut doc = FlowDocument::new(font_bytes, FlowOptions::default())?;
+doc.push_paragraph_styled(&[
+    InlineSpan::plain("普通文本，"),
+    InlineSpan::bold("粗体文本，"),
+    InlineSpan::italic("斜体文本，"),
+    InlineSpan::colored("红色文本。", [0.8, 0.0, 0.0]),
+])?;
+```
+
+粗体和斜体为**合成效果**，无需单独的粗体/斜体字体文件。
+
+### 标注注释（高亮、下划线、删除线、波浪线）
+
+```rust
+// 黄色高亮
+doc.page(1)?.add_highlight([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0])?;
+
+// 红色下划线
+doc.page(1)?.add_underline([72.0, 640.0, 200.0, 12.0], [1.0, 0.0, 0.0])?;
+
+// 删除线
+doc.page(1)?.add_strikeout([72.0, 590.0, 200.0, 12.0], [0.0, 0.0, 0.0])?;
+
+// 波浪下划线
+doc.page(1)?.add_squiggly([72.0, 540.0, 200.0, 12.0], [0.0, 0.6, 0.2])?;
+
+// 便签注释
+doc.page(1)?.add_sticky_note([500.0, 700.0], "请审查此部分")?;
+doc.save("annotated.pdf")?;
+```
+
+### 密码保护 PDF
+
+```rust
+// 加载加密 PDF
+let mut doc = Document::from_file_with_password("protected.pdf", "secret")?;
+assert!(doc.is_encrypted());
+
+// 密码错误返回 Error::WrongPassword
+match Document::from_bytes_with_password(&bytes, "wrong") {
+    Err(harumi::Error::WrongPassword) => println!("密码错误"),
+    _ => {}
+}
+
+// 加密保存
+let mut doc = Document::new((595.0, 842.0))?;
+doc.set_encryption("userpass", "ownerpass")?;
+doc.save("protected_output.pdf")?;
+```
+
+### AcroForm：读取和填写表单字段
+
+```rust
+// 读取所有表单字段
+let mut doc = Document::from_file("form.pdf")?;
+for field in doc.form_fields()? {
+    println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+}
+
+// 按名称填写字段
+let updated = doc.fill_form(&[
+    ("FullName",   "张三"),
+    ("Agree",      "yes"),       // 复选框 → /Yes
+    ("Department", "Engineering"),
+])?;
+println!("已更新 {updated} 个字段");
+doc.save("filled_form.pdf")?;
+```
+
+### 页面框（印刷工作流）
+
+```rust
+// 读写 CropBox（可见区域裁剪）
+let cb = doc.page(1)?.crop_box()?;   // Option<[f32;4]>
+
+doc.page(1)?.set_crop_box([10.0, 10.0, 575.0, 822.0])?;   // [x,y,w,h]
+doc.page(1)?.set_trim_box([0.0, 0.0, 595.0, 842.0])?;
+doc.page(1)?.set_bleed_box([0.0, 0.0, 601.0, 848.0])?;
+doc.save("print_ready.pdf")?;
 ```
 
 ### 链接注释
@@ -577,7 +706,7 @@ harumi
 | **v0.5** | `add_link_url`、`add_link_internal` — 可点击 PDF 链接注释；`add_bookmark` — 含 CJK UTF-16BE 标题的文档大纲/书签；`HeaderFooter` + `{{page}}`/`{{total}}`；安全修复 |
 | **v0.6** | 加密 PDF 读取（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；标记注释（高亮、下划线、删除线、便利贴）；AcroForm `form_fields()` / `fill_form()`；AGL 表格 +116 条目；Identity-H 文字提取回退 |
 | **v0.7** *（当前）* | `set_encryption` — 写入密码保护 PDF；`add_squiggly` — 波浪下划线注释；页面框全类型支持（裁切框、修边框、出血框、媒体框读写） |
-| **Next** | FlowDocument 内联样式（粗体/斜体/颜色），`cargo semver-checks` CI |
+| **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；`cargo semver-checks` CI |
 
 ---
 

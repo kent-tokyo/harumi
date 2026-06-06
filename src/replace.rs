@@ -26,6 +26,12 @@ pub(crate) struct TextReplacePreserveOp {
     pub new_text: String,
 }
 
+pub(crate) struct TextReplaceResubsetOp {
+    pub old_text: String,
+    pub new_text: String,
+    pub font_bytes: Vec<u8>,
+}
+
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
@@ -736,7 +742,7 @@ fn gids_hex(r: &ResolvedReplacement) -> Vec<u8> {
     out
 }
 
-fn encode_str_hex(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn encode_str_hex(bytes: &[u8]) -> Vec<u8> {
     let mut out = vec![b'<'];
     for &b in bytes {
         out.push(hex_nibble(b >> 4));
@@ -815,7 +821,7 @@ fn emit_tj_array_preserve(
     out
 }
 
-fn push_number(out: &mut Vec<u8>, v: f32) {
+pub(crate) fn push_number(out: &mut Vec<u8>, v: f32) {
     let v = if v.is_finite() { v } else { 0.0 };
     if v.fract() == 0.0 && v.abs() < 1e9 {
         let s = format!("{}", v as i64);
@@ -833,17 +839,17 @@ fn push_number(out: &mut Vec<u8>, v: f32) {
 // ---------------------------------------------------------------------------
 
 /// A single decoded character with its location in the content stream.
-struct CharEntry {
-    ch: char,
-    op_idx: usize,
-    raw_bytes: Vec<u8>,
+pub(crate) struct CharEntry {
+    pub ch: char,
+    pub op_idx: usize,
+    pub raw_bytes: Vec<u8>,
 }
 
 /// A text segment within a BT/ET block sharing the same font and size.
-struct CharSegment {
-    chars: Vec<CharEntry>,
-    font_name: Vec<u8>,
-    font_size: f32,
+pub(crate) struct CharSegment {
+    pub chars: Vec<CharEntry>,
+    pub font_name: Vec<u8>,
+    pub font_size: f32,
 }
 
 /// A replacement match (with new font) that spans multiple consecutive Tj/TJ operators.
@@ -895,7 +901,7 @@ fn push_chars_from_bytes(
 
 /// Split the content stream into per-Tf character segments within each BT/ET block.
 /// The buffer resets on each BT and on every Tf operator.
-fn collect_char_segments(
+pub(crate) fn collect_char_segments(
     ops: &[Op],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
 ) -> Vec<CharSegment> {
@@ -1062,27 +1068,27 @@ fn find_cross_op_matches_preserve(
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-enum ArrElem {
+pub(crate) enum ArrElem {
     Str(Vec<u8>),
     Num(f32),
 }
 
 #[derive(Debug)]
-enum Operand {
+pub(crate) enum Operand {
     Str(Vec<u8>),
     Num(f32),
     Name(Vec<u8>),
     Array(Vec<ArrElem>),
 }
 
-struct Op {
-    start: usize,
-    end: usize,
-    keyword: Vec<u8>,
-    operands: Vec<Operand>,
+pub(crate) struct Op {
+    pub start: usize,
+    pub end: usize,
+    pub keyword: Vec<u8>,
+    pub operands: Vec<Operand>,
 }
 
-fn parse_ops(bytes: &[u8]) -> Vec<Op> {
+pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
     let mut ops = Vec::new();
     let mut i = 0usize;
     let mut operands: Vec<Operand> = Vec::new();

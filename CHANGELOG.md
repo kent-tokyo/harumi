@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PageHandle::replace_text_resubset(old_text, new_text, font_bytes)`** — replace text in an
+  existing content stream while expanding the font subset to include new characters. Accepts the
+  original (unsubsetted) TTF/OTF bytes; harumi generates a new subset covering all existing
+  characters plus the new ones, re-encodes every content stream that references the font (GIDs
+  may shift), and performs the replacement in one `save()` call. Works for any language —
+  Chinese, Korean, Arabic — as long as the supplied font contains the characters.
+  Only CIDFontType2 fonts with `CIDToGIDMap /Identity` are supported.
+
+- **`InlineSpan`** struct + **`FlowDocument::push_paragraph_styled(spans)`** — mixed bold/italic/
+  color inline text within a `FlowDocument` paragraph. Bold is rendered with PDF fill+stroke mode
+  (render mode 2, stroke width = 4% of font size); italic uses a 12° horizontal shear text matrix.
+  Both are synthetic effects that require no separate bold/italic font file.
+
+- **`PageHandle::add_text_styled(text, font, pos, size, color, bold, italic)`** — lower-level
+  styled text method exposed on `PageHandle` for use outside `FlowDocument`.
+
+- HTML inline styles in `render_html_to_pdf`: `<strong>`/`<b>` → bold, `<em>`/`<i>` → italic,
+  `<span style="color: #RRGGBB">` → color (hex, 3-digit, and `rgb()` forms), `<a href>` → blue
+  link color `[0, 0, 0.8]`.
+
+- TTC (TrueType Collection) E2E tests — `tests/e2e_ttc.rs` (5 cases) using a synthetic 2-face
+  TTC constructed at runtime from the existing NotoSansJP fixture.
+
+- WASM smoke test — `tests/wasm_smoke.rs` with `#[wasm_bindgen_test]`, runnable via
+  `wasm-pack test --node`.
+
+- CI: `cargo semver-checks` job (default + all-features); `wasm-test` job (`wasm-pack test --node`).
+
+- **`Document::set_encryption_aes256(user_password, owner_password)`** — AES-256-CBC write
+  encryption (PDF 2.0 V5/R6). A fresh 32-byte key is generated per `save()` via
+  `getrandom::fill()` (OS RNG — never falls back to a weaker source). Requires
+  Acrobat X+ / Chrome / Firefox or any modern PDF reader. Use `set_encryption` (RC4-128) for
+  maximum backward compatibility with older viewers. `getrandom = "0.4"` added as a direct
+  dependency; WASM targets continue to use the `wasm_js` backend.
+
+### Fixed
+
+- **Nested `/Pages` tree inherited-attribute loss** (`remove_page`, `insert_blank_page`,
+  `reorder_pages`) — when these methods re-parent pages directly to the root `/Pages` node, any
+  attributes inherited from intermediate `/Pages` nodes (`/MediaBox`, `/CropBox`, `/Rotate`,
+  `/Resources`, `/UserUnit`) were silently lost. The new `realize_page_inherited_attrs()` helper
+  materializes those values directly onto each page dict before the `/Parent` reference is changed.
+  Three regression tests added (`nested_pages_*`).
+
 ---
 
 ## [0.7.0] — 2026-06-03

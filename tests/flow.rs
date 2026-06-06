@@ -3,7 +3,7 @@
 
 #![cfg(feature = "flow")]
 
-use harumi::{Document, FlowDocument, FlowOptions, Margins};
+use harumi::{Document, FlowDocument, FlowOptions, InlineSpan, Margins};
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -133,4 +133,52 @@ fn many_table_rows_paginate() {
     let bytes = doc.render().unwrap();
     let reloaded = Document::from_bytes(&bytes).unwrap();
     assert!(reloaded.page_count() >= 2, "50 rows should span at least 2 pages");
+}
+
+// ---------------------------------------------------------------------------
+// InlineSpan / push_paragraph_styled tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inline_spans_plain() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_paragraph_styled(&[
+        InlineSpan::plain("Hello "),
+        InlineSpan::plain("world"),
+    ]).unwrap();
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 1);
+    let text: String = reloaded.extract_text_runs(1).unwrap()
+        .iter().map(|f| f.text.as_str()).collect();
+    assert!(text.contains("Hello") && text.contains("world"), "text: {:?}", text);
+}
+
+#[test]
+fn inline_spans_bold_italic_color() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_paragraph_styled(&[
+        InlineSpan::bold("Bold "),
+        InlineSpan::italic("Italic "),
+        InlineSpan::colored("Red", [1.0, 0.0, 0.0]),
+    ]).unwrap();
+    let bytes = doc.render().unwrap();
+    // Just verify it produces a valid PDF without panic.
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 1);
+}
+
+#[test]
+fn inline_spans_cjk_mixed_style() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_paragraph_styled(&[
+        InlineSpan::plain("日本語 "),
+        InlineSpan::bold("太字"),
+    ]).unwrap();
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 1);
+    let text: String = reloaded.extract_text_runs(1).unwrap()
+        .iter().map(|f| f.text.as_str()).collect();
+    assert!(text.contains("日本語"), "text: {:?}", text);
 }

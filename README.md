@@ -79,6 +79,28 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 
 ---
 
+## Comparison with similar tools
+
+| Feature | **harumi** | pdf-lib (JS) | printpdf (Rust) | lopdf (Rust) | pdfium-render (Rust) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Pure Rust — no C/C++ deps | Yes | N/A | Yes | Yes | No (C++ PDFium) |
+| WASM / cross-platform | Yes | Yes | Yes | Yes | Partial (complex setup) |
+| CJK text on existing PDF | Yes | Yes | No (new PDFs only) | No (manual) | Yes |
+| Text extraction | Yes (CID + simple) | Partial (basic) | No | Partial (basic) | Yes full |
+| Text replacement (with re-subsetting) | Yes | No | No | No | No |
+| Page manipulation | Yes | Yes | Partial (limited) | Yes (low-level) | Yes |
+| Draw shapes | Yes | Yes | Yes | No (manual) | Yes |
+| Flow document / auto-pagination | Yes | No | No | No | No |
+| HTML → PDF | Yes | No | No | No | No |
+| Inline bold / italic / color | Yes (synthetic) | No | No | No | Yes |
+| Encryption (read) | Yes (RC4) | Yes | No | Partial | Yes |
+| Encryption (write) | Yes (RC4-128) | Yes | No | No | Yes |
+| Markup annotations | Yes | Partial (basic) | No | No | Yes |
+
+> Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature
+
+---
+
 ## Why this gap existed
 
 JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap generation, and text layer composition transparently. In Rust, the existing options force you to choose between:
@@ -270,6 +292,24 @@ match doc.page(1)?.can_replace_text("Draft", "Final") {
 }
 ```
 
+### Replace text with font subset expansion
+
+When the new text contains characters **not present in the original font subset**, use `replace_text_resubset`. Pass the original (unsubsetted) TTF/OTF bytes — harumi expands the subset, re-encodes all content streams, and performs the replacement in one `save()` call.
+
+```rust
+let font_bytes = include_bytes!("NotoSansJP-Regular.ttf");
+let mut doc = Document::from_file("contract.pdf")?;
+
+// replace_text_preserve_font would fail with FontCharNotMapped here
+let n = doc.page(1)?.replace_text_resubset("Hello", "日本語", font_bytes)?;
+doc.save("output.pdf")?;
+```
+
+Works for any language — Chinese, Korean, Arabic — as long as the supplied font contains the characters.
+
+> **Note**: Requires the original unsubsetted font file, not the subset embedded in the PDF.
+> Only CIDFontType2 fonts with `CIDToGIDMap /Identity` are supported (what harumi embeds).
+
 ### Read/write PDF metadata
 
 ```rust
@@ -414,6 +454,25 @@ let pdf_bytes = doc.render()?;
 ```
 
 Supports Japanese / Chinese / Korean out of the box — pass a CJK TTF font and text wraps at any character boundary.
+
+### Inline text styling in FlowDocument (`flow` feature)
+
+Bold, italic, and color can be mixed inline within a paragraph:
+
+```rust
+use harumi::{FlowDocument, FlowOptions, InlineSpan};
+
+let mut doc = FlowDocument::new(font_bytes, FlowOptions::default())?;
+doc.push_paragraph_styled(&[
+    InlineSpan::plain("Normal text, "),
+    InlineSpan::bold("bold text, "),
+    InlineSpan::italic("italic text, "),
+    InlineSpan::colored("and red.", [0.8, 0.0, 0.0]),
+])?;
+let pdf = doc.render()?;
+```
+
+Bold and italic are **synthetic** (fill+stroke and 12° shear respectively) — no separate bold/italic font file is required.
 
 ### Header / footer with page numbers (`flow` feature)
 
@@ -562,6 +621,7 @@ let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
 Supported elements: `<h1>`–`<h6>`, `<p>`, `<table>/<tr>/<th>/<td>`, `<ul>/<ol>/<li>`, `<div>/<section>/<article>` (block containers).  
 Page breaks: `style="page-break-after: always"` or `class="page-break"`.  
 Skipped: `<script>`, `<style>`, `<head>`.  
+Inline styles: `<strong>`/`<b>` (bold), `<em>`/`<i>` (italic), `<span style="color: #RRGGBB">` (color), `<a href>` (blue link color).  
 Handles deeply nested HTML without stack overflow (iterative parser, tested with 5 000 nested `<div>`s).
 
 ---
@@ -622,6 +682,11 @@ let n: usize = doc.page(1)?.replace_text(old_text, new_text, font)?;
 let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
 // Read-only scan: returns match count or Err(FontCharNotMapped)
 let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
+// Replace text + expand font subset to include new characters
+let n: usize = doc.page(1)?.replace_text_resubset(old, new, font_bytes)?;
+
+// Styled visible text (bold/italic synthetic effects, no extra font file needed)
+doc.page(1)?.add_text_styled(text, font, [x, y], size, [r, g, b], bold, italic)?;
 
 // Link annotations (no feature gate)
 doc.page(1)?.add_link_url([x, y, w, h], "https://example.com")?;   // URL link
@@ -672,7 +737,7 @@ harumi = { version = "0.5", features = ["ocr"] }
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `image` crate |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
-| `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`); `HeaderFooter` for per-page header/footer with `{{page}}`/`{{total}}` substitution; `auto_bookmarks` for automatic outline from headings | none |
+| `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_paragraph_styled`, `push_key_value_table`, `push_list`, `push_page_break`, `render`); `InlineSpan` for inline bold/italic/color within a paragraph; `HeaderFooter` for per-page header/footer with `{{page}}`/`{{total}}` substitution; `auto_bookmarks` for automatic outline from headings | none |
 | `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`) | `scraper` |
 
 ```rust
@@ -744,7 +809,8 @@ Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()`
 | **v0.5** | `add_link_url`, `add_link_internal` — clickable PDF link annotations; `add_bookmark` — document outline/bookmarks with CJK UTF-16BE titles; `HeaderFooter` + `{{page}}`/`{{total}}` for `FlowDocument`; `auto_bookmarks` from headings; security fixes |
 | **v0.6** | `from_file_with_password` / `from_bytes_with_password` / `is_encrypted` / `Error::WrongPassword`; markup annotations (highlight, underline, strikeout, sticky-note); AcroForm `form_fields()` / `fill_form()`; AGL table +116 entries (Central EU, ligatures, euro); Identity-H text extraction fallback |
 | **v0.7** *(current)* | `set_encryption` — write password-protected PDFs; `add_squiggly` — wavy underline annotation; full page-box API (`crop_box`, `trim_box`, `bleed_box`, `media_box` read/write) |
-| **Next** | FlowDocument inline styles (bold/italic/color spans), `cargo semver-checks` CI |
+| **v0.8** | `replace_text_resubset` — expand font subset at replacement time (any language); `InlineSpan` bold/italic/color in `FlowDocument` + HTML `<strong>`/`<em>`/`<span>` inline styles; nested `/Pages` tree inherited-attribute fix; TTC E2E tests; `wasm-pack test --node` CI; `cargo semver-checks` CI |
+| **Next** | AES-256 write encryption |
 
 ---
 

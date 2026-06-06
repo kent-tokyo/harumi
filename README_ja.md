@@ -79,6 +79,28 @@ doc.save("searchable.pdf")?;
 
 ---
 
+## 類似ツールとの比較
+
+| 機能 | **harumi** | pdf-lib (JS) | printpdf (Rust) | lopdf (Rust) | pdfium-render (Rust) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 純Rust — C/C++依存なし | Yes | N/A | Yes | Yes | No (C++ PDFium) |
+| WASM / クロスプラットフォーム | Yes | Yes | Yes | Yes | Partial (complex setup) |
+| 既存PDFへのCJKテキスト追加 | Yes | Yes | No (new PDFs only) | No (manual) | Yes |
+| テキスト抽出 | Yes (CID + simple) | Partial (basic) | No | Partial (basic) | Yes 完全 |
+| テキスト置換（再サブセット対応） | Yes | No | No | No | No |
+| ページ操作 | Yes | Yes | Partial (limited) | Yes (low-level) | Yes |
+| 図形描画 | Yes | Yes | Yes | No (manual) | Yes |
+| フロードキュメント / 自動ページング | Yes | No | No | No | No |
+| HTML → PDF | Yes | No | No | No | No |
+| インライン太字・斜体・色 | Yes (synthetic) | No | No | No | Yes |
+| 暗号化（読み込み） | Yes (RC4) | Yes | No | Partial | Yes |
+| 暗号化（書き込み） | Yes (RC4-128) | Yes | No | No | Yes |
+| マークアップ注釈 | Yes | Partial (basic) | No | No | Yes |
+
+> Yes = 対応  Partial = 部分対応  No = 非対応  N/A = 言語レベルの機能
+
+---
+
 ## なぜ今まで存在しなかったか
 
 JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォントのサブセット化・CMap生成・テキストレイヤー合成を透過的に処理してくれます。Rustの既存ツールではそれができません：
@@ -267,6 +289,24 @@ match doc.page(1)?.can_replace_text("Draft", "Final") {
 }
 ```
 
+### フォントサブセット拡張付きテキスト置換
+
+新テキストに元のサブセットにない文字が含まれる場合、`replace_text_resubset` を使います。元の（未サブセット）TTF/OTFバイトを渡すと、harumi がサブセットを拡張し、全コンテントストリームを再エンコードして1回の `save()` で置換を完了します。
+
+```rust
+let font_bytes = include_bytes!("NotoSansJP-Regular.ttf");
+let mut doc = Document::from_file("contract.pdf")?;
+
+// replace_text_preserve_font はここで FontCharNotMapped を返す
+let n = doc.page(1)?.replace_text_resubset("Hello", "日本語", font_bytes)?;
+doc.save("output.pdf")?;
+```
+
+中国語・韓国語・アラビア語など任意の言語に対応しています（フォントがその文字を含む場合）。
+
+> **注意**: PDFに埋め込まれたサブセットではなく、元の未サブセットフォントファイルが必要です。
+> CIDToGIDMap=Identity のCIDFontType2フォント（harumi が埋め込むもの）のみ対応。
+
 ### PDFメタデータの読み書き
 
 ```rust
@@ -410,6 +450,25 @@ let pdf_bytes = doc.render()?;
 
 日本語・中国語・韓国語もそのまま利用可能。CJKフォントを渡すと任意の文字位置で折り返します。
 
+### FlowDocument でのインラインテキストスタイル（`flow` feature）
+
+段落内に太字・斜体・色を混在させることができます:
+
+```rust
+use harumi::{FlowDocument, FlowOptions, InlineSpan};
+
+let mut doc = FlowDocument::new(font_bytes, FlowOptions::default())?;
+doc.push_paragraph_styled(&[
+    InlineSpan::plain("通常テキスト、"),
+    InlineSpan::bold("太字テキスト、"),
+    InlineSpan::italic("斜体テキスト、"),
+    InlineSpan::colored("赤色テキスト。", [0.8, 0.0, 0.0]),
+])?;
+let pdf = doc.render()?;
+```
+
+太字と斜体は**合成効果**（fill+stroke と12°せん断）で実現するため、別途太字・斜体フォントは不要です。
+
 ### ページ番号付きヘッダ/フッタ（`flow` feature）
 
 ```rust
@@ -443,6 +502,76 @@ doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
 
 // 内部リンク：該当領域をクリックすると同一ドキュメントの3ページ目へジャンプ
 doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+### マークアップ注釈（ハイライト、下線、取り消し線、スクイグリー）
+
+```rust
+// 黄色のハイライト
+doc.page(1)?.add_highlight([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0])?;
+
+// 赤い下線
+doc.page(1)?.add_underline([72.0, 640.0, 200.0, 12.0], [1.0, 0.0, 0.0])?;
+
+// 取り消し線
+doc.page(1)?.add_strikeout([72.0, 590.0, 200.0, 12.0], [0.0, 0.0, 0.0])?;
+
+// スクイグリー（波線）下線
+doc.page(1)?.add_squiggly([72.0, 540.0, 200.0, 12.0], [0.0, 0.6, 0.2])?;
+
+// スティッキーノートコメント
+doc.page(1)?.add_sticky_note([500.0, 700.0], "この部分を確認")?;
+doc.save("annotated.pdf")?;
+```
+
+### パスワード保護PDF
+
+```rust
+// 暗号化されたPDFを読み込む
+let mut doc = Document::from_file_with_password("protected.pdf", "secret")?;
+assert!(doc.is_encrypted());
+
+// 誤ったパスワードは Error::WrongPassword を返す
+match Document::from_bytes_with_password(&bytes, "wrong") {
+    Err(harumi::Error::WrongPassword) => println!("パスワードが違います"),
+    _ => {}
+}
+
+// パスワード保護して保存
+let mut doc = Document::new((595.0, 842.0))?;
+doc.set_encryption("userpass", "ownerpass")?;
+doc.save("protected_output.pdf")?;
+```
+
+### AcroForm: フォームフィールドの読み取りと入力
+
+```rust
+// 全フォームフィールドを読む
+let mut doc = Document::from_file("form.pdf")?;
+for field in doc.form_fields()? {
+    println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+}
+
+// フィールド名で値を入力
+let updated = doc.fill_form(&[
+    ("FullName",   "田中 花子"),
+    ("Agree",      "yes"),       // チェックボックス → /Yes
+    ("Department", "Engineering"),
+])?;
+println!("{updated} フィールドを更新");
+doc.save("filled_form.pdf")?;
+```
+
+### ページボックス（印刷ワークフロー）
+
+```rust
+// CropBox（表示領域クリップ）の読み書き
+let cb = doc.page(1)?.crop_box()?;   // Option<[f32;4]>
+
+doc.page(1)?.set_crop_box([10.0, 10.0, 575.0, 822.0])?;   // [x,y,w,h]
+doc.page(1)?.set_trim_box([0.0, 0.0, 595.0, 842.0])?;
+doc.page(1)?.set_bleed_box([0.0, 0.0, 601.0, 848.0])?;
+doc.save("print_ready.pdf")?;
 ```
 
 ### ブックマーク（ドキュメントアウトライン）
@@ -487,6 +616,7 @@ let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
 対応要素：`<h1>`–`<h6>`、`<p>`、`<table>/<tr>/<th>/<td>`、`<ul>/<ol>/<li>`、`<div>/<section>/<article>`（ブロックコンテナ）。  
 改ページ：`style="page-break-after: always"` または `class="page-break"`。  
 スキップ：`<script>`、`<style>`、`<head>`。  
+インラインスタイル: `<strong>`/`<b>`（太字）、`<em>`/`<i>`（斜体）、`<span style="color: #RRGGBB">`（色指定）、`<a href>`（青色リンク）。  
 深いネスト構造もスタックオーバーフローなし（反復型パーサ、5000段ネストで検証済み）。
 
 ---
@@ -642,7 +772,8 @@ harumi
 | **v0.5** | `add_link_url`・`add_link_internal` — クリッカブルな PDF リンクアノテーション；`add_bookmark` — CJK UTF-16BE タイトル対応のドキュメントアウトライン；`HeaderFooter` + `{{page}}`/`{{total}}` の `FlowDocument` 対応；見出しからの `auto_bookmarks`；セキュリティ修正 |
 | **v0.6** | 暗号化 PDF 読み込み（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；マークアップ注釈（ハイライト・下線・取り消し線・付箋）；AcroForm `form_fields()` / `fill_form()`；AGL テーブル +116 エントリ（中欧文字・合字・euro）；Identity-H テキスト抽出フォールバック |
 | **v0.7** *(current)* | `set_encryption` — パスワード保護付き PDF の書き出し；`add_squiggly` — 波線下線注釈；ページボックス全種対応（`crop_box`・`trim_box`・`bleed_box`・`media_box` 読み書き） |
-| **Next** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）、`cargo semver-checks` CI |
+| **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
+| **Next** | AES-256 書き込み暗号化 |
 
 ---
 

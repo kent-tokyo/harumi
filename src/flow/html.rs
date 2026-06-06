@@ -21,7 +21,7 @@ use scraper::{ElementRef, Html};
 
 use crate::{Error, Result};
 
-use super::{FlowDocument, FlowOptions, Margins};
+use super::{FlowDocument, FlowOptions, InlineSpan, Margins};
 
 /// Options for [`render_html_to_pdf`].
 pub struct HtmlRenderOptions {
@@ -125,9 +125,10 @@ fn process_one<'a>(
         }
 
         "p" => {
-            let text = collect_text(elem);
-            if !text.trim().is_empty() {
-                flow.push_paragraph(text.trim())?;
+            let spans = collect_inline_spans(elem);
+            let has_content = spans.iter().any(|s| !s.text.trim().is_empty());
+            if has_content {
+                flow.push_paragraph_styled(&spans)?;
             }
         }
 
@@ -174,6 +175,118 @@ fn process_one<'a>(
 
 fn collect_text(elem: ElementRef<'_>) -> String {
     elem.text().collect()
+}
+
+/// Collect inline styled spans from an element's children, preserving bold/italic/color.
+///
+/// Handles: `<strong>`, `<b>` (bold), `<em>`, `<i>` (italic),
+/// `<span style="color:...">` (color), `<a href="...">` (blue link color).
+/// Other inline elements fall through as plain text.
+fn collect_inline_spans(elem: ElementRef<'_>) -> Vec<InlineSpan> {
+    let mut spans: Vec<InlineSpan> = Vec::new();
+    collect_inline_spans_inner(elem, false, false, [0.0; 3], &mut spans);
+    // Trim leading/trailing whitespace from the overall collection.
+    if let Some(first) = spans.first_mut() {
+        let trimmed = first.text.trim_start().to_owned();
+        first.text = trimmed;
+    }
+    if let Some(last) = spans.last_mut() {
+        let trimmed = last.text.trim_end().to_owned();
+        last.text = trimmed;
+    }
+    spans.retain(|s| !s.text.is_empty());
+    spans
+}
+
+fn collect_inline_spans_inner(
+    elem: ElementRef<'_>,
+    parent_bold: bool,
+    parent_italic: bool,
+    parent_color: [f32; 3],
+    out: &mut Vec<InlineSpan>,
+) {
+    use scraper::node::Node;
+
+    let tag = elem.value().name();
+    let bold = parent_bold || matches!(tag, "strong" | "b");
+    let italic = parent_italic || matches!(tag, "em" | "i");
+    let color = inherited_color(elem, tag, parent_color);
+
+    for child in elem.children() {
+        match child.value() {
+            Node::Text(text) => {
+                let t = text.to_string();
+                if !t.is_empty() {
+                    out.push(InlineSpan { text: t, bold, italic, color });
+                }
+            }
+            Node::Element(_) => {
+                if let Some(child_ref) = ElementRef::wrap(child) {
+                    let child_tag = child_ref.value().name();
+                    // Skip non-content elements.
+                    if matches!(child_tag, "script" | "style" | "head") {
+                        continue;
+                    }
+                    collect_inline_spans_inner(child_ref, bold, italic, color, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Resolve the effective color for an element, inheriting from parent if not overridden.
+fn inherited_color(elem: ElementRef<'_>, tag: &str, parent_color: [f32; 3]) -> [f32; 3] {
+    // <a> defaults to a blue link color.
+    if tag == "a" {
+        return [0.0, 0.0, 0.8];
+    }
+    // Look for inline style="color: ...".
+    if let Some(style) = elem.value().attr("style") {
+        if let Some(c) = parse_css_color(style) {
+            return c;
+        }
+    }
+    parent_color
+}
+
+/// Parse `color: #RRGGBB`, `color: #RGB`, or `color: rgb(r, g, b)` from a CSS style string.
+/// Returns `None` if no parseable color is found.
+fn parse_css_color(style: &str) -> Option<[f32; 3]> {
+    // Find "color:" in style string.
+    let lower = style.to_ascii_lowercase();
+    let start = lower.find("color:")? + 6;
+    let value = lower[start..].trim_start();
+
+    if let Some(hex) = value.strip_prefix('#') {
+        let hex = hex.split(|c: char| !c.is_ascii_hexdigit()).next()?;
+        return match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+                Some([r, g, b])
+            }
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()? as f32 / 255.0;
+                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()? as f32 / 255.0;
+                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()? as f32 / 255.0;
+                Some([r, g, b])
+            }
+            _ => None,
+        };
+    }
+    if let Some(inner) = value.strip_prefix("rgb(") {
+        let inner = inner.split(')').next()?;
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() == 3 {
+            let r = parts[0].trim().parse::<f32>().ok()? / 255.0;
+            let g = parts[1].trim().parse::<f32>().ok()? / 255.0;
+            let b = parts[2].trim().parse::<f32>().ok()? / 255.0;
+            return Some([r, g, b]);
+        }
+    }
+    None
 }
 
 fn has_page_break(elem: ElementRef<'_>) -> bool {

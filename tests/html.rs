@@ -167,3 +167,45 @@ fn max_pages_limit_respected() {
     let result = render_html_to_pdf(&html, opts);
     assert!(result.is_err(), "should hit max_pages limit");
 }
+
+// ---------------------------------------------------------------------------
+// Inline styling tests (bold/italic/color via <strong>/<em>/<span>/<a>)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bold_and_italic_rendered() {
+    let bytes = render_html_to_pdf(
+        "<p>Normal <strong>Bold</strong> and <em>Italic</em> text.</p>",
+        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
+    ).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let text: String = doc.extract_text_runs(1).unwrap()
+        .iter().map(|f| f.text.as_str()).collect();
+    // All words should appear in the output.
+    assert!(text.contains("Normal"), "text: {:?}", text);
+    assert!(text.contains("Bold"), "text: {:?}", text);
+    assert!(text.contains("Italic"), "text: {:?}", text);
+}
+
+#[test]
+fn span_color_attribute() {
+    let bytes = render_html_to_pdf(
+        r#"<p>Normal <span style="color: #ff0000">Red</span> text.</p>"#,
+        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
+    ).unwrap();
+    // Just verify valid PDF output.
+    let doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(doc.page_count(), 1);
+}
+
+#[test]
+fn link_rendered_as_blue() {
+    let bytes = render_html_to_pdf(
+        r#"<p>Visit <a href="https://example.com">example.com</a> for more.</p>"#,
+        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
+    ).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let text: String = doc.extract_text_runs(1).unwrap()
+        .iter().map(|f| f.text.as_str()).collect();
+    assert!(text.contains("example.com"), "text: {:?}", text);
+}

@@ -7,17 +7,41 @@ use crate::error::Result;
 /// A text fragment extracted from a page content stream.
 ///
 /// Returned by [`crate::Document::extract_text_runs`].
+///
+/// ## Bounding box
+///
+/// The fields `x`, `y`, `width`, `height` form the text run's bounding box:
+///
+/// ```text
+/// y + height  ┌──────────────────────────────┐
+///             │   ascenders (cap/diacritic)  │
+/// y (baseline)├──────────────────────────────│ ← text sits on this line
+///             │   descenders (g, p, y…)      │
+/// y - height×D└──────────────────────────────┘
+///             x                    x + width
+/// ```
+///
+/// * `(x, y)` — baseline origin in PDF points (bottom-left page origin).
+/// * `width`  — advance-width sum; actual ink may be slightly narrower.
+/// * `height` — full em height (`font_size`); actual ascent/descent split
+///   depends on the typeface. For a typical Latin font, the cap top is
+///   approximately `y + 0.7 * font_size`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextFragment {
     /// Decoded Unicode text.
     pub text: String,
-    /// X coordinate in PDF points (origin: bottom-left of page).
+    /// X coordinate of the text baseline in PDF points (origin: bottom-left of page).
     pub x: f32,
-    /// Y coordinate in PDF points (origin: bottom-left of page).
+    /// Y coordinate of the text baseline in PDF points (origin: bottom-left of page).
     pub y: f32,
     /// Estimated text width in PDF points, computed from the font's advance widths.
     pub width: f32,
+    /// Approximate text height in PDF points (equals `font_size`, the full em height).
+    ///
+    /// The baseline is at `y`; the em square extends from approximately
+    /// `y - descender_fraction * font_size` to `y + ascender_fraction * font_size`.
+    pub height: f32,
     /// Font size in PDF points.
     pub font_size: f32,
     /// PDF resource name of the font at this position (e.g. `"HR0"`, `"F1"`).
@@ -1325,6 +1349,7 @@ fn decode_chars_to_fragment(
         x,
         y,
         width: total_width,
+        height: font_size,
         font_size,
         font_name: String::from_utf8_lossy(font_name).into_owned(),
         color,

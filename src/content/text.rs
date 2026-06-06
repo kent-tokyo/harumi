@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 /// `gs_name`: when `Some("GS0")`, emits `"/GS0 gs"` to apply an ExtGState (e.g. opacity).
 /// `rotation_degrees`: counter-clockwise rotation in degrees. `0.0` emits `Td`; any other
 /// value emits a full `Tm` text matrix (`cos sin -sin cos x y Tm`).
+/// `bold`: enables render mode 2 (fill+stroke) with a thin synthetic stroke for a bold effect.
+/// `italic`: adds a 12° horizontal shear via a `Tm` text matrix for a synthetic italic effect.
 /// Character encoding: 2-byte big-endian GID values (Identity-H encoding).
 #[allow(clippy::too_many_arguments)]
 pub fn text_stream(
@@ -22,11 +24,17 @@ pub fn text_stream(
     render_mode: u8,
     color: [f32; 3],
     gs_name: Option<&str>,
+    bold: bool,
+    italic: bool,
 ) -> Vec<u8> {
     let hex = chars_to_hex(chars, char_to_gid);
     if hex.is_empty() {
         return Vec::new();
     }
+
+    // Bold uses render mode 2 (fill+stroke) with a thin proportional stroke.
+    // Invisible text (mode 3) is unaffected by bold/italic.
+    let effective_mode = if bold && render_mode == 0 { 2u8 } else { render_mode };
 
     let mut s = String::new();
     s.push_str("q\n");
@@ -44,17 +52,48 @@ pub fn text_stream(
             "{:.4} {:.4} {:.4} rg\n",
             color[0], color[1], color[2]
         ));
+        if bold {
+            // Stroke color matches fill so the bold effect is uniform.
+            s.push_str(&format!(
+                "{:.4} {:.4} {:.4} RG\n",
+                color[0], color[1], color[2]
+            ));
+            // Stroke width ≈ 4% of font size (scales with font size).
+            s.push_str(&format!("{:.4} w\n", font_size * 0.04));
+        }
     }
-    s.push_str(&format!("{} Tr\n", render_mode));
-    if rotation_degrees == 0.0 {
-        s.push_str(&format!("{:.4} {:.4} Td\n", x, y));
+    s.push_str(&format!("{} Tr\n", effective_mode));
+
+    // Position: italic uses a shear Tm; rotation overrides Td in both cases.
+    if italic {
+        // Shear factor for 12° synthetic italic: tan(12°) ≈ 0.21256.
+        const SHEAR: f32 = 0.21256;
+        if rotation_degrees == 0.0 {
+            s.push_str(&format!("1 0 {SHEAR:.5} 1 {x:.4} {y:.4} Tm\n"));
+        } else {
+            // Combine rotation R and italic shear S: result = [a b c d x y].
+            // R = [[cos, sin], [-sin, cos]], S = [[1, 0], [shear, 1]]
+            // R*S = [[cos + sin*shear, sin], [-sin + cos*shear, cos]]
+            let theta = rotation_degrees.to_radians();
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+            let a = cos_t + sin_t * SHEAR;
+            let b = sin_t;
+            let c = -sin_t + cos_t * SHEAR;
+            let d = cos_t;
+            s.push_str(&format!(
+                "{a:.6} {b:.6} {c:.6} {d:.6} {x:.4} {y:.4} Tm\n"
+            ));
+        }
+    } else if rotation_degrees == 0.0 {
+        s.push_str(&format!("{x:.4} {y:.4} Td\n"));
     } else {
         let theta = rotation_degrees.to_radians();
         let cos_t = theta.cos();
         let sin_t = theta.sin();
         s.push_str(&format!(
-            "{:.6} {:.6} {:.6} {:.6} {:.4} {:.4} Tm\n",
-            cos_t, sin_t, -sin_t, cos_t, x, y
+            "{cos_t:.6} {sin_t:.6} {:.6} {cos_t:.6} {x:.4} {y:.4} Tm\n",
+            -sin_t
         ));
     }
     s.push_str(&format!("<{}> Tj\n", hex));
@@ -74,7 +113,7 @@ pub fn invisible_text_stream(
     chars: &[char],
     char_to_gid: &BTreeMap<char, u16>,
 ) -> Vec<u8> {
-    text_stream(font_name, font_size, x, y, 0.0, chars, char_to_gid, 3, [0.0; 3], None)
+    text_stream(font_name, font_size, x, y, 0.0, chars, char_to_gid, 3, [0.0; 3], None, false, false)
 }
 
 /// Converts chars to a hex string of 2-byte GID values for Identity-H encoding.
@@ -116,7 +155,7 @@ mod tests {
     fn stream_visible_mode_has_color() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 0.0, &['A'], &map, 0, [1.0, 0.0, 0.0], None);
+        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 0.0, &['A'], &map, 0, [1.0, 0.0, 0.0], None, false, false);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("0 Tr"), "visible mode should use Tr 0");
         assert!(s.contains("1.0000 0.0000 0.0000 rg"), "should emit RGB color");
@@ -126,7 +165,7 @@ mod tests {
     fn rotation_zero_uses_td() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 10.0, 20.0, 0.0, &['A'], &map, 0, [0.0; 3], None);
+        let bytes = text_stream(b"F0", 12.0, 10.0, 20.0, 0.0, &['A'], &map, 0, [0.0; 3], None, false, false);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("10.0000 20.0000 Td"), "zero rotation should use Td");
         assert!(!s.contains("Tm"), "zero rotation must not emit Tm");
@@ -136,7 +175,7 @@ mod tests {
     fn rotation_nonzero_uses_tm() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 45.0, &['A'], &map, 0, [0.0; 3], None);
+        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 45.0, &['A'], &map, 0, [0.0; 3], None, false, false);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("Tm"), "non-zero rotation should use Tm");
         assert!(!s.contains("Td"), "non-zero rotation must not emit Td");
@@ -148,7 +187,7 @@ mod tests {
     fn text_stream_with_gs_emits_gs_op() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 0.0, 0.0, 0.0, &['A'], &map, 0, [0.0; 3], Some("GS0"));
+        let bytes = text_stream(b"F0", 12.0, 0.0, 0.0, 0.0, &['A'], &map, 0, [0.0; 3], Some("GS0"), false, false);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS0 gs"), "should emit gs operator when gs_name is Some");
         // Must appear after q and before BT
