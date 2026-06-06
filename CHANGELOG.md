@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.8.0] — 2026-06-06
+
 ### Added
 
 - **`PageHandle::replace_text_resubset(old_text, new_text, font_bytes)`** — replace text in an
