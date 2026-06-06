@@ -67,8 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 6. Batch run on page 1 ---
     doc.page(1)?.add_invisible_text_runs(&[
-        TextRun { text: "バッチテスト行1".into(), font, x: 72.0, y: 40.0, font_size: 10.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "batch test line 2".into(), font, x: 72.0, y: 26.0, font_size: 10.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
+        TextRun { text: "バッチテスト行1".into(), font, x: 72.0, y: 40.0, font_size: 10.0, render_mode: 3, color: [0.0; 3] },
+        TextRun { text: "batch test line 2".into(), font, x: 72.0, y: 26.0, font_size: 10.0, render_mode: 3, color: [0.0; 3] },
     ])?;
 
     // --- 7. Save ---

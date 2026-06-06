@@ -86,13 +86,13 @@ pub struct HeaderFooter {
     pub right: Option<String>,
     /// Font size in PDF points. Default: `9.0`.
     pub font_size: f32,
-    /// RGB color `[r, g, b]` in `0.0..=1.0`. Default: `[0.3, 0.3, 0.3]` (dark gray).
-    pub color: [f32; 3],
+    /// Color (RGB or CMYK) in `0.0..=1.0`. Default: dark gray.
+    pub color: crate::Color,
 }
 
 impl Default for HeaderFooter {
     fn default() -> Self {
-        HeaderFooter { left: None, center: None, right: None, font_size: 9.0, color: [0.3, 0.3, 0.3] }
+        HeaderFooter { left: None, center: None, right: None, font_size: 9.0, color: crate::Color::Rgb([0.3, 0.3, 0.3]) }
     }
 }
 
@@ -181,26 +181,26 @@ pub struct InlineSpan {
     pub bold: bool,
     /// Synthetic italic (12° horizontal shear via text matrix).
     pub italic: bool,
-    /// RGB fill color, components in `0.0..=1.0`. Default: black `[0.0, 0.0, 0.0]`.
-    pub color: [f32; 3],
+    /// Fill color (RGB or CMYK) in `0.0..=1.0`. Default: black.
+    pub color: crate::Color,
 }
 
 impl InlineSpan {
     /// Plain black text.
     pub fn plain(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: false, color: [0.0; 3] }
+        InlineSpan { text: text.into(), bold: false, italic: false, color: crate::Color::Rgb([0.0; 3]) }
     }
     /// Bold text.
     pub fn bold(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: true, italic: false, color: [0.0; 3] }
+        InlineSpan { text: text.into(), bold: true, italic: false, color: crate::Color::Rgb([0.0; 3]) }
     }
     /// Italic text.
     pub fn italic(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: true, color: [0.0; 3] }
+        InlineSpan { text: text.into(), bold: false, italic: true, color: crate::Color::Rgb([0.0; 3]) }
     }
     /// Colored text (bold and italic both false).
-    pub fn colored(text: impl Into<String>, color: [f32; 3]) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: false, color }
+    pub fn colored(text: impl Into<String>, color: impl Into<crate::Color>) -> Self {
+        InlineSpan { text: text.into(), bold: false, italic: false, color: color.into() }
     }
 }
 

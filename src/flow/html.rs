@@ -217,7 +217,7 @@ fn collect_inline_spans_inner(
             Node::Text(text) => {
                 let t = text.to_string();
                 if !t.is_empty() {
-                    out.push(InlineSpan { text: t, bold, italic, color });
+                    out.push(InlineSpan { text: t, bold, italic, color: color.into() });
                 }
             }
             Node::Element(_) => {

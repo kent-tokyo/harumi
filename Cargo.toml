@@ -1,6 +1,6 @@
 [package]
 name = "harumi"
-version = "0.8.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]
