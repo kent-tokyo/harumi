@@ -16,17 +16,51 @@ use crate::{
     },
 };
 
+/// A color value that can be either RGB or CMYK.
+///
+/// RGB is the default for most PDF operations and displays on screens.
+/// CMYK is used primarily for print output.
+///
+/// # Example
+/// ```
+/// use harumi::Color;
+///
+/// let rgb = Color::Rgb([0.5, 0.2, 0.8]);
+/// let cmyk = Color::Cmyk([0.0, 0.8, 0.2, 0.1]);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Color {
+    /// RGB color: each component in `0.0..=1.0`.
+    /// Emits PDF operators `rg` (fill) and `RG` (stroke).
+    Rgb([f32; 3]),
+    /// CMYK color: each component in `0.0..=1.0`.
+    /// Emits PDF operators `k` (fill) and `K` (stroke).
+    Cmyk([f32; 4]),
+}
+
+impl From<[f32; 3]> for Color {
+    fn from(c: [f32; 3]) -> Self {
+        Color::Rgb(c)
+    }
+}
+
+impl From<[f32; 4]> for Color {
+    fn from(c: [f32; 4]) -> Self {
+        Color::Cmyk(c)
+    }
+}
+
 /// A single text placement descriptor for use with [`PageHandle::add_invisible_text_runs`].
 ///
 /// # Example
 /// ```no_run
-/// # use harumi::{Document, TextRun};
+/// # use harumi::{Document, TextRun, Color};
 /// # fn main() -> harumi::Result<()> {
 /// # let mut doc = Document::from_bytes(&[])?;
 /// # let font = doc.embed_font(&[])?;
 /// doc.page(1)?.add_invisible_text_runs(&[
-///     TextRun { text: "first line".into(), font, x: 72.0, y: 700.0, font_size: 12.0, render_mode: 3, color: [0.0; 3] },
-///     TextRun { text: "second line".into(), font, x: 72.0, y: 685.0, font_size: 12.0, render_mode: 3, color: [0.0; 3] },
+///     TextRun { text: "first line".into(), font, x: 72.0, y: 700.0, font_size: 12.0, render_mode: 3, color: Color::Rgb([0.0; 3]) },
+///     TextRun { text: "second line".into(), font, x: 72.0, y: 685.0, font_size: 12.0, render_mode: 3, color: Color::Rgb([0.0; 3]) },
 /// ])?;
 /// # Ok(())
 /// # }
@@ -42,8 +76,8 @@ pub struct TextRun {
     pub y: f32,
     /// Font size in PDF points.
     pub font_size: f32,
-    /// RGB fill color; each component in `0.0..=1.0`. Only applied when `render_mode == 0`.
-    pub color: [f32; 3],
+    /// Fill color (RGB or CMYK). Only applied when `render_mode == 0`.
+    pub color: Color,
     /// PDF text render mode. `0` = visible, `3` = invisible (OCR search layer).
     pub render_mode: u8,
 }
@@ -57,7 +91,7 @@ struct PendingText {
     y: f32,
     font_size: f32,
     render_mode: u8,
-    color: [f32; 3],
+    color: Color,
     opacity: f32,
     rotation_degrees: f32,
     bold: bool,
@@ -1838,31 +1872,31 @@ impl Document {
                         match draw_op {
                             DrawOp::Rect { rect, color, opacity } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::rect_stream(rect, color, &gs));
+                                page_stream.extend(shapes::rect_stream(rect, *color, &gs));
                             }
                             DrawOp::RectStroke { rect, color, line_width, opacity } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::rect_stroke_stream(rect, color, *line_width, &gs));
+                                page_stream.extend(shapes::rect_stroke_stream(rect, *color, *line_width, &gs));
                             }
                             DrawOp::Line { from, to, color, width, opacity } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::line_stream(from, to, color, *width, &gs));
+                                page_stream.extend(shapes::line_stream(from, to, *color, *width, &gs));
                             }
                             DrawOp::Polygon { points, color, opacity, filled, stroke_width } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polygon_stream(points, color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::polygon_stream(points, *color, &gs, *filled, *stroke_width));
                             }
                             DrawOp::Polyline { points, color, width, opacity } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polyline_stream(points, color, *width, &gs));
+                                page_stream.extend(shapes::polyline_stream(points, *color, *width, &gs));
                             }
                             DrawOp::Ellipse { rect, color, opacity, filled, stroke_width } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::ellipse_stream(rect, color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::ellipse_stream(rect, *color, &gs, *filled, *stroke_width));
                             }
                             DrawOp::Path { points, closed, color, opacity, filled, stroke_width } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::path_stream(points, *closed, color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::path_stream(points, *closed, *color, &gs, *filled, *stroke_width));
                             }
                             #[cfg(feature = "image")]
                             DrawOp::Image { bytes, rect, opacity } => {
@@ -2060,7 +2094,7 @@ impl<'doc> PageHandle<'doc> {
             y: position[1],
             font_size,
             render_mode: 3,
-            color: [0.0; 3],
+            color: Color::Rgb([0.0; 3]),
             opacity: 1.0,
             rotation_degrees: 0.0,
             bold: false,
@@ -2096,9 +2130,10 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         position: [f32; 2],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
     ) -> Result<()> {
-        check_finite(&[position[0], position[1], font_size, color[0], color[1], color[2]], "add_text")?;
+        let color = color.into();
+        check_finite(&[position[0], position[1], font_size], "add_text")?;
         self.push_text(PendingText {
             font,
             text: text.to_owned(),
@@ -2130,11 +2165,12 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         position: [f32; 2],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         bold: bool,
         italic: bool,
     ) -> Result<()> {
-        check_finite(&[position[0], position[1], font_size, color[0], color[1], color[2]], "add_text_styled")?;
+        let color = color.into();
+        check_finite(&[position[0], position[1], font_size], "add_text_styled")?;
         self.push_text(PendingText {
             font,
             text: text.to_owned(),
@@ -2157,7 +2193,7 @@ impl<'doc> PageHandle<'doc> {
     /// so each font is subsetted exactly once regardless of how many runs use it.
     pub fn add_invisible_text_runs(&mut self, runs: &[TextRun]) -> Result<()> {
         for run in runs {
-            check_finite(&[run.x, run.y, run.font_size, run.color[0], run.color[1], run.color[2]], "add_invisible_text_runs")?;
+            check_finite(&[run.x, run.y, run.font_size], "add_invisible_text_runs")?;
             self.push_text(PendingText {
                 font: run.font,
                 text: run.text.clone(),
@@ -2410,8 +2446,9 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// # Errors
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
-    pub fn add_highlight(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_highlight")?;
+    pub fn add_highlight(&mut self, rect: [f32; 4], color: impl Into<Color>) -> Result<()> {
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_highlight")?;
         check_positive_size(rect[2], rect[3], "add_highlight")?;
         let d = build_markup_annot(b"Highlight", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
@@ -2422,8 +2459,9 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// # Errors
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
-    pub fn add_underline(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_underline")?;
+    pub fn add_underline(&mut self, rect: [f32; 4], color: impl Into<Color>) -> Result<()> {
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_underline")?;
         check_positive_size(rect[2], rect[3], "add_underline")?;
         let d = build_markup_annot(b"Underline", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
@@ -2434,8 +2472,9 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// # Errors
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
-    pub fn add_strikeout(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_strikeout")?;
+    pub fn add_strikeout(&mut self, rect: [f32; 4], color: impl Into<Color>) -> Result<()> {
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_strikeout")?;
         check_positive_size(rect[2], rect[3], "add_strikeout")?;
         let d = build_markup_annot(b"StrikeOut", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
@@ -2446,8 +2485,9 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// # Errors
     /// Returns [`Error::InvalidInput`] if any coordinate is NaN/Infinity.
-    pub fn add_squiggly(&mut self, rect: [f32; 4], color: [f32; 3]) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2]], "add_squiggly")?;
+    pub fn add_squiggly(&mut self, rect: [f32; 4], color: impl Into<Color>) -> Result<()> {
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_squiggly")?;
         check_positive_size(rect[2], rect[3], "add_squiggly")?;
         let d = build_markup_annot(b"Squiggly", rect, color);
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
@@ -2519,9 +2559,10 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         rect: [f32; 4],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_height: f32,
     ) -> Result<()> {
+        let color = color.into();
         self.add_text_box_aligned(text, font, rect, font_size, color, line_height, VerticalAlign::Top)
     }
 
@@ -2563,11 +2604,12 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         rect: [f32; 4],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_height: f32,
         align: VerticalAlign,
     ) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], font_size, color[0], color[1], color[2], line_height], "add_text_box_aligned")?;
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], font_size, line_height], "add_text_box_aligned")?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
             return Ok(());
         }
@@ -2783,8 +2825,9 @@ impl<'doc> PageHandle<'doc> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_rect(&mut self, rect: [f32; 4], color: [f32; 3], opacity: f32) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2], opacity], "add_rect")?;
+    pub fn add_rect(&mut self, rect: [f32; 4], color: impl Into<Color>, opacity: f32) -> Result<()> {
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], opacity], "add_rect")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Rect { rect, color, opacity }));
         Ok(())
     }
@@ -2798,11 +2841,12 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_rect_stroke(
         &mut self,
         rect: [f32; 4],
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_width: f32,
         opacity: f32,
     ) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2], line_width, opacity], "add_rect_stroke")?;
+        let color = color.into();
+        check_finite(&[rect[0], rect[1], rect[2], rect[3], line_width, opacity], "add_rect_stroke")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::RectStroke {
             rect,
             color,
@@ -2823,16 +2867,17 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_polygon(
         &mut self,
         points: &[[f32; 2]],
-        color: [f32; 3],
+        color: impl Into<Color>,
         opacity: f32,
         filled: bool,
         stroke_width: f32,
     ) -> Result<()> {
+        let color = color.into();
         {
             let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
             check_finite(&coords, "add_polygon points")?;
         }
-        check_finite(&[color[0], color[1], color[2], opacity, stroke_width], "add_polygon")?;
+        check_finite(&[opacity, stroke_width], "add_polygon")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Polygon {
             points: points.to_vec(),
             color,
@@ -2864,11 +2909,12 @@ impl<'doc> PageHandle<'doc> {
         &mut self,
         from: [f32; 2],
         to: [f32; 2],
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_width: f32,
         opacity: f32,
     ) -> Result<()> {
-        check_finite(&[from[0], from[1], to[0], to[1], color[0], color[1], color[2], line_width, opacity], "add_line")?;
+        let color = color.into();
+        check_finite(&[from[0], from[1], to[0], to[1], line_width, opacity], "add_line")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Line {
             from,
             to,
@@ -2890,10 +2936,11 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_polyline(
         &mut self,
         points: &[[f32; 2]],
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_width: f32,
         opacity: f32,
     ) -> Result<()> {
+        let color = color.into();
         if points.len() < 2 {
             return Ok(());
         }
@@ -2901,7 +2948,7 @@ impl<'doc> PageHandle<'doc> {
             let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
             check_finite(&coords, "add_polyline points")?;
         }
-        check_finite(&[color[0], color[1], color[2], line_width, opacity], "add_polyline")?;
+        check_finite(&[line_width, opacity], "add_polyline")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Polyline {
             points: points.to_vec(),
             color,
@@ -2922,13 +2969,14 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_ellipse(
         &mut self,
         rect: [f32; 4],
-        color: [f32; 3],
+        color: impl Into<Color>,
         opacity: f32,
         filled: bool,
         stroke_width: f32,
     ) -> Result<()> {
+        let color = color.into();
         check_finite(
-            &[rect[0], rect[1], rect[2], rect[3], color[0], color[1], color[2], opacity, stroke_width],
+            &[rect[0], rect[1], rect[2], rect[3], opacity, stroke_width],
             "add_ellipse",
         )?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
@@ -2957,11 +3005,12 @@ impl<'doc> PageHandle<'doc> {
         &mut self,
         points: &[[f32; 2]],
         closed: bool,
-        color: [f32; 3],
+        color: impl Into<Color>,
         filled: bool,
         stroke_width: f32,
         opacity: f32,
     ) -> Result<()> {
+        let color = color.into();
         if points.len() < 2 {
             return Ok(());
         }
@@ -2969,7 +3018,7 @@ impl<'doc> PageHandle<'doc> {
             let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
             check_finite(&coords, "add_path points")?;
         }
-        check_finite(&[color[0], color[1], color[2], stroke_width, opacity], "add_path")?;
+        check_finite(&[stroke_width, opacity], "add_path")?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Path {
             points: points.to_vec(),
             closed,
@@ -2991,11 +3040,12 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         position: [f32; 2],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         opacity: f32,
     ) -> Result<()> {
+        let color = color.into();
         check_finite(
-            &[position[0], position[1], font_size, color[0], color[1], color[2], opacity],
+            &[position[0], position[1], font_size, opacity],
             "add_text_with_opacity",
         )?;
         self.push_text(PendingText {
@@ -3028,12 +3078,13 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         position: [f32; 2],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         opacity: f32,
         rotation_degrees: f32,
     ) -> Result<()> {
+        let color = color.into();
         check_finite(
-            &[position[0], position[1], font_size, color[0], color[1], color[2], opacity, rotation_degrees],
+            &[position[0], position[1], font_size, opacity, rotation_degrees],
             "add_text_with_rotation",
         )?;
         self.push_text(PendingText {
@@ -3063,13 +3114,14 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         rect: [f32; 4],
         font_size: f32,
-        color: [f32; 3],
+        color: impl Into<Color>,
         line_height: f32,
         opacity: f32,
     ) -> Result<()> {
+        let color = color.into();
         check_finite(
             &[rect[0], rect[1], rect[2], rect[3], font_size,
-              color[0], color[1], color[2], line_height, opacity],
+              line_height, opacity],
             "add_text_box_with_opacity",
         )?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
@@ -3371,7 +3423,7 @@ fn collect_field_ids_recursive(
 }
 
 /// Builds a markup annotation dictionary (Highlight, Underline, StrikeOut).
-fn build_markup_annot(subtype: &[u8], rect: [f32; 4], color: [f32; 3]) -> Dictionary {
+fn build_markup_annot(subtype: &[u8], rect: [f32; 4], color: Color) -> Dictionary {
     let x2 = rect[0] + rect[2];
     let y2 = rect[1] + rect[3];
     let mut d = Dictionary::new();
@@ -3388,9 +3440,11 @@ fn build_markup_annot(subtype: &[u8], rect: [f32; 4], color: [f32; 3]) -> Dictio
         Object::Real(rect[0]), Object::Real(rect[1]),
         Object::Real(x2),      Object::Real(rect[1]),
     ]));
-    d.set("C", Object::Array(vec![
-        Object::Real(color[0]), Object::Real(color[1]), Object::Real(color[2]),
-    ]));
+    let color_array = match color {
+        Color::Rgb(c) => vec![Object::Real(c[0]), Object::Real(c[1]), Object::Real(c[2])],
+        Color::Cmyk(c) => vec![Object::Real(c[0]), Object::Real(c[1]), Object::Real(c[2]), Object::Real(c[3])],
+    };
+    d.set("C", Object::Array(color_array));
     d.set("Border", Object::Array(vec![
         Object::Integer(0), Object::Integer(0), Object::Integer(0),
     ]));

@@ -158,7 +158,7 @@ fn roundtrip_multiple_runs() {
                 y: 700.0,
                 font_size: 11.0,
                 render_mode: 3,
-                color: harumi::Color::Rgb([0.0; 3]),
+                color: [0.0; 3],
             },
             TextRun {
                 text: "Second line".into(),
@@ -167,7 +167,7 @@ fn roundtrip_multiple_runs() {
                 y: 685.0,
                 font_size: 11.0,
                 render_mode: 3,
-                color: harumi::Color::Rgb([0.0; 3]),
+                color: [0.0; 3],
             },
         ])
         .unwrap();
