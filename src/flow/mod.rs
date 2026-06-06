@@ -133,6 +133,18 @@ pub struct FlowOptions {
     /// Auto-generate PDF bookmarks from headings pushed via [`FlowDocument::push_heading`].
     /// Default: `true`.
     pub auto_bookmarks: bool,
+    /// Optional font bytes for headings (h1–h6). If `None`, body font is used.
+    /// Enables visual distinction of headings via a different typeface.
+    /// Default: `None`.
+    pub heading_font_bytes: Option<Vec<u8>>,
+    /// Optional font bytes for code blocks. If `None`, body font is used.
+    /// Enables monospace or special rendering for code via [`push_code_block`](FlowDocument::push_code_block).
+    /// Default: `None`.
+    pub code_font_bytes: Option<Vec<u8>>,
+    /// Optional background color for code blocks as RGB `[r, g, b]` in `0.0..=1.0`.
+    /// When set, code blocks are drawn with a background rectangle of this color.
+    /// Requires the **`draw`** feature (implied by **`flow`**). Default: `None`.
+    pub code_background: Option<[f32; 3]>,
 }
 
 impl Default for FlowOptions {
@@ -149,6 +161,9 @@ impl Default for FlowOptions {
             header: None,
             footer: None,
             auto_bookmarks: true,
+            heading_font_bytes: None,
+            code_font_bytes: None,
+            code_background: None,
         }
     }
 }
@@ -199,6 +214,10 @@ pub struct FlowDocument {
     inner: Document,
     body_font: FontHandle,
     body_font_bytes: Vec<u8>,
+    heading_font: Option<FontHandle>,
+    heading_font_bytes: Option<Vec<u8>>,
+    code_font: Option<FontHandle>,
+    code_font_bytes: Option<Vec<u8>>,
     options: FlowOptions,
     current_page: u32,
     /// Distance from the top of the content area (positive = downward).
@@ -213,14 +232,39 @@ impl FlowDocument {
     ///
     /// `font_bytes` is the raw TTF/OTF data for the body font;
     /// CJK fonts such as NotoSansCJK are fully supported.
+    ///
+    /// If `options.heading_font_bytes` or `options.code_font_bytes` are set,
+    /// those fonts are embedded into the document as well. The body font is
+    /// always embedded; the optional heading and code fonts are only embedded
+    /// if present.
     pub fn new(font_bytes: impl Into<Vec<u8>>, options: FlowOptions) -> Result<Self> {
         let font_bytes: Vec<u8> = font_bytes.into();
         let mut inner = Document::new(options.page_size)?;
         let body_font = inner.embed_font(&font_bytes)?;
+
+        // Embed optional heading and code fonts
+        let (heading_font, heading_font_bytes) = if let Some(bytes) = &options.heading_font_bytes {
+            let handle = inner.embed_font(bytes)?;
+            (Some(handle), Some(bytes.clone()))
+        } else {
+            (None, None)
+        };
+
+        let (code_font, code_font_bytes) = if let Some(bytes) = &options.code_font_bytes {
+            let handle = inner.embed_font(bytes)?;
+            (Some(handle), Some(bytes.clone()))
+        } else {
+            (None, None)
+        };
+
         Ok(FlowDocument {
             inner,
             body_font,
             body_font_bytes: font_bytes,
+            heading_font,
+            heading_font_bytes,
+            code_font,
+            code_font_bytes,
             options,
             current_page: 1,
             content_y: 0.0,
@@ -251,8 +295,8 @@ impl FlowDocument {
 
     // ── Measurement ─────────────────────────────────────────────────────────
 
-    fn measure_lines(&self, text: &str, font_size: f32, width: f32) -> Vec<String> {
-        match Face::parse(&self.body_font_bytes, 0) {
+    fn measure_lines(&self, text: &str, font_size: f32, width: f32, font_bytes: &[u8]) -> Vec<String> {
+        match Face::parse(font_bytes, 0) {
             Ok(face) => text
                 .split('\n')
                 .flat_map(|para| wrap_paragraph(para, &face, font_size, width))
@@ -297,7 +341,8 @@ impl FlowDocument {
         let level = level.clamp(1, 6) as usize;
         let font_size = self.options.body_font_size * self.options.heading_size_scale[level - 1];
         let line_h = font_size * self.options.line_height_factor;
-        let lines = self.measure_lines(text, font_size, self.content_width());
+        let font_bytes = self.heading_font_bytes.as_deref().unwrap_or(&self.body_font_bytes);
+        let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
 
         // Keep pre-heading spacing + the full block together on one page.
         // Compute spacing BEFORE ensure_space so that the heading is not orphaned at the
@@ -319,7 +364,7 @@ impl FlowDocument {
         }
 
         let x = self.options.margins.left;
-        let font = self.body_font;
+        let font = self.heading_font.unwrap_or(self.body_font);
         let current_page = self.current_page;
 
         for line in &lines {
@@ -344,7 +389,7 @@ impl FlowDocument {
 
         let font_size = self.options.body_font_size;
         let line_h = font_size * self.options.line_height_factor;
-        let lines = self.measure_lines(text, font_size, self.content_width());
+        let lines = self.measure_lines(text, font_size, self.content_width(), &self.body_font_bytes);
 
         let x = self.options.margins.left;
         let font = self.body_font;
@@ -499,8 +544,8 @@ impl FlowDocument {
         for (idx, (key, val)) in rows.iter().enumerate() {
             let key = key.trim();
             let val = val.trim();
-            let key_lines = self.measure_lines(key, font_size, inner_key_w);
-            let val_lines = self.measure_lines(val, font_size, inner_val_w);
+            let key_lines = self.measure_lines(key, font_size, inner_key_w, &self.body_font_bytes);
+            let val_lines = self.measure_lines(val, font_size, inner_val_w, &self.body_font_bytes);
             let row_lines = key_lines.len().max(val_lines.len()).max(1);
             let row_h = row_lines as f32 * line_h + cell_pad * 2.0;
 
@@ -557,6 +602,61 @@ impl FlowDocument {
             };
             self.push_paragraph(&bullet)?;
         }
+        Ok(())
+    }
+
+    /// Appends a code block with an optional background color to the document.
+    ///
+    /// If `options.code_font_bytes` is set, the code is rendered using that font;
+    /// otherwise the body font is used. If `options.code_background` is set,
+    /// a background rectangle is drawn behind the code at that color.
+    ///
+    /// Code blocks use monospace or fixed-width presentation via font selection only;
+    /// no syntax highlighting is performed. Newlines in the text are preserved.
+    pub fn push_code_block(&mut self, text: &str) -> Result<()> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        let font_size = self.options.body_font_size;
+        let line_h = font_size * self.options.line_height_factor;
+        let font_bytes = self.code_font_bytes.as_deref().unwrap_or(&self.body_font_bytes);
+        let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
+
+        let block_h = lines.len() as f32 * line_h;
+        let pre_spacing = if self.content_y > 0.0 { self.options.paragraph_spacing } else { 0.0 };
+        self.ensure_space(pre_spacing + block_h)?;
+        if self.content_y > 0.0 {
+            self.content_y += pre_spacing;
+        }
+
+        let x = self.options.margins.left;
+        let font = self.code_font.unwrap_or(self.body_font);
+        let current_page = self.current_page;
+        let y_top = self.pdf_top_y(self.content_y);
+        let y_bottom = y_top - block_h;
+
+        // Draw background rectangle if configured (requires draw feature, which flow implies)
+        if let Some(bg_color) = self.options.code_background {
+            let right_x = self.options.page_size.0 - self.options.margins.right;
+            let padding = 2.0;
+            self.inner.page(current_page)?
+                .add_rect(
+                    [x - padding, y_bottom - padding, right_x - x + 2.0 * padding, block_h + 2.0 * padding],
+                    bg_color,
+                    1.0,
+                )?;
+        }
+
+        // Render the text lines
+        for line in &lines {
+            let y = self.pdf_baseline_y(self.content_y, font_size);
+            self.inner.page(current_page)?.add_text(line, font, [x, y], font_size, [0.0, 0.0, 0.0])?;
+            self.content_y += line_h;
+        }
+
+        self.content_y += self.options.paragraph_spacing;
         Ok(())
     }
 
