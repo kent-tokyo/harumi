@@ -105,6 +105,52 @@ doc.save("searchable.pdf")?;
 
 ---
 
+## モダン Rust PDF ライブラリとの比較
+
+| 機能 | **harumi** | unpdf | pdf_oxide | justpdf-core |
+|---|:---:|:---:|:---:|:---:|
+| **目的** | 読み書き両対応 | 読み込みのみ | フル機能 | フル機能 |
+| **主な用途** | 既存PDFへの日本語テキスト重ねがけ | PDF → Markdown/テキスト抽出 | マルチ言語バインディング対応 | 包括的なPDFエンジン |
+| 純Rust（C/C++依存なし） | Yes | Yes | 可能性高 | Yes |
+| WASM対応 | Yes（CI確認済み） | Yes | Yes | 未記載 |
+| **テキスト抽出** |
+| — CIDフォント（ToUnicode CMap） | Yes | Yes ⭐ | Yes | Yes |
+| — シンプルフォント（Type1/TrueType） | Yes | Yes | Yes | Yes |
+| — Form XObject 再帰 | No（v1.4で対応予定） | Yes ⭐ | Yes | 不明 |
+| — グラフィック状態継承 | No（v1.4で対応予定） | Yes ⭐ | Yes | 不明 |
+| — `uni<XXXX>` グリフ名 | No（v1.4で対応予定） | Yes ⭐ | 不明 | 不明 |
+| — 読み取り順 / XY-Cut | No | Yes ⭐ | Yes | 不明 |
+| — RTL / BiDi対応 | No | Yes ⭐ | 不明 | 不明 |
+| **テキスト書き込み** |
+| — CJKフォント埋め込み | Yes ⭐ | N/A | 部分対応 | Yes |
+| — フォントサブセット化 | Yes ⭐（deferred） | N/A | 不明 | Yes |
+| — Identity-H / Identity-V | Yes ⭐ | N/A | 不明 | Yes |
+| — Type0 CID生成 | Yes ⭐ | N/A | 不明 | Yes |
+| **ページ操作** | Yes | No | Yes | Yes |
+| **図形・画像描画** | Yes | No | Yes（部分） | Yes |
+| **暗号化（読み込み）** | Yes（RC4） | Yes（RC4） | Yes | Yes（RC4, AES） |
+| **暗号化（書き込み）** | Yes（RC4-128, AES-256） | No | Yes | Yes（RC4, AES-256） |
+| **デジタル署名** | 部分対応（メタデータ） | No | Yes | Yes（PKCS#7/CMS） |
+| **PDF/A準拠** | 予定中（v1.3） | No | Yes（検証） | Yes（検証） |
+| **パフォーマンス重視** | 正確性 | 速度（特化） | 速度（PyMuPDF比5倍） | 包括性 |
+| **マルチ言語バインディング** | WASMのみ | なし | Python/JS/Go/C#/Java等7言語 | C FFI のみ |
+
+**主な違い：**
+- **harumi** — 既存PDFへの日本語テキスト*書き込み*に特化。Deferred subsetting戦略が明確。WASM対応を保証
+- **unpdf** — PDFの*読み込み*とMarkdown/テキスト抽出に特化。CJK抽出品質が高い（XY-Cut、RTL、Form XObject対応）
+- **pdf_oxide** — マルチ言語バインディング対応の汎用PDFエンジン。ゼロコピートークナイズで5倍高速。Rustコアに複数言語バインディング
+- **justpdf-core** — 包括的なPDFエンジン。レガシーPDF互換性のため地域別CIDシステム（Japan1/GB1/CNS1/Korea1）対応
+
+**推奨用途：**
+- **harumi** — 既存PDFにCJKテキストを重ねがけする場合（OCRレイヤー、スタンプ、透かし）
+- **unpdf** — CJK PDFからテキストを抽出し文字化けを防ぐ場合
+- **pdf_oxide** — マルチ言語サポートと高速抽出が必要な場合
+- **justpdf-core** — CJK特化ではない包括的なPDFエンジンが必要な場合
+
+⭐ = このカテゴリでの独自の強み
+
+---
+
 ## なぜ今まで存在しなかったか
 
 JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォントのサブセット化・CMap生成・テキストレイヤー合成を透過的に処理してくれます。Rustの既存ツールではそれができません：
