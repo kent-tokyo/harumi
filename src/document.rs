@@ -1091,6 +1091,42 @@ impl Document {
         crate::extract_image::extract_largest_image_on_page(&self.inner, page_id)
     }
 
+    /// Extracts all raster images embedded on the given page (1-indexed).
+    ///
+    /// Designed for **scanned PDFs** where a page may contain multiple Image XObjects.
+    /// JPEG (DCTDecode) images are returned as-is; other formats are decoded and
+    /// re-encoded as PNG. The returned vector preserves the order of XObjects in
+    /// the page's `/Resources /XObject` dictionary.
+    ///
+    /// This method does **not** rasterize the page — it only retrieves already-embedded
+    /// images. Text and vector pages will return [`Error::InvalidInput`].
+    ///
+    /// Requires the **`image`** feature.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let doc = Document::from_file("scanned.pdf")?;
+    /// let images = doc.extract_page_images(1)?;
+    /// for (i, img) in images.iter().enumerate() {
+    ///     std::fs::write(format!("page1_image{}.png", i), &img.bytes)?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if `page_number` is zero or exceeds the page count.
+    /// - [`Error::InvalidInput`] if the page contains no Image XObject or all images
+    ///   fail extraction (due to unsupported filters like `CCITTFaxDecode`).
+    #[cfg(feature = "image")]
+    pub fn extract_page_images(&self, page_number: u32) -> Result<Vec<crate::extract_image::PageImage>> {
+        let page_ids = self.inner.get_pages();
+        let page_id = page_ids.get(&page_number).copied().ok_or(Error::PageNotFound(page_number))?;
+        crate::extract_image::extract_all_images_on_page(&self.inner, page_id)
+    }
+
     /// Finalizes the document (subsets fonts, embeds them, writes content streams)
     /// and saves to a file.
     ///

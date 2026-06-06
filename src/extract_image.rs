@@ -213,3 +213,30 @@ pub(crate) fn extract_largest_image_on_page(
     let best_id = ids.into_iter().max_by_key(|&id| area_of(id)).unwrap();
     extract_xobject_image(doc, best_id)
 }
+
+/// Extracts all Image XObjects from a page.
+///
+/// Returns all images found on the page. Per-image extraction errors are skipped,
+/// allowing partial success if some XObjects are corrupted.
+/// Returns an error only if no images are found on the page.
+pub(crate) fn extract_all_images_on_page(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> Result<Vec<PageImage>> {
+    let ids = page_image_xobjects(doc, page_id);
+    if ids.is_empty() {
+        return Err(Error::InvalidInput(
+            "page contains no Image XObject".into(),
+        ));
+    }
+    let images: Vec<PageImage> = ids
+        .into_iter()
+        .filter_map(|id| extract_xobject_image(doc, id).ok())
+        .collect();
+    if images.is_empty() {
+        return Err(Error::InvalidInput(
+            "all Image XObjects on page failed to extract".into(),
+        ));
+    }
+    Ok(images)
+}
