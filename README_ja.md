@@ -76,6 +76,8 @@ doc.save("searchable.pdf")?;
 | PDF フォームのフィールド値を読み取りたい | `doc.form_fields()` — `Vec<FormField>` を返す（名前・種別・現在値） |
 | PDF フォームをプログラムから記入したい | `doc.fill_form(&[("フィールド名", "値")])` — NeedAppearances を自動設定 |
 | ページのクロップボックスや印刷用ボックスを操作したい | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 全ボックス種別に対応（`[x,y,w,h]` 形式） |
+| CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
+| PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 署名メタデータ（署名者・タイムスタンプ・フィールド名）を抽出。暗号学的検証は TODO（`digital-signature` feature） |
 
 ---
 
@@ -96,6 +98,8 @@ doc.save("searchable.pdf")?;
 | 暗号化（読み込み） | Yes (RC4) | Yes | No | Partial | Yes |
 | 暗号化（書き込み） | Yes (RC4-128) | Yes | No | No | Yes |
 | マークアップ注釈 | Yes | Partial (basic) | No | No | Yes |
+| CMYKカラー対応 | Yes (v1.0+) | Yes | Yes | No | Yes |
+| デジタル署名検証 | Partial (metadata) | Partial (basic) | No | No | Yes |
 
 > Yes = 対応  Partial = 部分対応  No = 非対応  N/A = 言語レベルの機能
 
@@ -117,7 +121,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "0.7"
+harumi = "1.1"
 ```
 
 ### 不可視のOCRテキストレイヤー
