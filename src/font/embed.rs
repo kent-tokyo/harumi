@@ -105,7 +105,7 @@ pub fn embed_cid_font(doc: &mut lopdf::Document, params: EmbedParams<'_>) -> Res
 
 /// Builds the /W array: [[gid [w ...]] ...] format for CIDFontType2.
 /// Widths are in thousandths of a text-space unit (scaled to 1000 units_per_em).
-fn build_widths_array(
+pub(crate) fn build_widths_array(
     gid_to_advance: &BTreeMap<u16, u16>,
     units_per_em: u16,
 ) -> Vec<Object> {

@@ -153,6 +153,42 @@ impl Default for FlowOptions {
     }
 }
 
+/// A styled text run for use with [`FlowDocument::push_paragraph_styled`].
+///
+/// Bold and italic are *synthetic* effects: bold uses PDF fill+stroke mode; italic
+/// applies a 12° shear matrix.  Both work with any single-font TTF/OTF including
+/// CJK fonts — no separate bold/italic font file is required.
+#[derive(Clone, Debug)]
+pub struct InlineSpan {
+    /// The text for this run.
+    pub text: String,
+    /// Synthetic bold (fill+stroke render mode with proportional stroke width).
+    pub bold: bool,
+    /// Synthetic italic (12° horizontal shear via text matrix).
+    pub italic: bool,
+    /// RGB fill color, components in `0.0..=1.0`. Default: black `[0.0, 0.0, 0.0]`.
+    pub color: [f32; 3],
+}
+
+impl InlineSpan {
+    /// Plain black text.
+    pub fn plain(text: impl Into<String>) -> Self {
+        InlineSpan { text: text.into(), bold: false, italic: false, color: [0.0; 3] }
+    }
+    /// Bold text.
+    pub fn bold(text: impl Into<String>) -> Self {
+        InlineSpan { text: text.into(), bold: true, italic: false, color: [0.0; 3] }
+    }
+    /// Italic text.
+    pub fn italic(text: impl Into<String>) -> Self {
+        InlineSpan { text: text.into(), bold: false, italic: true, color: [0.0; 3] }
+    }
+    /// Colored text (bold and italic both false).
+    pub fn colored(text: impl Into<String>, color: [f32; 3]) -> Self {
+        InlineSpan { text: text.into(), bold: false, italic: false, color }
+    }
+}
+
 /// A push-style document builder that generates a PDF with automatic pagination.
 ///
 /// Push block elements (headings, paragraphs, tables, lists) in order;
@@ -318,6 +354,114 @@ impl FlowDocument {
             let current_page = self.current_page;
             let y = self.pdf_baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(line, font, [x, y], font_size, [0.0, 0.0, 0.0])?;
+            self.content_y += line_h;
+        }
+
+        self.content_y += self.options.paragraph_spacing;
+        Ok(())
+    }
+
+    /// Appends a paragraph with mixed inline styling (bold, italic, color) to the document.
+    ///
+    /// Each [`InlineSpan`] runs inline on the same line as the previous one. Word wrapping
+    /// is performed across the full concatenated text so visual line breaks are natural.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # #[cfg(feature = "flow")]
+    /// # fn main() -> harumi::Result<()> {
+    /// use harumi::{FlowDocument, FlowOptions, InlineSpan};
+    /// let font = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+    /// let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+    /// doc.push_paragraph_styled(&[
+    ///     InlineSpan::plain("Normal "),
+    ///     InlineSpan::bold("bold "),
+    ///     InlineSpan::colored("red", [0.8, 0.0, 0.0]),
+    /// ])?;
+    /// # Ok(()) }
+    /// ```
+    pub fn push_paragraph_styled(&mut self, spans: &[InlineSpan]) -> Result<()> {
+        let non_empty: Vec<&InlineSpan> = spans.iter().filter(|s| !s.text.is_empty()).collect();
+        if non_empty.is_empty() {
+            return Ok(());
+        }
+
+        let font_size = self.options.body_font_size;
+        let line_h = font_size * self.options.line_height_factor;
+        let content_w = self.content_width();
+        // Clone font bytes so the borrow doesn't conflict with ensure_space's &mut self.
+        let font_bytes_owned = self.body_font_bytes.clone();
+        let face: Option<Face<'_>> = Face::parse(&font_bytes_owned, 0).ok();
+        let font = self.body_font;
+
+        // Build flat (char, span_index) list.
+        let mut char_spans: Vec<(char, usize)> = Vec::new();
+        for (i, span) in non_empty.iter().enumerate() {
+            for ch in span.text.chars() {
+                char_spans.push((ch, i));
+            }
+        }
+
+        // Wrap the full text.
+        let full_text: String = char_spans.iter().map(|(ch, _)| ch).collect();
+        let line_strings = match face.as_ref() {
+            Some(f) => full_text
+                .split('\n')
+                .flat_map(|p| crate::document::wrap_paragraph(p, f, font_size, content_w))
+                .collect::<Vec<_>>(),
+            None => full_text.lines().map(str::to_owned).collect(),
+        };
+
+        let mut char_cursor = 0usize; // position in char_spans
+
+        for line_str in &line_strings {
+            let line_len = line_str.chars().count();
+
+            self.ensure_space(line_h)?;
+            let y = self.pdf_baseline_y(self.content_y, font_size);
+            let mut x = self.options.margins.left;
+            let current_page = self.current_page;
+
+            // Group consecutive chars with the same span style.
+            let mut run_start = char_cursor;
+            while run_start < char_cursor + line_len {
+                let span_idx = char_spans[run_start].1;
+                let mut run_end = run_start + 1;
+                while run_end < char_cursor + line_len
+                    && char_spans[run_end].1 == span_idx
+                {
+                    run_end += 1;
+                }
+
+                let run_text: String =
+                    char_spans[run_start..run_end].iter().map(|(ch, _)| ch).collect();
+                let span = non_empty[span_idx];
+
+                self.inner.page(current_page)?.add_text_styled(
+                    &run_text, font, [x, y], font_size, span.color, span.bold, span.italic,
+                )?;
+
+                // Advance x by measured width of the run.
+                if let Some(ref f) = face {
+                    x += run_text
+                        .chars()
+                        .map(|ch| crate::document::glyph_advance_pt(f, ch, font_size))
+                        .sum::<f32>();
+                }
+
+                run_start = run_end;
+            }
+
+            // Advance char cursor, skipping any trailing space/newline consumed by wrapping.
+            char_cursor += line_len;
+            // Skip one space between lines if the full text has one at this position.
+            if char_cursor < char_spans.len() {
+                let next_ch = char_spans[char_cursor].0;
+                if next_ch == ' ' || next_ch == '\n' {
+                    char_cursor += 1;
+                }
+            }
+
             self.content_y += line_h;
         }
 

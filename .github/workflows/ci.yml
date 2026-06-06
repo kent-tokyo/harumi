@@ -38,6 +38,20 @@ jobs:
       - name: Build (wasm32, draw+ocr+flow features)
         run: cargo build --target wasm32-unknown-unknown --features draw,ocr,flow
 
+  wasm-test:
+    name: WASM test (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Test (Node.js runner, no browser needed)
+        run: wasm-pack test --node -- --test wasm_smoke
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -49,3 +63,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (all features)
         run: cargo clippy --all-features -- -D warnings
+
+  semver:
+    name: Semver checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked
+      - name: Check semver (default features)
+        run: cargo semver-checks
+      - name: Check semver (all features)
+        run: cargo semver-checks --all-features

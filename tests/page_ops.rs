@@ -650,3 +650,142 @@ fn regression_remove_page_pending_cleared() {
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     assert_eq!(reloaded.get_pages().len(), 2, "page 2 removed: 3 - 1 = 2 pages");
 }
+
+// ---------------------------------------------------------------------------
+// Nested /Pages tree: inherited attribute preservation
+//
+// Some PDFs have a tree like:
+//   /Pages root (no MediaBox)
+//     /Pages intermediate (MediaBox [0 0 595 842])
+//       /Page A (no MediaBox — relies on inheritance from intermediate)
+//       /Page B (no MediaBox — relies on inheritance from intermediate)
+//
+// Before the fix, remove_page / insert_blank_page / reorder_pages would
+// re-parent pages directly to root without copying inherited attributes,
+// causing the pages to lose their effective MediaBox.
+// ---------------------------------------------------------------------------
+
+/// Build a 2-page PDF with a nested /Pages structure.
+/// Root /Pages has NO MediaBox; intermediate /Pages has MediaBox [0 0 w h].
+/// Both pages inherit MediaBox from the intermediate node.
+fn nested_pages_pdf(width: f32, height: f32) -> Vec<u8> {
+    use lopdf::{dictionary, Document as LDoc, Stream};
+
+    let mut doc = LDoc::with_version("1.4");
+
+    let root_pages_id = doc.new_object_id();
+    let inter_pages_id = doc.new_object_id();
+
+    let make_page = |d: &mut LDoc, parent| {
+        let sid = d.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            b"q Q\n".to_vec(),
+        )));
+        d.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "Parent" => Object::Reference(parent),
+            // No MediaBox — inherits from intermediate /Pages
+            "Contents" => Object::Reference(sid),
+            "Resources" => Object::Dictionary(dictionary! {})
+        }))
+    };
+
+    let p1 = make_page(&mut doc, inter_pages_id);
+    let p2 = make_page(&mut doc, inter_pages_id);
+
+    // Intermediate /Pages: has the MediaBox that pages inherit.
+    doc.set_object(inter_pages_id, Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Pages".to_vec()),
+        "Parent" => Object::Reference(root_pages_id),
+        "MediaBox" => Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Real(width), Object::Real(height),
+        ]),
+        "Count" => Object::Integer(2),
+        "Kids" => Object::Array(vec![
+            Object::Reference(p1),
+            Object::Reference(p2),
+        ])
+    }));
+
+    // Root /Pages: no MediaBox of its own.
+    doc.set_object(root_pages_id, Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Pages".to_vec()),
+        "Count" => Object::Integer(2),
+        "Kids" => Object::Array(vec![Object::Reference(inter_pages_id)])
+    }));
+
+    let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Catalog".to_vec()),
+        "Pages" => Object::Reference(root_pages_id)
+    }));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn nested_pages_remove_page_preserves_mediabox() {
+    let pdf = nested_pages_pdf(595.0, 842.0);
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+    assert_eq!(doc.page_count(), 2);
+
+    doc.remove_page(2).unwrap();
+    assert_eq!(doc.page_count(), 1);
+
+    let out = doc.save_to_bytes().unwrap();
+    let mut reloaded = Document::from_bytes(&out).unwrap();
+    let (w, h) = reloaded.page(1).unwrap().size().unwrap();
+    assert!(
+        (w - 595.0).abs() < 1.0 && (h - 842.0).abs() < 1.0,
+        "inherited MediaBox should be 595×842 after remove_page, got {w}×{h}"
+    );
+}
+
+#[test]
+fn nested_pages_insert_blank_preserves_mediabox() {
+    let pdf = nested_pages_pdf(595.0, 842.0);
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.insert_blank_page(1, (612.0, 792.0)).unwrap();
+    assert_eq!(doc.page_count(), 3);
+
+    let out = doc.save_to_bytes().unwrap();
+    let mut reloaded = Document::from_bytes(&out).unwrap();
+
+    // Original page 1 (now page 1) should still have its inherited MediaBox.
+    let (w1, h1) = reloaded.page(1).unwrap().size().unwrap();
+    assert!(
+        (w1 - 595.0).abs() < 1.0 && (h1 - 842.0).abs() < 1.0,
+        "page 1 inherited MediaBox should be 595×842, got {w1}×{h1}"
+    );
+    // Inserted page (page 2) has its own explicit size.
+    let (w2, h2) = reloaded.page(2).unwrap().size().unwrap();
+    assert!(
+        (w2 - 612.0).abs() < 1.0 && (h2 - 792.0).abs() < 1.0,
+        "inserted page should be 612×792, got {w2}×{h2}"
+    );
+}
+
+#[test]
+fn nested_pages_reorder_preserves_mediabox() {
+    let pdf = nested_pages_pdf(595.0, 842.0);
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.reorder_pages(&[2, 1]).unwrap();
+    assert_eq!(doc.page_count(), 2);
+
+    let out = doc.save_to_bytes().unwrap();
+    let mut reloaded = Document::from_bytes(&out).unwrap();
+
+    // Both pages should still have their inherited MediaBox.
+    for n in 1u32..=2 {
+        let (w, h) = reloaded.page(n).unwrap().size().unwrap();
+        assert!(
+            (w - 595.0).abs() < 1.0 && (h - 842.0).abs() < 1.0,
+            "page {n} inherited MediaBox should be 595×842 after reorder, got {w}×{h}"
+        );
+    }
+}

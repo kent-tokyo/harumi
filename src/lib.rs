@@ -58,6 +58,7 @@ mod error;
 mod extract;
 mod font;
 mod replace;
+mod resubset;
 
 #[cfg(feature = "image")]
 mod extract_image;
@@ -80,7 +81,7 @@ pub use font::FontHandle;
 pub use extract_image::{PageImage, PageImageFormat};
 
 #[cfg(feature = "flow")]
-pub use flow::{FlowDocument, FlowOptions, HeaderFooter, Margins};
+pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 
 #[cfg(feature = "html")]
 pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};

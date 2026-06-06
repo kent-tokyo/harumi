@@ -384,3 +384,156 @@ fn replace_preserve_font_cross_operator() {
     assert!(all.contains("World"), "expected 'World' in: {:?}", all);
     assert!(!all.contains("Hello"), "expected 'Hello' gone from: {:?}", all);
 }
+
+// ---------------------------------------------------------------------------
+// replace_text_resubset tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replace_text_resubset_no_match() {
+    // old_text not in PDF → returns 0, document unchanged.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("Hello", font, [72.0, 700.0], 14.0)
+        .unwrap();
+    let initial = doc.save_to_bytes().unwrap();
+
+    let mut doc2 = Document::from_bytes(&initial).unwrap();
+    let count = doc2
+        .page(1)
+        .unwrap()
+        .replace_text_resubset("NotPresent", "Whatever", FONT)
+        .unwrap();
+    assert_eq!(count, 0);
+
+    let out = doc2.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    let all: String = check
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(all.contains("Hello"), "text should be unchanged: {:?}", all);
+}
+
+#[test]
+fn replace_text_resubset_same_chars() {
+    // Replacement text already in the subset — basic round-trip.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("Hello", font, [72.0, 700.0], 14.0)
+        .unwrap();
+    // Embed "World" too so it is in the subset.
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("World", font, [72.0, 680.0], 14.0)
+        .unwrap();
+    let initial = doc.save_to_bytes().unwrap();
+
+    let mut doc2 = Document::from_bytes(&initial).unwrap();
+    let count = doc2
+        .page(1)
+        .unwrap()
+        .replace_text_resubset("Hello", "World", FONT)
+        .unwrap();
+    assert!(count >= 1, "expected at least 1 match, got {count}");
+
+    let out = doc2.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    let all: String = check
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(all.contains("World"), "expected 'World' in output: {:?}", all);
+}
+
+#[test]
+fn replace_text_resubset_new_char_expanded() {
+    // new_text contains a character NOT in the original subset.
+    // Without resubset this would fail with FontCharNotMapped;
+    // with resubset it must succeed and produce readable output.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    // Only embed "Hello" so the subset has no other Latin chars beyond these.
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("Hello", font, [72.0, 700.0], 14.0)
+        .unwrap();
+    let initial = doc.save_to_bytes().unwrap();
+
+    // Verify that preserve_font would fail.
+    let mut doc_pf = Document::from_bytes(&initial).unwrap();
+    let err = doc_pf
+        .page(1)
+        .unwrap()
+        .replace_text_preserve_font("Hello", "日本語")
+        .unwrap_err();
+    assert!(
+        matches!(err, harumi::Error::FontCharNotMapped { .. }),
+        "expected FontCharNotMapped but got: {:?}", err
+    );
+
+    // Now use resubset — it must succeed.
+    let mut doc3 = Document::from_bytes(&initial).unwrap();
+    let count = doc3
+        .page(1)
+        .unwrap()
+        .replace_text_resubset("Hello", "日本語", FONT)
+        .unwrap();
+    assert_eq!(count, 1, "expected 1 match");
+
+    let out = doc3.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    let all: String = check
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(
+        all.contains("日本語"),
+        "expected '日本語' in output: {:?}", all
+    );
+}
+
+#[test]
+fn replace_text_resubset_chinese() {
+    // '中', '文', '字', '你', '好' are present in NotoSansJP (shared CJK Unified Ideographs).
+    // '汉', '语' are NOT (simplified Chinese only) — we avoid them here.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1).unwrap()
+        .add_invisible_text("Hello", font, [72.0, 700.0], 14.0)
+        .unwrap();
+    let initial = doc.save_to_bytes().unwrap();
+
+    // Verify preserve_font fails (Chinese chars not in the "Hello"-only subset).
+    let mut doc_pf = Document::from_bytes(&initial).unwrap();
+    let err = doc_pf.page(1).unwrap()
+        .replace_text_preserve_font("Hello", "中文字")
+        .unwrap_err();
+    assert!(matches!(err, harumi::Error::FontCharNotMapped { .. }));
+
+    // resubset with NotoSansJP (which contains these CJK ideographs) must succeed.
+    let mut doc2 = Document::from_bytes(&initial).unwrap();
+    let count = doc2.page(1).unwrap()
+        .replace_text_resubset("Hello", "中文字", FONT)
+        .unwrap();
+    assert_eq!(count, 1);
+
+    let out = doc2.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    let all: String = check.extract_text_runs(1).unwrap()
+        .iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+    assert!(all.contains("中文字"), "expected '中文字' in output: {:?}", all);
+}

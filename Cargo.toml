@@ -29,10 +29,19 @@ ocr = []
 flow = ["draw"]
 html = ["flow", "dep:scraper"]
 
+# getrandom is needed for AES-256 key generation. Backend differs per target family.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.4"
+
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# wasm32-unknown-unknown (browser/Node.js) requires the wasm_js backend.
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 lopdf = "0.40"
+ttf-parser = "0.25"
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }

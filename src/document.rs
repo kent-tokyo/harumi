@@ -60,6 +60,8 @@ struct PendingText {
     color: [f32; 3],
     opacity: f32,
     rotation_degrees: f32,
+    bold: bool,
+    italic: bool,
 }
 
 /// A pending operation on a page (text or drawing primitive).
@@ -67,6 +69,7 @@ enum PendingOp {
     Text(PendingText),
     Replace(crate::replace::TextReplaceOp),
     ReplacePreserve(crate::replace::TextReplacePreserveOp),
+    ReplaceResubset(crate::replace::TextReplaceResubsetOp),
     #[cfg(feature = "draw")]
     Draw(crate::draw::DrawOp),
 }
@@ -155,8 +158,15 @@ pub struct Document {
     /// Set to true after the first successful `finalize()`. Prevents silent corruption
     /// when new ops are queued after a `save()` call (font subsets would mismatch).
     finalized: bool,
-    /// Pending encryption: (user_password, owner_password). Applied just before save.
-    pending_encryption: Option<(String, String)>,
+    /// Pending encryption parameters. Applied just before write at save time.
+    pending_encryption: Option<(String, String, EncAlgorithm)>,
+}
+
+/// Internal encryption algorithm selector for `pending_encryption`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EncAlgorithm {
+    Rc4_128,
+    Aes256,
 }
 
 fn lopdf_string_to_rust(obj: &lopdf::Object) -> Option<String> {
@@ -242,7 +252,42 @@ impl Document {
                 "set_encryption() called after save(); create a new Document".into(),
             ));
         }
-        self.pending_encryption = Some((user_password.to_owned(), owner_password.to_owned()));
+        self.pending_encryption = Some((
+            user_password.to_owned(),
+            owner_password.to_owned(),
+            EncAlgorithm::Rc4_128,
+        ));
+        Ok(())
+    }
+
+    /// Configures the document to be saved with AES-256 password protection (PDF 2.0).
+    ///
+    /// AES-256-CBC encryption is applied at [`save`](Document::save) time.
+    /// A fresh 32-byte cryptographically secure random key is generated for every `save()` call
+    /// via the OS-level RNG (`getrandom`); the key is never derived from the password alone.
+    ///
+    /// Pass an empty `user_password` to allow anyone to open the file while still
+    /// restricting editing with the owner password.
+    ///
+    /// # Compatibility
+    /// AES-256 (V5/R6) requires PDF 2.0 and is supported by Acrobat X+, Chrome, Firefox,
+    /// and most modern PDF readers. Use [`set_encryption`](Document::set_encryption) (RC4-128)
+    /// for maximum backwards compatibility with older viewers.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
+    /// Returns [`Error::InvalidInput`] if the OS RNG is unavailable at save time.
+    pub fn set_encryption_aes256(&mut self, user_password: &str, owner_password: &str) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "set_encryption_aes256() called after save(); create a new Document".into(),
+            ));
+        }
+        self.pending_encryption = Some((
+            user_password.to_owned(),
+            owner_password.to_owned(),
+            EncAlgorithm::Aes256,
+        ));
         Ok(())
     }
 
@@ -453,6 +498,12 @@ impl Document {
 
         let all_ids: Vec<ObjectId> = page_ids.into_values().filter(|&id| id != target_id).collect();
 
+        // Materialize inherited attributes (MediaBox, CropBox, etc.) from any
+        // intermediate /Pages nodes before those nodes leave the ancestry chain.
+        for &pid in &all_ids {
+            realize_page_inherited_attrs(&mut self.inner, pid)?;
+        }
+
         let pages_root = root_pages_id(&self.inner)?;
         for &pid in &all_ids {
             let d = self.inner.get_object_mut(pid)?.as_dict_mut()?;
@@ -534,6 +585,12 @@ impl Document {
         };
 
         let mut all_ids: Vec<ObjectId> = self.inner.get_pages().into_values().collect();
+
+        // Materialize inherited attributes for existing pages before re-parenting.
+        for &pid in &all_ids {
+            realize_page_inherited_attrs(&mut self.inner, pid)?;
+        }
+
         all_ids.insert(after as usize, new_page_id);
 
         for &pid in &all_ids {
@@ -602,6 +659,11 @@ impl Document {
             .iter()
             .map(|&n| page_ids.get(&n).copied().ok_or(Error::PageNotFound(n)))
             .collect::<Result<Vec<_>>>()?;
+
+        // Materialize inherited attributes before re-parenting.
+        for &pid in &ordered_ids {
+            realize_page_inherited_attrs(&mut self.inner, pid)?;
+        }
 
         let pages_root = root_pages_id(&self.inner)?;
         for &pid in &ordered_ids {
@@ -1095,12 +1157,13 @@ impl Document {
 
     /// Applies `pending_encryption` to the inner document if set.
     fn apply_pending_encryption(&mut self) -> Result<()> {
-        let Some((user_pw, owner_pw)) = self.pending_encryption.take() else {
+        let Some((user_pw, owner_pw, algorithm)) = self.pending_encryption.take() else {
             return Ok(());
         };
         use lopdf::{EncryptionState, EncryptionVersion, Object, Permissions, StringFormat};
 
-        // /ID is required for encryption key derivation.
+        // /ID is required for RC4 key derivation. V5/AES-256 doesn't need it but we set
+        // it anyway for PDF spec compliance.
         if self.inner.trailer.get(b"ID").is_err() {
             let id = generate_file_id();
             self.inner.trailer.set("ID", Object::Array(vec![
@@ -1109,16 +1172,49 @@ impl Document {
             ]));
         }
 
-        let version = EncryptionVersion::V2 {
-            document: &self.inner,
-            owner_password: &owner_pw,
-            user_password: &user_pw,
-            key_length: 128,
-            permissions: Permissions::all(),
-        };
-        let state = EncryptionState::try_from(version)
-            .map_err(|e| Error::InvalidInput(format!("encryption setup: {e}")))?;
-        self.inner.encrypt(&state).map_err(Error::Pdf)?;
+        match algorithm {
+            EncAlgorithm::Rc4_128 => {
+                let version = EncryptionVersion::V2 {
+                    document: &self.inner,
+                    owner_password: &owner_pw,
+                    user_password: &user_pw,
+                    key_length: 128,
+                    permissions: Permissions::all(),
+                };
+                let state = EncryptionState::try_from(version)
+                    .map_err(|e| Error::InvalidInput(format!("encryption setup: {e}")))?;
+                self.inner.encrypt(&state).map_err(Error::Pdf)?;
+            }
+            EncAlgorithm::Aes256 => {
+                use lopdf::encryption::crypt_filters::Aes256CryptFilter;
+                use std::collections::BTreeMap;
+                use std::sync::Arc;
+
+                // Generate a fresh 32-byte cryptographically secure random key.
+                // getrandom::fill() uses the OS RNG (e.g. getrandom(2) / SecRandomCopyBytes).
+                // Failure is propagated — we never fall back to a weaker source.
+                let mut file_key = [0u8; 32];
+                getrandom::fill(&mut file_key)
+                    .map_err(|e| Error::InvalidInput(format!("AES-256 key generation failed: {e}")))?;
+
+                let crypt_filter: Arc<dyn lopdf::encryption::crypt_filters::CryptFilter> =
+                    Arc::new(Aes256CryptFilter);
+
+                let version = EncryptionVersion::V5 {
+                    encrypt_metadata: true,
+                    crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), crypt_filter)]),
+                    file_encryption_key: &file_key,
+                    stream_filter: b"StdCF".to_vec(),
+                    string_filter: b"StdCF".to_vec(),
+                    owner_password: &owner_pw,
+                    user_password: &user_pw,
+                    permissions: Permissions::all(),
+                };
+                let state = EncryptionState::try_from(version)
+                    .map_err(|e| Error::InvalidInput(format!("AES-256 encryption setup: {e}")))?;
+                self.inner.encrypt(&state).map_err(Error::Pdf)?;
+            }
+        }
         Ok(())
     }
 
@@ -1147,6 +1243,7 @@ impl Document {
                         chars.extend(r.new_text.chars());
                     }
                     PendingOp::ReplacePreserve(_) => {}
+                    PendingOp::ReplaceResubset(_) => {} // uses existing PDF font
                     #[cfg(feature = "draw")]
                     PendingOp::Draw(_) => {}
                 }
@@ -1288,6 +1385,65 @@ impl Document {
             }
         }
 
+        // ReplaceResubset pass: expand font subset and re-encode before replacement.
+        {
+            use crate::resubset::{find_fonts_for_text, ResubsetWork};
+            use std::collections::HashMap as HM;
+
+            // Collect (page_id, op) pairs.
+            let resubset_items: Vec<(ObjectId, crate::replace::TextReplaceResubsetOp)> =
+                self.pending.iter()
+                    .flat_map(|page| {
+                        page.ops.iter().filter_map(|op| {
+                            if let PendingOp::ReplaceResubset(r) = op {
+                                Some((page.page_id, crate::replace::TextReplaceResubsetOp {
+                                    old_text: r.old_text.clone(),
+                                    new_text: r.new_text.clone(),
+                                    font_bytes: r.font_bytes.clone(),
+                                }))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+            if !resubset_items.is_empty() {
+                // All page IDs in the document (to re-encode pages that use the font).
+                let all_page_ids: Vec<ObjectId> =
+                    self.inner.page_iter().collect();
+
+                // Group by font_name → ResubsetWork.
+                let mut by_font: HM<Vec<u8>, ResubsetWork> = HM::new();
+                for (page_id, op) in resubset_items {
+                    let font_names =
+                        find_fonts_for_text(&self.inner, page_id, &op.old_text);
+                    for font_name in font_names {
+                        let work = by_font.entry(font_name.clone()).or_insert_with(|| {
+                            ResubsetWork {
+                                font_name: font_name.clone(),
+                                font_bytes: op.font_bytes.clone(),
+                                replacements: Vec::new(),
+                            }
+                        });
+                        work.replacements.push((
+                            page_id,
+                            op.old_text.clone(),
+                            op.new_text.clone(),
+                        ));
+                    }
+                }
+
+                for (_, work) in by_font {
+                    crate::resubset::resubset_and_replace(
+                        &mut self.inner,
+                        &work,
+                        &all_page_ids,
+                    )?;
+                }
+            }
+        }
+
         // ReplacePreserve pass: rewrite streams using the font already embedded in the PDF.
         {
             struct PreserveWork {
@@ -1349,6 +1505,7 @@ impl Document {
                 match op {
                     PendingOp::Replace(_) => {} // handled in replace pass above
                     PendingOp::ReplacePreserve(_) => {} // handled in ReplacePreserve pass above
+                    PendingOp::ReplaceResubset(_) => {} // handled in resubset pass above
                     PendingOp::Text(t) => {
                         let state = embedded.get(&t.font.0).ok_or(Error::InvalidFont(t.font.0))?;
                         let chars: Vec<char> = t.text.chars().collect();
@@ -1371,6 +1528,8 @@ impl Document {
                             t.render_mode,
                             t.color,
                             gs_opt.as_deref(),
+                            t.bold,
+                            t.italic,
                         );
                         page_stream.extend_from_slice(&fragment);
                         if !registered_fonts.contains(&t.font.0) {
@@ -1608,6 +1767,8 @@ impl<'doc> PageHandle<'doc> {
             color: [0.0; 3],
             opacity: 1.0,
             rotation_degrees: 0.0,
+            bold: false,
+            italic: false,
         });
         Ok(())
     }
@@ -1652,6 +1813,43 @@ impl<'doc> PageHandle<'doc> {
             color,
             opacity: 1.0,
             rotation_degrees: 0.0,
+            bold: false,
+            italic: false,
+        });
+        Ok(())
+    }
+
+    /// Overlays visible text with optional bold/italic synthetic styling.
+    ///
+    /// Bold is simulated with PDF render mode 2 (fill+stroke).
+    /// Italic is simulated with a 12° horizontal shear text matrix.
+    /// Both may be combined. Color and font size work the same as [`add_text`].
+    ///
+    /// `position` is `[x, y]` in PDF points (origin: bottom-left of page).
+    /// `color` is `[r, g, b]` where each component is in `0.0..=1.0`.
+    pub fn add_text_styled(
+        &mut self,
+        text: &str,
+        font: FontHandle,
+        position: [f32; 2],
+        font_size: f32,
+        color: [f32; 3],
+        bold: bool,
+        italic: bool,
+    ) -> Result<()> {
+        check_finite(&[position[0], position[1], font_size, color[0], color[1], color[2]], "add_text_styled")?;
+        self.push_text(PendingText {
+            font,
+            text: text.to_owned(),
+            x: position[0],
+            y: position[1],
+            font_size,
+            render_mode: 0,
+            color,
+            opacity: 1.0,
+            rotation_degrees: 0.0,
+            bold,
+            italic,
         });
         Ok(())
     }
@@ -1673,6 +1871,8 @@ impl<'doc> PageHandle<'doc> {
                 color: run.color,
                 opacity: 1.0,
                 rotation_degrees: 0.0,
+                bold: false,
+                italic: false,
             });
         }
         Ok(())
@@ -1740,6 +1940,62 @@ impl<'doc> PageHandle<'doc> {
                 old_text: old_text.to_owned(),
                 new_text: new_text.to_owned(),
             }));
+        }
+        Ok(count)
+    }
+
+    /// Replaces all occurrences of `old_text` in this page's existing content streams
+    /// with `new_text`, expanding the font subset if necessary.
+    ///
+    /// Unlike [`replace_text_preserve_font`](PageHandle::replace_text_preserve_font),
+    /// this method succeeds even when `new_text` contains characters absent from the
+    /// current font subset.  The caller must supply the **original, unsubsetted** font
+    /// bytes (`font_bytes`) so that harumi can rebuild the subset.
+    ///
+    /// After the new subset is embedded the GID numbering may change; harumi
+    /// automatically re-encodes all content streams on every page that references
+    /// the same font.
+    ///
+    /// # Limitations
+    /// Only **CIDFontType2** fonts with `CIDToGIDMap /Identity` are supported
+    /// (which is what harumi embeds).  Type1 / simple TrueType fonts will return
+    /// [`Error::InvalidInput`].
+    ///
+    /// Returns the number of matches found (and queued for replacement).
+    /// A return value of `0` means `old_text` was not found; no modification is queued.
+    ///
+    /// # Errors
+    /// - [`Error::InvalidInput`] if called after [`save`](Document::save), or if the
+    ///   font in the PDF is not a supported CIDFontType2.
+    /// - [`Error::FontParse`] if `font_bytes` cannot be parsed as a TTF/OTF font.
+    pub fn replace_text_resubset(
+        &mut self,
+        old_text: &str,
+        new_text: &str,
+        font_bytes: &[u8],
+    ) -> Result<usize> {
+        if self.doc.finalized {
+            return Err(Error::InvalidInput(
+                "replace_text_resubset called after save()".into(),
+            ));
+        }
+        // Validate font bytes eagerly.
+        let face = ttf_parser::Face::parse(font_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
+        if face.units_per_em() == 0 {
+            return Err(Error::FontParse("font units_per_em is 0".into()));
+        }
+        let count = crate::replace::count_matches_in_page(
+            &self.doc.inner, self.page_id, old_text, None,
+        )?;
+        if count > 0 {
+            self.push_op(PendingOp::ReplaceResubset(
+                crate::replace::TextReplaceResubsetOp {
+                    old_text: old_text.to_owned(),
+                    new_text: new_text.to_owned(),
+                    font_bytes: font_bytes.to_vec(),
+                },
+            ));
         }
         Ok(count)
     }
@@ -2056,6 +2312,8 @@ impl<'doc> PageHandle<'doc> {
                 color,
                 opacity: 1.0,
                 rotation_degrees: 0.0,
+                bold: false,
+                italic: false,
             });
         }
         Ok(())
@@ -2453,6 +2711,8 @@ impl<'doc> PageHandle<'doc> {
             color,
             opacity,
             rotation_degrees: 0.0,
+            bold: false,
+            italic: false,
         });
         Ok(())
     }
@@ -2489,6 +2749,8 @@ impl<'doc> PageHandle<'doc> {
             color,
             opacity,
             rotation_degrees,
+            bold: false,
+            italic: false,
         });
         Ok(())
     }
@@ -2549,6 +2811,8 @@ impl<'doc> PageHandle<'doc> {
                 color,
                 opacity,
                 rotation_degrees: 0.0,
+                bold: false,
+                italic: false,
             });
         }
         Ok(())
@@ -3029,6 +3293,97 @@ fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {
     let root_ref = doc.trailer.get(b"Root")?.as_reference()?;
     let catalog = doc.get_object(root_ref)?.as_dict()?;
     Ok(catalog.get(b"Pages")?.as_reference()?)
+}
+
+/// Materialize inherited PDF page attributes onto `page_id` before the page's
+/// `/Parent` is changed (i.e., before the tree is flattened).
+///
+/// The PDF spec allows `/MediaBox`, `/CropBox`, `/Rotate`, `/Resources`, and
+/// `/UserUnit` to be placed on intermediate `/Pages` nodes and inherited by
+/// descendant pages. When those intermediate nodes are bypassed (by re-parenting
+/// pages directly to the root), any values they hold are no longer reachable via
+/// the inheritance chain. This function copies the missing values directly onto
+/// the page dict so they survive the re-parenting.
+///
+/// Closest ancestor wins: the first ancestor to provide a value for a given key
+/// is used; outer ancestors' values for the same key are ignored.
+fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) -> Result<()> {
+    const INHERITABLE: &[&[u8]] =
+        &[b"MediaBox", b"CropBox", b"Rotate", b"Resources", b"UserUnit"];
+
+    // Walk up the parent chain and collect attrs missing from the page itself.
+    let mut to_apply: Vec<(Vec<u8>, Object)> = Vec::new();
+    let mut cursor = page_id;
+    let mut depth = 0u32;
+
+    loop {
+        if depth > 64 {
+            break; // cycle / pathological-depth guard
+        }
+        depth += 1;
+
+        // Get cursor's /Parent reference.
+        let parent_id = match doc.get_object(cursor)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Parent").ok())
+            .and_then(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+        {
+            Some(id) => id,
+            None => break,
+        };
+
+        // Only inherit from /Pages nodes.
+        let parent_is_pages = doc
+            .get_object(parent_id)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Type").ok())
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice() == b"Pages") } else { None })
+            .unwrap_or(false);
+
+        if !parent_is_pages {
+            break;
+        }
+
+        // Clone the parent dict so we can check its keys without holding a borrow.
+        let parent_dict = match doc.get_object(parent_id).ok().and_then(|o| o.as_dict().ok()) {
+            Some(d) => d.clone(),
+            None => break,
+        };
+        // Clone the page dict to check which keys are already present.
+        let page_dict = match doc.get_object(page_id).ok().and_then(|o| o.as_dict().ok()) {
+            Some(d) => d.clone(),
+            None => break,
+        };
+
+        for &key in INHERITABLE {
+            // Already on the page itself — skip.
+            if page_dict.get(key).is_ok() {
+                continue;
+            }
+            // Already queued from a closer ancestor — skip.
+            if to_apply.iter().any(|(k, _)| k.as_slice() == key) {
+                continue;
+            }
+            // Inherit from this ancestor.
+            if let Ok(val) = parent_dict.get(key) {
+                to_apply.push((key.to_vec(), val.clone()));
+            }
+        }
+
+        cursor = parent_id;
+    }
+
+    // Write collected attributes onto the page dict.
+    if !to_apply.is_empty() {
+        let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
+        for (key, val) in to_apply {
+            page_dict.set(key, val);
+        }
+    }
+
+    Ok(())
 }
 
 fn append_to_contents(

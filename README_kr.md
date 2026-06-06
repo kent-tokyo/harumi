@@ -91,6 +91,25 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 
 ---
 
+## 유사 도구와의 비교
+
+| 기능 | **harumi** | pdf-lib (JS) | printpdf (Rust) | lopdf (Rust) | pdfium-render (Rust) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 순수 Rust (C/C++ 없음) | Yes | N/A | Yes | Yes | No |
+| WASM / 크로스 플랫폼 | Yes | Yes | Yes | Yes | Partial |
+| 기존 PDF에 CJK 텍스트 추가 | Yes | Yes | No | No | Yes |
+| 텍스트 추출 | Yes | Partial | No | Partial | Yes |
+| 텍스트 교체 (서브셋 확장 포함) | Yes | No | No | No | No |
+| 페이지 조작 | Yes | Yes | Partial | Yes | Yes |
+| 도형 그리기 | Yes | Yes | Yes | No | Yes |
+| 플로우 문서 / 자동 페이지 분할 | Yes | No | No | No | No |
+| HTML → PDF | Yes | No | No | No | No |
+| 인라인 굵기/기울임/색상 | Yes 합성 | No | No | No | Yes |
+| 암호화 (읽기) | Yes | Yes | No | Partial | Yes |
+| 암호화 (쓰기) | Yes (RC4-128) | Yes | No | No | Yes |
+
+---
+
 ## 빠른 시작
 
 ```toml
@@ -246,6 +265,30 @@ if doc.page(1)?.replace_text_preserve_font("Draft", replacement).is_ok() {
 doc.save("output.pdf")?;
 ```
 
+### 문서를 수정하지 않고 교체 가능 여부 확인
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+match doc.page(1)?.can_replace_text("Draft", "Final") {
+    Ok(0) => println!("페이지 1에 'Draft'가 없음"),
+    Ok(n) => println!("{n}건 발견됨; 글리프 OK"),
+    Err(e) => println!("글리프 누락: {e}"),
+}
+```
+
+### 폰트 서브셋 확장 텍스트 교체
+
+새 텍스트에 기존 폰트 서브셋에 없는 문자가 포함된 경우 `replace_text_resubset`을 사용합니다. 원본 TTF/OTF 바이트를 전달하면 harumi가 서브셋을 확장하고 모든 콘텐츠 스트림을 재인코딩하여 한 번의 `save()` 호출로 교체를 완료합니다.
+
+```rust
+let font_bytes = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = Document::from_file("contract.pdf")?;
+let n = doc.page(1)?.replace_text_resubset("Hello", "한국어", font_bytes)?;
+doc.save("output.pdf")?;
+```
+
+> 원본 서브셋화되지 않은 폰트 파일이 필요합니다. CIDFontType2 폰트만 지원됩니다.
+
 ### PDF 메타데이터 읽기/쓰기
 
 ```rust
@@ -377,6 +420,92 @@ let mut doc = FlowDocument::new(font, opts)?;
 doc.push_heading("제1장", 1)?;
 doc.push_paragraph("본문 텍스트입니다.")?;
 let pdf_bytes = doc.render()?;
+```
+
+### FlowDocument 인라인 텍스트 스타일 (`flow` feature)
+
+```rust
+use harumi::{FlowDocument, FlowOptions, InlineSpan};
+
+let mut doc = FlowDocument::new(font_bytes, FlowOptions::default())?;
+doc.push_paragraph_styled(&[
+    InlineSpan::plain("일반 텍스트, "),
+    InlineSpan::bold("굵은 텍스트, "),
+    InlineSpan::italic("기울임 텍스트, "),
+    InlineSpan::colored("빨간 텍스트.", [0.8, 0.0, 0.0]),
+])?;
+```
+
+굵은 글씨와 기울임은 **합성 효과**로, 별도의 폰트 파일이 필요하지 않습니다.
+
+### 마크업 어노테이션（하이라이트, 밑줄, 취소선, 물결 밑줄）
+
+```rust
+// 노란색 하이라이트
+doc.page(1)?.add_highlight([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0])?;
+
+// 빨간색 밑줄
+doc.page(1)?.add_underline([72.0, 640.0, 200.0, 12.0], [1.0, 0.0, 0.0])?;
+
+// 취소선
+doc.page(1)?.add_strikeout([72.0, 590.0, 200.0, 12.0], [0.0, 0.0, 0.0])?;
+
+// 물결 밑줄
+doc.page(1)?.add_squiggly([72.0, 540.0, 200.0, 12.0], [0.0, 0.6, 0.2])?;
+
+// 스티키 노트 댓글
+doc.page(1)?.add_sticky_note([500.0, 700.0], "이 섹션을 검토하세요")?;
+doc.save("annotated.pdf")?;
+```
+
+### 비밀번호 보호 PDF
+
+```rust
+// 암호화된 PDF 불러오기
+let mut doc = Document::from_file_with_password("protected.pdf", "secret")?;
+assert!(doc.is_encrypted());
+
+// 잘못된 비밀번호는 Error::WrongPassword 반환
+match Document::from_bytes_with_password(&bytes, "wrong") {
+    Err(harumi::Error::WrongPassword) => println!("비밀번호가 틀렸습니다"),
+    _ => {}
+}
+
+// 비밀번호 보호하여 저장
+let mut doc = Document::new((595.0, 842.0))?;
+doc.set_encryption("userpass", "ownerpass")?;
+doc.save("protected_output.pdf")?;
+```
+
+### AcroForm：양식 필드 읽기 및 채우기
+
+```rust
+// 모든 양식 필드 읽기
+let mut doc = Document::from_file("form.pdf")?;
+for field in doc.form_fields()? {
+    println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+}
+
+// 이름으로 필드 채우기
+let updated = doc.fill_form(&[
+    ("FullName",   "홍길동"),
+    ("Agree",      "yes"),       // 체크박스 → /Yes
+    ("Department", "Engineering"),
+])?;
+println!("{updated}개 필드 업데이트됨");
+doc.save("filled_form.pdf")?;
+```
+
+### 페이지 박스（인쇄 워크플로우）
+
+```rust
+// CropBox（보이는 영역 클립）읽기/쓰기
+let cb = doc.page(1)?.crop_box()?;   // Option<[f32;4]>
+
+doc.page(1)?.set_crop_box([10.0, 10.0, 575.0, 822.0])?;   // [x,y,w,h]
+doc.page(1)?.set_trim_box([0.0, 0.0, 595.0, 842.0])?;
+doc.page(1)?.set_bleed_box([0.0, 0.0, 601.0, 848.0])?;
+doc.save("print_ready.pdf")?;
 ```
 
 ### 링크 어노테이션
@@ -576,7 +705,7 @@ harumi
 | **v0.5** | `add_link_url`, `add_link_internal` — 클릭 가능한 PDF 링크 어노테이션; `add_bookmark` — CJK UTF-16BE 아웃라인; `HeaderFooter`; 보안 수정 |
 | **v0.6** | 암호화 PDF 읽기（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）; 마크업 주석（하이라이트·밑줄·취소선·메모）; AcroForm `form_fields()` / `fill_form()`; AGL 테이블 +116 항목; Identity-H 텍스트 추출 폴백 |
 | **v0.7** *（현재）* | `set_encryption` — 암호화된 PDF 저장; `add_squiggly` — 물결 밑줄 주석; 페이지 박스 전체 지원（크롭·트림·블리드·미디어 박스 읽기/쓰기） |
-| **Next** | FlowDocument 인라인 스타일（굵기/기울기/색상）, `cargo semver-checks` CI |
+| **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; `cargo semver-checks` CI |
 
 ---
 

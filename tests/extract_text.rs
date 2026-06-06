@@ -377,3 +377,68 @@ fn invisible_flag_false_for_visible_text() {
     assert_eq!(frags.len(), 1);
     assert!(!frags[0].invisible, "add_text should produce invisible=false (Tr 0)");
 }
+
+// ---------------------------------------------------------------------------
+// TextFragment.height tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn height_equals_font_size() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    // Place text at a known font size
+    doc.page(1).unwrap().add_text("A", font, [72.0, 700.0], 24.0, [0.0; 3]).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+
+    assert_eq!(frags.len(), 1);
+    assert!(
+        (frags[0].height - 24.0).abs() < 0.5,
+        "height should equal font_size (24 pt), got {}",
+        frags[0].height
+    );
+}
+
+#[test]
+fn bounding_box_fields_are_non_zero() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1).unwrap().add_invisible_text("日本語", font, [100.0, 500.0], 14.0).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+
+    assert_eq!(frags.len(), 1);
+    let f = &frags[0];
+    assert!(f.x > 0.0, "x should be > 0, got {}", f.x);
+    assert!(f.y > 0.0, "y should be > 0, got {}", f.y);
+    assert!(f.width > 0.0, "width should be > 0, got {}", f.width);
+    assert!(f.height > 0.0, "height should be > 0, got {}", f.height);
+    assert!((f.height - f.font_size).abs() < 0.5, "height ≈ font_size");
+}
+
+#[test]
+fn height_scales_with_font_size() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1).unwrap().add_text("A", font, [72.0, 700.0], 10.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("B", font, [100.0, 600.0], 36.0, [0.0; 3]).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 2);
+
+    let h10 = frags.iter().find(|f| f.text == "A").unwrap().height;
+    let h36 = frags.iter().find(|f| f.text == "B").unwrap().height;
+    assert!(
+        h36 > h10 * 2.0,
+        "36pt height ({h36}) should be > 2× 10pt height ({h10})"
+    );
+}
