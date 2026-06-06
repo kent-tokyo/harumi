@@ -72,6 +72,9 @@ pub mod ocr;
 #[cfg(feature = "flow")]
 pub mod flow;
 
+#[cfg(feature = "digital-signature")]
+pub mod signature;
+
 pub use document::{Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun, VerticalAlign};
 pub use error::{Error, Result};
 pub use extract::TextFragment;
@@ -85,6 +88,9 @@ pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 
 #[cfg(feature = "html")]
 pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};
+
+#[cfg(feature = "digital-signature")]
+pub use signature::SignatureInfo;
 
 // Re-export lopdf for integration test access.
 #[doc(hidden)]
