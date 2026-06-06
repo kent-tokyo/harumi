@@ -242,10 +242,10 @@ fn inherited_color(elem: ElementRef<'_>, tag: &str, parent_color: [f32; 3]) -> [
         return [0.0, 0.0, 0.8];
     }
     // Look for inline style="color: ...".
-    if let Some(style) = elem.value().attr("style") {
-        if let Some(c) = parse_css_color(style) {
-            return c;
-        }
+    if let Some(style) = elem.value().attr("style")
+        && let Some(c) = parse_css_color(style)
+    {
+        return c;
     }
     parent_color
 }
