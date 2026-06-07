@@ -1,6 +1,6 @@
 //! Integration tests for Document::extract_text_runs.
 
-use harumi::{Document, Error, TextRun};
+use harumi::{Document, Error, TextRun, sort_by_reading_order};
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal single-page PDF with a Type1 WinAnsiEncoding font
@@ -440,5 +440,110 @@ fn height_scales_with_font_size() {
     assert!(
         h36 > h10 * 2.0,
         "36pt height ({h36}) should be > 2× 10pt height ({h10})"
+    );
+}
+
+#[test]
+fn sort_by_reading_order_top_to_bottom_left_to_right() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+
+    // Add text in reverse reading order (bottom→top, right→left)
+    doc.page(1).unwrap().add_text("Bottom Left", font, [72.0, 100.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("Bottom Right", font, [400.0, 100.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("Top Left", font, [72.0, 700.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("Top Right", font, [400.0, 700.0], 12.0, [0.0; 3]).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let mut frags = doc2.extract_text_runs(1).unwrap();
+
+    // Before sorting: fragments are in operator order (bottom→top, left→right)
+    sort_by_reading_order(&mut frags);
+
+    // After sorting: should be top-to-bottom (y descending), left-to-right (x ascending)
+    assert_eq!(frags.len(), 4);
+    assert_eq!(frags[0].text, "Top Left");
+    assert_eq!(frags[1].text, "Top Right");
+    assert_eq!(frags[2].text, "Bottom Left");
+    assert_eq!(frags[3].text, "Bottom Right");
+}
+
+#[test]
+fn uni_glyph_name_pattern_decoding() {
+    // Test that uni<XXXX> glyph name patterns are decoded.
+    // Build a minimal PDF with a Type1 font using custom Encoding with uni glyph names.
+
+    use harumi::lopdf::{dictionary, Document as LDoc, Object, Stream};
+
+    let mut doc = LDoc::with_version("1.4");
+    let pages_id = doc.new_object_id();
+
+    // Type1 font with custom Encoding using uni glyph names.
+    // Map codepoint 0x41 to glyph name "uni0041" (should decode to 'A').
+    let font_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Font".to_vec()),
+        "Subtype" => Object::Name(b"Type1".to_vec()),
+        "BaseFont" => Object::Name(b"Helvetica".to_vec()),
+        "Encoding" => Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Encoding".to_vec()),
+            "BaseEncoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "Differences" => Object::Array(vec![
+                Object::Integer(0x41),
+                Object::Name(b"uni0041".to_vec()),
+            ]),
+        }),
+    }));
+
+    let stream_id = doc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        b"BT /F1 12 Tf 100 100 Td <41> Tj ET".to_vec(),
+    )));
+
+    let page_id = doc.new_object_id();
+    doc.objects.insert(
+        page_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Resources" => Object::Dictionary(dictionary! {
+                "Font" => Object::Dictionary(dictionary! {
+                    "F1" => Object::Reference(font_id),
+                }),
+            }),
+            "Contents" => Object::Reference(stream_id),
+        }),
+    );
+
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            "Count" => Object::Integer(1),
+        }),
+    );
+
+    let cat_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Catalog".to_vec()),
+        "Pages" => Object::Reference(pages_id),
+    }));
+    doc.trailer.set("Root", Object::Reference(cat_id));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+
+    let harumi_doc = Document::from_bytes(&buf).unwrap();
+    let frags = harumi_doc.extract_text_runs(1).unwrap();
+
+    assert!(
+        frags.iter().any(|f| f.text.contains('A')),
+        "Expected 'A' extracted via uni0041 glyph name, got: {:?}",
+        frags.iter().map(|f| &f.text).collect::<Vec<_>>()
     );
 }
