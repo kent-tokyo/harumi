@@ -72,40 +72,21 @@ pub(super) fn subset(
     let font_data = &data[font_data_start..];
     let offset_table = parse_offset_table(font_data)?;
 
-    // Parse table records. For both TTF and TTC, we parse from font_data to get correct num_tables,
-    // but table offsets need correct interpretation.
-    let table_records = parse_table_records(font_data, &offset_table)?;
+    // Parse table records with raw offsets (not yet validated as slices).
+    let table_recs_raw = parse_table_records_raw(font_data, &offset_table)?;
 
-    // For TTC, the parsed slices are wrong because they're from font_data which starts at font_data_start.
-    // Reconstruct slices by adjusting offsets.
-    let table_records: Vec<(String, &[u8])> = if is_ttc {
+    // For TTC, offsets in the table directory are absolute from the TTC file start (offset 0 of full data).
+    // When we read from font_data, the offsets are still absolute (they're just numbers in the directory).
+    // For TTF, font_data_start == 0, so offsets are naturally correct.
+    let table_records: Vec<(String, &[u8])> = {
         let mut result = Vec::new();
-        for i in 0..offset_table.num_tables {
-            let base = 12 + i * 16;
-            if base + 16 > font_data.len() {
-                continue;
-            }
-            let tag = String::from_utf8_lossy(&font_data[base..base + 4]).to_string();
-            let offset = u32::from_be_bytes([
-                font_data[base + 8],
-                font_data[base + 9],
-                font_data[base + 10],
-                font_data[base + 11],
-            ]) as usize;
-            let length = u32::from_be_bytes([
-                font_data[base + 12],
-                font_data[base + 13],
-                font_data[base + 14],
-                font_data[base + 15],
-            ]) as usize;
-            // In TTC, offset is absolute from TTC file start
-            if offset + length <= data.len() {
-                result.push((tag, &data[offset..offset + length]));
+        for (tag, raw_offset, length) in table_recs_raw {
+            // raw_offset is always absolute from the full data start.
+            if raw_offset + length <= data.len() {
+                result.push((tag, &data[raw_offset..raw_offset + length]));
             }
         }
         result
-    } else {
-        table_records // For TTF, use parsed slices as-is
     };
 
     // Get required tables from the records.
@@ -227,16 +208,11 @@ fn parse_offset_table(data: &[u8]) -> Result<OffsetTable, Box<dyn std::error::Er
     Ok(OffsetTable { is_truetype, num_tables })
 }
 
-struct TableRecord {
-    tag: String,
-    offset: u32,
-    length: u32,
-}
 
-fn parse_table_records<'a>(
-    data: &'a [u8],
+fn parse_table_records_raw(
+    data: &[u8],
     offset_table: &OffsetTable,
-) -> Result<Vec<(String, &'a [u8])>, Box<dyn std::error::Error>> {
+) -> Result<Vec<(String, usize, usize)>, Box<dyn std::error::Error>> {
     let mut records = Vec::new();
     for i in 0..offset_table.num_tables {
         let base = 12 + i * 16;
@@ -246,28 +222,11 @@ fn parse_table_records<'a>(
         let tag = String::from_utf8_lossy(&data[base..base + 4]).to_string();
         let offset = u32::from_be_bytes([data[base + 8], data[base + 9], data[base + 10], data[base + 11]]) as usize;
         let length = u32::from_be_bytes([data[base + 12], data[base + 13], data[base + 14], data[base + 15]]) as usize;
-        if offset + length > data.len() {
-            return Err(format!("table {} out of bounds", tag).into());
-        }
-        let slice = &data[offset..offset + length];
-        records.push((tag, slice));
+        records.push((tag, offset, length));
     }
     Ok(records)
 }
 
-fn get_table<'a>(
-    _data: &'a [u8],
-    records: &[(String, &'a [u8])],
-    tag: &[u8; 4],
-) -> Result<&'a [u8], Box<dyn std::error::Error>> {
-    let tag_str = String::from_utf8_lossy(tag).to_string();
-    for (record_tag, slice) in records {
-        if record_tag == &tag_str {
-            return Ok(slice);
-        }
-    }
-    Err(format!("required table {} not found", tag_str).into())
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -486,7 +445,7 @@ fn assemble_font(
 
     // Table data.
     let mut current_offset = font.len();
-    for (tag, data) in tables.iter() {
+    for (_tag, data) in tables.iter() {
         // Align to 4-byte boundary.
         current_offset = (current_offset + 3) & !3;
         while font.len() < current_offset {
