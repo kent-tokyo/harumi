@@ -17,14 +17,8 @@ categories = ["encoding", "text-processing", "parser-implementations", "multimed
 lopdf = "0.40"
 subsetter = "0.2"
 ttf-parser = "0.25"
-thiserror = "2"
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
 scraper = { version = "0.19", optional = true }
-cms = { version = "0.2", optional = true }
-x509-cert = { version = "0.2", optional = true }
-sha2 = { version = "0.10", optional = true }
-rsa = { version = "0.9", optional = true }
-der = { version = "0.7", optional = true }
 
 [features]
 default = []
@@ -33,7 +27,6 @@ image = ["dep:image", "draw"]
 ocr = []
 flow = ["draw"]
 html = ["flow", "dep:scraper"]
-digital-signature = ["dep:cms", "dep:x509-cert", "dep:sha2", "dep:rsa", "dep:der"]
 
 # getrandom is needed for AES-256 key generation. Backend differs per target family.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

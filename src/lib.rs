@@ -66,7 +66,6 @@
 //! | `image`             | JPEG/PNG embed + extraction; enables `draw` | `image` crate |
 //! | `flow`              | `FlowDocument` auto-pagination builder + headers/footers | none |
 //! | `html`              | HTML→PDF renderer; enables `flow` | `scraper` |
-//! | `digital-signature` | PDF digital signature metadata extraction | `cms`, `rsa`, `x509-cert` |
 
 mod chunk;
 mod content;
@@ -89,7 +88,6 @@ pub mod ocr;
 #[cfg(feature = "flow")]
 pub mod flow;
 
-#[cfg(feature = "digital-signature")]
 pub mod signature;
 
 pub use chunk::{ChunkType, TextChunk};
@@ -107,7 +105,6 @@ pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 #[cfg(feature = "html")]
 pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};
 
-#[cfg(feature = "digital-signature")]
 pub use signature::SignatureInfo;
 
 // Re-export lopdf for integration test access.
