@@ -120,6 +120,8 @@ struct PendingBookmark {
     page: u32,
     /// PDF y coordinate (bottom-left origin) for the destination anchor.
     y: f32,
+    /// Outline hierarchy level: 0 = top-level (from add_bookmark), 1..6 = nested levels.
+    level: u8,
 }
 
 /// PDF /Info dictionary fields.
@@ -1332,7 +1334,31 @@ impl Document {
         if page == 0 || page > count {
             return Err(Error::PageNotFound(page));
         }
-        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y });
+        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y, level: 0 });
+        Ok(())
+    }
+
+    /// Adds an outline item (bookmark) with explicit hierarchy level.
+    ///
+    /// `level` is the nesting depth (1 = top-level, 2 = subsection, etc.).
+    /// Levels are automatically clamped to 1–6. When creating outlines programmatically,
+    /// use consecutive levels (1, 2, 2, 3, 2, ...) for proper nesting.
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page` is 0 or exceeds the page count,
+    /// or [`Error::InvalidInput`] if [`save`](Document::save) has already been called.
+    pub fn add_outline_item(&mut self, title: &str, page: u32, y: f32, level: u8) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "add_outline_item after save() is not supported; create a new Document".into(),
+            ));
+        }
+        let count = self.page_count();
+        if page == 0 || page > count {
+            return Err(Error::PageNotFound(page));
+        }
+        let level = level.clamp(1, 6);
+        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y, level });
         Ok(())
     }
 
@@ -1961,10 +1987,145 @@ impl Document {
         let bookmarks = std::mem::take(&mut self.pending_bookmarks);
         let n = bookmarks.len();
 
-        // Pre-allocate object IDs for the new bookmark items.
+        // Check if all items are flat (level == 0): use existing algorithm.
+        let all_flat = bookmarks.iter().all(|b| b.level == 0);
+        if all_flat {
+            return self.build_outlines_flat(page_ids, bookmarks, n);
+        }
+
+        // Hierarchical outline: normalize levels to 1..=6 if any item has level 0 mixed in.
+        let levels: Vec<u8> = bookmarks.iter().map(|b| b.level.max(1)).collect();
+
+        // Pre-allocate object IDs for all items.
         let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
 
-        // Check whether an /Outlines tree already exists in the catalog.
+        // Get or create root outline object.
+        let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
+        let existing_outline_id: Option<ObjectId> = self.inner
+            .get_object(root_ref)?
+            .as_dict()?
+            .get(b"Outlines")
+            .and_then(|o| o.as_reference())
+            .ok();
+        let outline_root_id = existing_outline_id.unwrap_or_else(|| self.inner.new_object_id());
+
+        // Build outline item objects with parent/sibling links.
+        // Stack: (level, item_idx, first_child_idx, last_child_idx, child_count)
+        let mut stack: Vec<(u8, usize, Option<usize>, Option<usize>, u32)> = vec![(0, usize::MAX, None, None, 0)];
+
+        for i in 0..n {
+            let curr_level = levels[i];
+
+            // Pop items deeper than current level, closing their children.
+            while stack.len() > 1 && stack.last().unwrap().0 >= curr_level {
+                let (_, popped_idx, first_child, last_child, child_count) = stack.pop().unwrap();
+                if popped_idx != usize::MAX && child_count > 0 {
+                    let popped_dict = self.inner.get_object_mut(item_ids[popped_idx])?.as_dict_mut()?;
+                    if let Some(first) = first_child {
+                        popped_dict.set("First", Object::Reference(item_ids[first]));
+                    }
+                    if let Some(last) = last_child {
+                        popped_dict.set("Last", Object::Reference(item_ids[last]));
+                    }
+                    popped_dict.set("Count", Object::Integer(child_count as i64));
+                }
+            }
+
+            let page_id = page_ids
+                .get(&bookmarks[i].page)
+                .copied()
+                .ok_or(Error::PageNotFound(bookmarks[i].page))?;
+
+            let mut d = Dictionary::new();
+            d.set("Title", pdf_text_string(&bookmarks[i].title));
+            d.set("Dest", Object::Array(vec![
+                Object::Reference(page_id),
+                Object::Name(b"XYZ".to_vec()),
+                Object::Null,
+                Object::Real(bookmarks[i].y),
+                Object::Null,
+            ]));
+
+            // Determine parent: the top of the stack.
+            let parent_idx = if stack.last().unwrap().0 == 0 {
+                outline_root_id  // Root outline object.
+            } else {
+                item_ids[stack.last().unwrap().1]
+            };
+            d.set("Parent", Object::Reference(parent_idx));
+
+            // Sibling links: link to previous item at same level.
+            if i > 0 && levels[i - 1] == curr_level {
+                d.set("Prev", Object::Reference(item_ids[i - 1]));
+                self.inner.get_object_mut(item_ids[i - 1])?.as_dict_mut()?
+                    .set("Next", Object::Reference(item_ids[i]));
+            }
+
+            self.inner.objects.insert(item_ids[i], Object::Dictionary(d));
+
+            // Update parent on the stack: record this as a child.
+            let top = stack.last_mut().unwrap();
+            if top.2.is_none() {
+                top.2 = Some(i);
+            }
+            top.3 = Some(i);
+            top.4 += 1;
+
+            // Push a new stack frame for the current item (may have children).
+            stack.push((curr_level, i, None, None, 0));
+        }
+
+        // Close any remaining open items on the stack.
+        while stack.len() > 1 {
+            let (_, popped_idx, first_child, last_child, child_count) = stack.pop().unwrap();
+            if popped_idx != usize::MAX && child_count > 0 {
+                let popped_dict = self.inner.get_object_mut(item_ids[popped_idx])?.as_dict_mut()?;
+                if let Some(first) = first_child {
+                    popped_dict.set("First", Object::Reference(item_ids[first]));
+                }
+                if let Some(last) = last_child {
+                    popped_dict.set("Last", Object::Reference(item_ids[last]));
+                }
+                popped_dict.set("Count", Object::Integer(child_count as i64));
+            }
+        }
+
+        // Write /Outlines root. Collect top-level items to link as root's direct children.
+        let top_level_items: Vec<usize> = (0..n).filter(|i| levels[*i] == 1).collect();
+        if !top_level_items.is_empty() {
+            let first_top = top_level_items[0];
+            let last_top = top_level_items[top_level_items.len() - 1];
+
+            // The root /Count includes ALL items (both top-level and nested).
+            // Per PDF spec, this is the number of outline items and their descendants visible when expanded.
+            let new_count = n as i64;
+
+            if let Some(oid) = existing_outline_id {
+                let root_d = self.inner.get_object_mut(oid)?.as_dict_mut()?;
+                root_d.set("First", Object::Reference(item_ids[first_top]));
+                root_d.set("Last", Object::Reference(item_ids[last_top]));
+                let existing_count = root_d.get(b"Count").and_then(|o| o.as_i64()).unwrap_or(0);
+                root_d.set("Count", Object::Integer(existing_count + new_count));
+            } else {
+                let mut root_dict = Dictionary::new();
+                root_dict.set("Type", Object::Name(b"Outlines".to_vec()));
+                root_dict.set("First", Object::Reference(item_ids[first_top]));
+                root_dict.set("Last", Object::Reference(item_ids[last_top]));
+                root_dict.set("Count", Object::Integer(new_count));
+                self.inner.objects.insert(outline_root_id, Object::Dictionary(root_dict));
+
+                let catalog = self.inner.get_object_mut(root_ref)?.as_dict_mut()?;
+                catalog.set("Outlines", Object::Reference(outline_root_id));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build a flat outline tree (backward compatibility when all levels == 0).
+    fn build_outlines_flat(&mut self, page_ids: std::collections::BTreeMap<u32, ObjectId>, bookmarks: Vec<PendingBookmark>, n: usize) -> Result<()> {
+        let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
+
         let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
         let existing_outline_id: Option<ObjectId> = self.inner
             .get_object(root_ref)?
@@ -1973,18 +2134,16 @@ impl Document {
             .and_then(|o| o.as_reference())
             .ok();
 
-        // If there is a pre-existing outline tree, find its last item and entry count.
         let (outline_root_id, prev_last_opt, existing_count) = match existing_outline_id {
             Some(oid) => {
                 let root_d = self.inner.get_object(oid)?.as_dict()?;
-                let last_id = root_d.get(b"Last")?.as_reference()?;
+                let last_id = root_d.get(b"Last")?.as_reference().ok();
                 let count   = root_d.get(b"Count").and_then(|o| o.as_i64()).unwrap_or(0);
-                (oid, Some(last_id), count)
+                (oid, last_id, count)
             }
             None => (self.inner.new_object_id(), None, 0),
         };
 
-        // Build the new bookmark item objects.
         for (i, bm) in bookmarks.iter().enumerate() {
             let page_id = page_ids
                 .get(&bm.page)
@@ -2001,7 +2160,7 @@ impl Document {
                 Object::Null,
             ]));
             d.set("Parent", Object::Reference(outline_root_id));
-            // /Prev: first new item points back to the old last item (if any).
+
             let prev_id = if i == 0 { prev_last_opt } else { Some(item_ids[i - 1]) };
             if let Some(pid) = prev_id {
                 d.set("Prev", Object::Reference(pid));
@@ -2015,17 +2174,14 @@ impl Document {
         let new_total = existing_count + n as i64;
 
         if let Some(oid) = existing_outline_id {
-            // Patch the old /Last item to point forward to our first new item.
             if let Some(old_last) = prev_last_opt {
                 self.inner.get_object_mut(old_last)?.as_dict_mut()?
                     .set("Next", Object::Reference(item_ids[0]));
             }
-            // Update the existing outline root: advance /Last and bump /Count.
             let root_d = self.inner.get_object_mut(oid)?.as_dict_mut()?;
             root_d.set("Last",  Object::Reference(item_ids[n - 1]));
             root_d.set("Count", Object::Integer(new_total));
         } else {
-            // Build a fresh /Outlines root and wire it into /Catalog.
             let mut root_dict = Dictionary::new();
             root_dict.set("Type",  Object::Name(b"Outlines".to_vec()));
             root_dict.set("First", Object::Reference(item_ids[0]));
@@ -2490,6 +2646,82 @@ impl<'doc> PageHandle<'doc> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_squiggly")?;
         check_positive_size(rect[2], rect[3], "add_squiggly")?;
         let d = build_markup_annot(b"Squiggly", rect, color);
+        let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
+        append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
+    }
+
+    /// Permanently blacks out the given area with a PDF Redact annotation.
+    ///
+    /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
+    ///
+    /// This adds a standard `/Redact` annotation with a solid black appearance stream.
+    /// Note: this does NOT scrub underlying text or images from content streams —
+    /// it renders a black box on screen and in print. To permanently remove
+    /// underlying content, the document must be processed by a compliant
+    /// PDF reader's "Apply Redactions" command.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if coordinates are NaN/Infinity or
+    /// width/height are non-positive.
+    pub fn redact(&mut self, rect: [f32; 4]) -> Result<()> {
+        check_finite(&[rect[0], rect[1], rect[2], rect[3]], "redact")?;
+        check_positive_size(rect[2], rect[3], "redact")?;
+
+        let x1 = rect[0];
+        let y1 = rect[1];
+        let x2 = rect[0] + rect[2];
+        let y2 = rect[1] + rect[3];
+        let w = rect[2];
+        let h = rect[3];
+
+        // Build the appearance stream content: solid black rectangle fill.
+        let ap_content = format!("q\n0 0 0 rg\n0 0 {:.4} {:.4} re\nf\nQ\n", w, h);
+
+        // Build the appearance stream XObject dictionary.
+        let mut ap_dict = Dictionary::new();
+        ap_dict.set("Type", Object::Name(b"XObject".to_vec()));
+        ap_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+        ap_dict.set("BBox", Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(w),
+            Object::Real(h),
+        ]));
+        ap_dict.set("Resources", Object::Dictionary(Dictionary::new()));
+
+        // Create the appearance stream object.
+        let ap_stream = Stream::new(ap_dict, ap_content.into_bytes());
+        let ap_id = self.doc.inner.add_object(Object::Stream(ap_stream));
+
+        // Build the /Redact annotation dictionary.
+        let mut d = Dictionary::new();
+        d.set("Type", Object::Name(b"Annot".to_vec()));
+        d.set("Subtype", Object::Name(b"Redact".to_vec()));
+        d.set("Rect", Object::Array(vec![
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]));
+        // Interior color: solid black (0, 0, 0 in RGB).
+        d.set("IC", Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(0.0),
+        ]));
+        // Appearance stream.
+        let mut ap = Dictionary::new();
+        ap.set("N", Object::Reference(ap_id));
+        d.set("AP", Object::Dictionary(ap));
+        // No visible border.
+        d.set("Border", Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(0),
+        ]));
+        // Print flag.
+        d.set("F", Object::Integer(4));
+
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
     }
@@ -3605,7 +3837,10 @@ fn check_positive_size(width: f32, height: f32, label: &str) -> Result<()> {
 pub(crate) fn is_cjk(ch: char) -> bool {
     matches!(
         ch as u32,
-        0x3000..=0x9FFF    // CJK unified ideographs, hiragana, katakana, etc.
+        0x1100..=0x11FF    // Hangul Jamo
+        | 0x3000..=0x9FFF  // CJK unified ideographs, hiragana, katakana, etc.
+        | 0xA960..=0xA97F  // Hangul Jamo Extended-A
+        | 0xAC00..=0xD7FF  // Hangul syllables + Jamo Extended-B
         | 0xF900..=0xFAFF  // CJK compatibility ideographs
         | 0xFE30..=0xFE4F  // CJK compatibility forms
         | 0xFF00..=0xFFEF  // fullwidth / halfwidth forms
@@ -3944,5 +4179,47 @@ mod tests {
     fn document_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Document>();
+    }
+
+    #[test]
+    fn is_cjk_cjk_unified_ideographs() {
+        assert!(is_cjk('日')); // U+65E5
+        assert!(is_cjk('本')); // U+672C
+        assert!(is_cjk('語')); // U+8A9E
+    }
+
+    #[test]
+    fn is_cjk_hiragana_katakana() {
+        assert!(is_cjk('あ')); // Hiragana U+3042
+        assert!(is_cjk('ア')); // Katakana U+30A2
+        assert!(is_cjk('ん')); // Hiragana U+3093
+    }
+
+    #[test]
+    fn is_cjk_korean_hangul() {
+        assert!(is_cjk('가')); // U+AC00
+        assert!(is_cjk('나')); // U+B098
+        assert!(is_cjk('힣')); // U+D7A3 (last Hangul syllable)
+    }
+
+    #[test]
+    fn is_cjk_hangul_jamo() {
+        assert!(is_cjk('ㄱ')); // Hangul Jamo U+1100
+        assert!(is_cjk('ㅏ')); // Hangul Jamo U+1161
+    }
+
+    #[test]
+    fn is_cjk_cjk_extension_planes() {
+        assert!(is_cjk('\u{20000}')); // CJK Extension B U+20000
+        assert!(is_cjk('\u{2A6D0}')); // CJK Extension C U+2A6D0
+    }
+
+    #[test]
+    fn is_cjk_non_cjk_returns_false() {
+        assert!(!is_cjk('a'));
+        assert!(!is_cjk('A'));
+        assert!(!is_cjk('1'));
+        assert!(!is_cjk(' '));
+        assert!(!is_cjk('é')); // Latin Extended
     }
 }
