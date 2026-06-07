@@ -223,8 +223,8 @@ pub struct FlowDocument {
     /// Distance from the top of the content area (positive = downward).
     content_y: f32,
     /// Pending bookmark entries collected from push_heading calls.
-    /// Each entry is (title, page, pdf_y) where pdf_y is at the top of the heading.
-    outline_entries: Vec<(String, u32, f32)>,
+    /// Each entry is (title, page, pdf_y, level) where pdf_y is at the top of the heading.
+    outline_entries: Vec<(String, u32, f32, u8)>,
 }
 
 impl FlowDocument {
@@ -360,7 +360,7 @@ impl FlowDocument {
         if self.options.auto_bookmarks {
             let bm_y = self.pdf_top_y(self.content_y);
             let bm_page = self.current_page;
-            self.outline_entries.push((text.to_owned(), bm_page, bm_y));
+            self.outline_entries.push((text.to_owned(), bm_page, bm_y, level as u8));
         }
 
         let x = self.options.margins.left;
@@ -697,8 +697,8 @@ impl FlowDocument {
         }
 
         // Register bookmarks gathered from push_heading.
-        for (title, page, y) in self.outline_entries.drain(..) {
-            self.inner.add_bookmark(&title, page, y)?;
+        for (title, page, y, level) in self.outline_entries.drain(..) {
+            self.inner.add_outline_item(&title, page, y, level)?;
         }
 
         self.inner.save_to_bytes()

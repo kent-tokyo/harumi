@@ -405,3 +405,155 @@ fn add_bookmark_cjk_title_semantic_roundtrip() {
     let decoded = String::from_utf16(&units).unwrap();
     assert_eq!(decoded, title, "UTF-16BE decoded title must match the original string");
 }
+
+// ---------------------------------------------------------------------------
+// Redact annotations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn redact_basic() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.page(1)
+        .unwrap()
+        .redact([100.0, 500.0, 200.0, 30.0])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+
+    let page_ids = reloaded.get_pages();
+    let page_id = *page_ids.get(&1).unwrap();
+    let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
+    assert!(page_dict.get(b"Annots").is_ok(), "/Annots must be present on page after redact");
+}
+
+#[test]
+fn redact_subtype_is_redact() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.page(1)
+        .unwrap()
+        .redact([50.0, 100.0, 150.0, 50.0])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+
+    let page_ids = reloaded.get_pages();
+    let page_id = *page_ids.get(&1).unwrap();
+    let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
+    let annots = page_dict.get(b"Annots").unwrap().as_array().unwrap();
+    assert!(!annots.is_empty(), "Annots array must not be empty");
+
+    let annot_ref = annots[0].as_reference().unwrap();
+    let annot = reloaded.get_object(annot_ref).unwrap().as_dict().unwrap();
+    let subtype = annot.get(b"Subtype").unwrap().as_name().unwrap();
+    assert_eq!(subtype, b"Redact", "/Subtype must be /Redact");
+}
+
+#[test]
+fn redact_has_appearance_stream() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.page(1)
+        .unwrap()
+        .redact([50.0, 100.0, 150.0, 50.0])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+
+    let page_ids = reloaded.get_pages();
+    let page_id = *page_ids.get(&1).unwrap();
+    let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
+    let annots = page_dict.get(b"Annots").unwrap().as_array().unwrap();
+    let annot_ref = annots[0].as_reference().unwrap();
+    let annot = reloaded.get_object(annot_ref).unwrap().as_dict().unwrap();
+
+    let ap = annot.get(b"AP").unwrap().as_dict().unwrap();
+    let ap_n_ref = ap.get(b"N").unwrap().as_reference().unwrap();
+    let ap_stream = reloaded.get_object(ap_n_ref).unwrap();
+    assert!(
+        matches!(ap_stream, harumi::lopdf::Object::Stream(_)),
+        "/AP /N must be a stream"
+    );
+}
+
+#[test]
+fn redact_zero_size_returns_error() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    let result = doc.page(1).unwrap().redact([50.0, 100.0, 0.0, 50.0]);
+    assert!(result.is_err(), "redact with zero width should return error");
+
+    let result = doc.page(1).unwrap().redact([50.0, 100.0, 150.0, 0.0]);
+    assert!(result.is_err(), "redact with zero height should return error");
+}
+
+#[test]
+fn redact_nan_returns_error() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    let result = doc.page(1).unwrap().redact([f32::NAN, 100.0, 150.0, 50.0]);
+    assert!(result.is_err(), "redact with NaN coordinate should return error");
+}
+
+#[test]
+fn redact_infinity_returns_error() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    let result = doc
+        .page(1)
+        .unwrap()
+        .redact([f32::INFINITY, 100.0, 150.0, 50.0]);
+    assert!(
+        result.is_err(),
+        "redact with Infinity coordinate should return error"
+    );
+}
+
+#[test]
+fn multiple_redacts_accumulate() {
+    let pdf = minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    doc.page(1)
+        .unwrap()
+        .redact([50.0, 100.0, 150.0, 50.0])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .redact([100.0, 200.0, 200.0, 40.0])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .redact([200.0, 300.0, 100.0, 30.0])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+
+    let page_ids = reloaded.get_pages();
+    let page_id = *page_ids.get(&1).unwrap();
+    let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
+    let annots = page_dict.get(b"Annots").unwrap().as_array().unwrap();
+    assert_eq!(
+        annots.len(),
+        3,
+        "Three redact() calls should produce three annotations"
+    );
+
+    for annot_ref_obj in annots {
+        let annot_ref = annot_ref_obj.as_reference().unwrap();
+        let annot = reloaded.get_object(annot_ref).unwrap().as_dict().unwrap();
+        let subtype = annot.get(b"Subtype").unwrap().as_name().unwrap();
+        assert_eq!(subtype, b"Redact", "All annotations should be /Redact");
+    }
+}
