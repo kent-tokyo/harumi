@@ -9,6 +9,65 @@
 
 ## [未リリース]
 
+### 追加（v1.4.0 — Phase 24: テキスト抽出品質強化）
+
+- **`sort_by_reading_order(fragments: &mut [TextFragment])`** — テキスト抽出結果をコンテント
+  ストリーム順から人間が読む順序（上から下へ、左から右へ）に並べ替えます。NaN/Infinity 座標を
+  安全に処理します。複数段組レイアウトや右から左への言語対応で `extract_text_runs()` の出力後処理が必要な場合に便利です。
+
+- **`glyph_name_to_char()` が `uni<XXXX>` パターンに対応** — AGL グリフ名デコーディングを拡張して
+  AGL 2.0 スタイルの `uni0041` 形式に対応。16 進コードが直接 Unicode スカラーにマップされます。
+  例えば `uni30A2` → `'ア'`（U+30A2）。16 進長の検証（1–8 文字）により、不正な形式をパニックさせずに
+  静かに無視します。
+
+- **`Document::extract_page_images(page) -> Vec<PageImage>`** — スキャン PDF ページから
+  すべての画像を抽出します（以前は最大サイズの画像のみ返していました）。Image XObject が見つからない場合はエラーを返します。
+
+### 追加（v1.5.0 — Phase 25: AI/RAG ユーティリティ）
+
+- **`TextChunk` 構造体** — ページから抽出されたセマンティックテキストブロック。フィールド:
+  - `text: String` — 複数フラグメントの連結テキスト
+  - `bbox: [f32; 4]` — 境界ボックス `[x, y, width, height]`
+  - `chunk_type: ChunkType` — `Heading(1..=4)` または `Paragraph`（フォントサイズ比率から自動判定）
+  - `avg_font_size: f32` — 構成フラグメントの平均フォントサイズ
+
+- **`ChunkType` enum** — `Heading(u8)`（レベル 1–6、フォントサイズ比率から推定）または
+  `Paragraph`。`#[non_exhaustive]` でマーク済み（将来の見出しレベル拡張に対応）。
+
+- **`Document::extract_text_chunks(page) -> Vec<TextChunk>`** — ページからセマンティック
+  テキストブロックを抽出し、見出しを自動判定します。アルゴリズム:
+  1. `extract_text_runs()` でテキストフラグメント抽出
+  2. 読み取り順ソート（上→下、左→右）
+  3. 不可視フラグメント除外（OCR層）
+  4. y 座標でグループ化（許容値 ±`font_size * 0.5`）
+  5. ベースラインフォントサイズ推定（最初の 10 行の最小値）
+  6. フォントサイズ比率で分類:
+     - ≥1.8× → H1、≥1.5× → H2、≥1.3× → H3、≥1.15× → H4
+     - それ以外 → Paragraph
+  7. 連続する同型行をチャンク統合
+  8. 境界ボックスを構成フラグメントの合集合で計算
+
+- **`Document::extract_as_markdown(page) -> String`** — ページをマークダウン形式で
+  抽出します。内部で `extract_text_chunks()` を使用:
+  - 見出し: `"#".repeat(level) + " " + text`
+  - 段落: プレーンテキスト
+  - ブロック間: 2 行改行
+
+### セキュリティ・堅牢性
+
+- **NaN/Infinity に対する防御的プログラミング** — 信頼できない PDF から生じる可能性のある
+  不正な浮動小数点値（NaN、Infinity、負のフォントサイズ）をすべての新規関数でフィルタリング:
+  - `group_into_lines()`: `font_size` が非有限の場合はフォールバック許容値
+  - `estimate_baseline_font_size()`: ベースライン計算から NaN/Infinity を除外
+  - `classify_by_ratio()`: NaN ratio は段落として扱う（未分類）
+  - `sort_by_reading_order()`: NaN/Infinity 座標をソート順末尾に配置
+
+### テストカバレッジ
+
+- Phase 24: 2 個の統合テスト（`uni_glyph_name_pattern_decoding`、`sort_by_reading_order_*`）
+- Phase 25: 7 個の統合テスト（`extract_text_chunks_*`、`extract_as_markdown_*`）
+- 全 doctest コンパイル・実行成功
+
 ---
 
 ## [0.8.0] — 2026-06-06

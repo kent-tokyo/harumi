@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v1.4.0 — Phase 24: Text Extraction Quality)
+
+- **`sort_by_reading_order(fragments: &mut [TextFragment])`** — reorder text fragments from
+  content-stream order to human-readable reading order: top-to-bottom, left-to-right. Handles
+  NaN/Infinity coordinates safely. Useful for post-processing `extract_text_runs()` output
+  when visual scanning order matters (e.g., multi-column layouts, RTL scripts with fall-back).
+
+- **`glyph_name_to_char()` uni<XXXX> pattern support** — extended AGL glyph name decoding
+  to recognize `uni0041`-style (AGL 2.0) patterns, where the hex code directly maps to a
+  Unicode scalar. Example: `uni30A2` → `'ア'` (U+30A2). Validates hex length (1-8 chars)
+  to reject malformed glyphs silently rather than panic.
+
+- **`Document::extract_page_images(page) -> Vec<PageImage>`** — extract all images from a
+  scanned PDF page (previously only returned the largest image). Returns an error if no
+  Image XObjects are found.
+
+### Added (v1.5.0 — Phase 25: AI/RAG Utilities)
+
+- **`TextChunk` struct** — semantic text block extracted from a page, with fields:
+  - `text: String` — concatenated fragment text
+  - `bbox: [f32; 4]` — bounding box `[x, y, width, height]`
+  - `chunk_type: ChunkType` — `Heading(1..=4)` or `Paragraph`
+  - `avg_font_size: f32` — average font size of constituent fragments
+
+- **`ChunkType` enum** — `Heading(u8)` (levels 1–6 inferred from font size ratio) or
+  `Paragraph`. Marked `#[non_exhaustive]` for future heading levels.
+
+- **`Document::extract_text_chunks(page) -> Vec<TextChunk>`** — extract semantic text blocks
+  from a page with automatic heading detection. Algorithm:
+  1. Extract text fragments via `extract_text_runs()`
+  2. Sort by reading order (top→bottom, left→right)
+  3. Filter out invisible fragments (OCR layers)
+  4. Group fragments into lines by y-coordinate (±`font_size * 0.5` tolerance)
+  5. Estimate baseline font size (minimum of first 10 lines)
+  6. Classify lines as headings or paragraphs by font size ratio:
+     - ≥1.8× → H1, ≥1.5× → H2, ≥1.3× → H3, ≥1.15× → H4
+     - Otherwise → Paragraph
+  7. Merge consecutive same-type lines into chunks
+  8. Compute bbox as union of constituent fragments
+
+- **`Document::extract_as_markdown(page) -> String`** — extract text from a page as
+  Markdown-formatted output. Uses `extract_text_chunks()` internally:
+  - Headings: `"#".repeat(level) + " " + text`
+  - Paragraphs: plain text
+  - Double newlines between blocks
+
+### Security & Robustness
+
+- **NaN/Infinity defensive programming** — all new functions filter malformed floating-point
+  values (NaN, Infinity, negative font sizes) that can occur in untrusted PDFs:
+  - `group_into_lines()`: fallback tolerance if `font_size` is non-finite
+  - `estimate_baseline_font_size()`: exclude NaN/Infinity from baseline calculation
+  - `classify_by_ratio()`: treat NaN ratios as paragraphs (unclassified)
+  - `sort_by_reading_order()`: place NaN/Infinity coordinates at the end of sort order
+
+### Test Coverage
+
+- Phase 24: 2 integration tests (`uni_glyph_name_pattern_decoding`, `sort_by_reading_order_*`)
+- Phase 25: 7 integration tests (`extract_text_chunks_*`, `extract_as_markdown_*`)
+- All doctests compile and pass
+
 ---
 
 ## [0.8.0] — 2026-06-06

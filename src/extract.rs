@@ -88,6 +88,61 @@ impl FontInfo {
 }
 
 // ---------------------------------------------------------------------------
+// Public APIs for text extraction utilities
+// ---------------------------------------------------------------------------
+
+/// Sort text fragments by reading order: top-to-bottom, then left-to-right.
+///
+/// Fragments returned by [`crate::Document::extract_text_runs`] are in content-stream order.
+/// This function reorders them for human-readable top-left-to-bottom-right scanning.
+///
+/// # Algorithm
+///
+/// * Groups by y-coordinate (descending, since PDF origin is bottom-left)
+/// * Within each row, sorts by x-coordinate (ascending, left-to-right)
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::Document;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let doc = Document::from_file("example.pdf")?;
+/// let mut fragments = doc.extract_text_runs(1)?;
+/// harumi::sort_by_reading_order(&mut fragments);
+/// for frag in fragments {
+///     println!("{}", frag.text);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn sort_by_reading_order(fragments: &mut [TextFragment]) {
+    use std::cmp::Ordering;
+    fragments.sort_by(|a, b| {
+        // Sort by y descending (top to bottom in PDF coords where bottom-left is origin).
+        // Use finite() guard: NaN and Infinity values are treated as "greater than" finite values
+        // so they sort to the end (bottom). Within NaN/Infinity, preserve input order.
+        let y_cmp = match (a.y.is_finite(), b.y.is_finite()) {
+            (true, true) => b.y.partial_cmp(&a.y).unwrap_or(Ordering::Equal),
+            (true, false) => Ordering::Less,  // finite < infinite
+            (false, true) => Ordering::Greater,
+            (false, false) => Ordering::Equal, // both infinite/NaN: preserve order
+        };
+
+        // If y is equal, sort by x ascending (left to right).
+        if y_cmp != Ordering::Equal {
+            return y_cmp;
+        }
+
+        match (a.x.is_finite(), b.x.is_finite()) {
+            (true, true) => a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal),
+            (true, false) => Ordering::Less,  // finite < infinite
+            (false, true) => Ordering::Greater,
+            (false, false) => Ordering::Equal,
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -622,10 +677,23 @@ const STANDARD_ENCODING: [Option<char>; 256] = [
 
 fn glyph_name_to_char(name: &[u8]) -> Option<char> {
     let s = std::str::from_utf8(name).ok()?;
-    AGL_TABLE
-        .binary_search_by_key(&s, |&(n, _)| n)
-        .ok()
-        .map(|i| AGL_TABLE[i].1)
+
+    // First try AGL static table lookup.
+    if let Ok(i) = AGL_TABLE.binary_search_by_key(&s, |&(n, _)| n) {
+        return Some(AGL_TABLE[i].1);
+    }
+
+    // Fall back to uni<XXXX> / u<XXXX> pattern (AGL 2.0).
+    let hex = s.strip_prefix("uni").or_else(|| s.strip_prefix('u'))?;
+
+    // Guard: hex string length must be 1-8 chars (valid u32 in hex: 0x0 to 0xFFFFFFFF).
+    // Longer strings are invalid; silently reject to avoid surprising behavior.
+    if hex.is_empty() || hex.len() > 8 {
+        return None;
+    }
+
+    let cp = u32::from_str_radix(hex, 16).ok()?;
+    char::from_u32(cp)
 }
 
 /// Sorted by glyph name (required for binary_search_by_key).
