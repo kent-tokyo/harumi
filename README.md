@@ -779,12 +779,12 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | Flag | What it enables | Extra dependencies |
 |---|---|---|
-| *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `png` crate (pure Rust) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
 | `flow` | `FlowDocument` push-style builder with automatic pagination (`push_heading`, `push_paragraph`, `push_paragraph_styled`, `push_key_value_table`, `push_list`, `push_page_break`, `render`); `InlineSpan` for inline bold/italic/color within a paragraph; `HeaderFooter` for per-page header/footer with `{{page}}`/`{{total}}` substitution; `auto_bookmarks` for automatic outline from headings | none |
-| `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`) | `scraper` |
+| `html` | `render_html_to_pdf` — HTML → PDF (h1–h6, p, table, ul/ol, page-break; enables `flow`); internal pure-Rust HTML tokenizer | none |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);

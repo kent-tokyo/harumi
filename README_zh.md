@@ -632,12 +632,12 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | 标志 | 启用的功能 | 额外依赖 |
 |---|---|---|
-| *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像嵌入；`extract_page_image` — 从扫描版 PDF 中提取嵌入图像（自动启用 `draw`） | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像嵌入；`extract_page_image` — 从扫描版 PDF 中提取嵌入图像（自动启用 `draw`） | `png` crate（纯 Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
 | `flow` | `FlowDocument` 推送式文档构建器，自动分页（`push_heading`、`push_paragraph`、`push_key_value_table`、`push_list`、`push_page_break`、`render`）；`HeaderFooter` 支持每页页眉/页脚，可使用 `{{page}}`/`{{total}}` 占位符；`auto_bookmarks` 从标题自动生成大纲 | 无 |
-| `html` | `render_html_to_pdf` — HTML→PDF 转换（h1–h6、p、table、ul/ol、分页；自动启用 `flow`） | `scraper` |
+| `html` | `render_html_to_pdf` — HTML→PDF 转换（h1–h6、p、table、ul/ol、分页；自动启用 `flow`）；内置纯 Rust HTML 令牌化器 | 无 |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
