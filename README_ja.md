@@ -748,7 +748,7 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | フラグ | 有効になる機能 | 追加依存 |
 |---|---|---|
-| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
+| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 画像埋め込み；`extract_page_image` — スキャン PDF から画像を取り出す（`draw` を有効化） | `png` クレート（純Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
@@ -767,9 +767,9 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 
 | フォント形式 | 対応状況 |
 |---|---|
-| TrueType (`.ttf`) | 対応・動作確認済み |
-| OpenType CFF (`.otf`) | 受け付けるが allsorts 依存（後述） |
-| TTC コレクション | 対応済み（index 0 を使用） |
+| TrueType (`.ttf`) | ✅ 完全対応 — 純Rust サブセット化エンジン |
+| TTC コレクション | ✅ 完全対応 — `embed_font_at(bytes, face_index)` で面指定可能 |
+| OpenType CFF (`.otf`) | ⚠️ 受け付けるが（サブセット化なし） — そのまま埋め込み |
 
 日本語・中国語・韓国語には [Noto Sans CJK](https://github.com/notofonts/noto-cjk) の **TrueType** バリアントを推奨します（E2E動作確認済み）：
 
@@ -780,7 +780,7 @@ NotoSansCJKtc-Regular.ttf  （繁体字）
 NotoSansCJKkr-Regular.ttf  （韓国語）
 ```
 
-> **OTFについて**: harumi は `.otf` ファイルを受け付け、`FontFile3 /OpenType` として埋め込みます。ただし allsorts v0.17 が一部の CFF バリアント（CFF2可変フォントなど）をサブセット化できない場合があり、その場合は `save()` 時に `FontParse` エラーになります。確実に動作させるには TTF バリアントをご利用ください。
+> **OTFについて**: harumi は `.otf` ファイルを受け付け、`FontFile3 /OpenType` として埋め込みますが、**CFF フォントはサブセット化できません** — フォント内の全グリフが埋め込まれるため PDF サイズが大きくなります。サイズ最適化のため、上記の TTF バリアントをご利用ください。
 
 ---
 
@@ -789,21 +789,33 @@ NotoSansCJKkr-Regular.ttf  （韓国語）
 ```
 harumi
 ├── lopdf v0.40          — 既存PDFのオブジェクトグラフ解析・編集
-├── allsorts v0.17+      — TrueTypeフォントサブセット化（Prince組版ソフトで実績あり）
-└── ttf-parser           — フォントメタデータ取得（bbox、units_per_em、ascender）
+├── ttf-parser           — フォントメタデータ取得（bbox、units_per_em、ascender）
+└── [内製 TTF サブセッタ] — 純Rust TrueType サブセット化エンジン（外部クレート不要）
 ```
 
 フォントパイプラインの流れ：
 
 1. 使用文字を収集 → Unicode コードポイントのセットを作成
 2. フォントの `cmap` テーブルで コードポイント → 元のグリフID（GID）にマッピング
-3. allsorts で使用グリフのみにTTFをサブセット化（GIDは **0..N に再採番**）
+3. 内製エンジンで使用グリフのみにTTFをサブセット化（GIDは **0..N に再採番**）
 4. `gid_to_char` とアドバンス幅を元GID → 新GIDに **再マッピング**（文字化け防止）
 5. PDFのCIDフォントオブジェクトグラフを構築: `Type0 → CIDFontType2 → FontDescriptor → FontFile2`
 6. `/ToUnicode` CMAPストリームを生成（ビューアでのテキスト選択・検索を可能にする）
 7. ページの `/Contents` 配列に新しいコンテントストリームを追記
 
 サブセット化は**遅延実行**：`embed_font()` は生のTTFバイト列を保持し、`save()` 時に全ページの使用文字を収集し、フォントごとに1回だけ処理します。
+
+### 依存関係の最小化
+
+harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を目指しています。
+
+- **TrueType サブセット化** — 内製の純Rust実装（v1.1+）；TTF + TTC（コレクション）対応、再帰的コンポジットグリフ解決
+- **フォント解析** — ttf-parser（専門用途、推移的依存なし）
+- **画像デコード** — `png` クレート（オプション、feature ゲート済み）
+- **暗号化** — getrandom（OS エントロピー専用；AES-256 暗号化キー生成に必須）
+
+**直接依存数**: 3個（getrandom、lopdf、ttf-parser、オプション `png`）  
+**推移的依存（デフォルトビルド）**: 約8個（lopdf の内部ユーティリティのみ）
 
 ---
 

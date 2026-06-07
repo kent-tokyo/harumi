@@ -779,7 +779,7 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | Flag | What it enables | Extra dependencies |
 |---|---|---|
-| *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
+| *(default)* | Text overlay, font embedding, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — shapes | none |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG raster images; `extract_page_image` — extract embedded image from scanned PDF (enables `draw`) | `png` crate (pure Rust) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract coordinate conversion | none |
@@ -798,9 +798,9 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 
 | Font format | Status |
 |---|---|
-| TrueType (`.ttf`, `sfntVersion = 0x00010000`) | Supported |
-| OpenType with CFF outlines (`.otf`, `OTTO`) | Accepted; subsetting depends on allsorts |
-| TTC collections | Supported (index 0) |
+| TrueType (`.ttf`, `sfntVersion = 0x00010000`) | ✅ Fully supported — pure-Rust subsetting |
+| TrueType Collections (`.ttc`, multiple font faces) | ✅ Fully supported — face index selection via `embed_font_at(bytes, face_index)` |
+| OpenType with CFF outlines (`.otf`, `OTTO`) | ⚠️ Accepted (no subsetting) — embedded as-is |
 
 For Japanese/Chinese/Korean, use the **TrueType** variant of [Noto Sans CJK](https://github.com/notofonts/noto-cjk) — end-to-end verified:
 
@@ -811,7 +811,7 @@ NotoSansCJKtc-Regular.ttf  (Traditional Chinese)
 NotoSansCJKkr-Regular.ttf  (Korean)
 ```
 
-> **OTF note**: harumi accepts `.otf` files and routes them through `FontFile3 /OpenType` embedding. However, allsorts v0.17 cannot subset all CFF variants (e.g. CFF2 variable fonts). If subsetting fails you will get a `FontParse` error at `save()` time. Use the TTF variants above for guaranteed compatibility.
+> **OTF note**: harumi accepts `.otf` files and routes them through `FontFile3 /OpenType` embedding, but **does not subset CFF fonts** — all glyphs in the font are embedded. Use the TTF variants above to minimize PDF size via subsetting.
 
 ---
 
@@ -820,21 +820,33 @@ NotoSansCJKkr-Regular.ttf  (Korean)
 ```
 harumi
 ├── lopdf v0.40          — parse and modify existing PDF object graph
-├── allsorts v0.17+      — TrueType font subsetting (used in Prince typesetter)
-└── ttf-parser           — font metadata (bbox, units_per_em, ascender)
+├── ttf-parser           — font metadata (bbox, units_per_em, ascender)
+└── [internal TTF subsetter] — pure-Rust TrueType subsetting (no external crates)
 ```
 
 The font pipeline:
 
 1. Parse used characters → collect Unicode code points
 2. Map code points → original Glyph IDs via the font's `cmap` table (ttf-parser)
-3. Subset the TTF to used glyphs only (allsorts); GIDs are **compacted to 0..N**
+3. Subset the TTF to used glyphs only (internal pure-Rust subsetter); GIDs are **compacted to 0..N**
 4. Remap `gid_to_char` and advance widths from original GIDs to the new compact GIDs
 5. Build the CID font object graph: `Type0 → CIDFontType2 → FontDescriptor → FontFile2`
 6. Generate a `/ToUnicode` CMap stream so viewers can copy/search the text
 7. Append a new content stream to the page's `/Contents` array
 
 Subsetting is **deferred**: `embed_font()` stores the raw TTF bytes; at `save()` time, harumi collects all characters used across every page, subsets once per font, and writes everything in one pass.
+
+### Dependency minimization
+
+harumi aims for **zero external runtime dependencies** beyond core PDF handling.
+
+- **TrueType subsetting** — custom pure-Rust implementation (v1.1+); supports TTF + TTC (collections) with recursive composite-glyph resolution
+- **Font parsing** — ttf-parser (single-purpose, no transitive deps)
+- **Image decoding** — `png` crate (optional, feature-gated)
+- **Crypto** — getrandom (OS entropy only; required for AES-256 encryption keys)
+
+**Direct dependency count:** 3 (getrandom, lopdf, ttf-parser, plus optional `png`)  
+**Transitive deps (default build):** ~8 (lopdf's internal utilities only)
 
 ---
 

@@ -631,7 +631,7 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | 플래그 | 활성화되는 기능 | 추가 의존성 |
 |---|---|---|
-| *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
+| *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지 삽입；`extract_page_image` — 스캔 PDF에서 임베드 이미지 추출（`draw` 자동 활성화） | `png` crate（순수 Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
@@ -650,9 +650,9 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 
 | 폰트 형식 | 지원 상태 |
 |---|---|
-| TrueType (`.ttf`) | 지원, 검증 완료 |
-| OpenType CFF (`.otf`) | 수락하지만 allsorts 의존 (아래 참고) |
-| TTC 컬렉션 | 지원됨（index 0 사용） |
+| TrueType (`.ttf`) | ✅ 완벽한 지원 — 순수 Rust 서브셋팅 엔진 |
+| TTC 컬렉션 | ✅ 완벽한 지원 — `embed_font_at(bytes, face_index)`로 면 지정 가능 |
+| OpenType CFF (`.otf`) | ⚠️ 수락하지만（서브셋팅 미지원） — 그대로 임베드됨 |
 
 **TrueType** 버전을 권장합니다 (엔드투엔드 검증 완료):
 
@@ -663,7 +663,7 @@ NotoSansCJKsc-Regular.ttf  （중국어 간체）
 NotoSansCJKtc-Regular.ttf  （중국어 번체）
 ```
 
-> **OTF 참고**: harumi는 `.otf` 파일을 수락하고 `FontFile3 /OpenType`으로 임베드합니다. 단, allsorts v0.17이 일부 CFF 변형(CFF2 가변 폰트 등)을 서브셋팅하지 못할 수 있으며, 이 경우 `save()` 시 `FontParse` 오류가 발생합니다. TTF 변형을 사용하면 확실하게 동작합니다.
+> **OTF 참고**: harumi는 `.otf` 파일을 수락하고 `FontFile3 /OpenType`으로 임베드하지만, **CFF 폰트 서브셋팅을 지원하지 않습니다** — 폰트 내의 모든 글리프가 임베드되어 PDF 파일이 커집니다. 크기 최적화를 위해 위의 TrueType 버전을 사용하세요.
 
 ---
 
@@ -672,21 +672,33 @@ NotoSansCJKtc-Regular.ttf  （중국어 번체）
 ```
 harumi
 ├── lopdf v0.40          — 기존 PDF 객체 그래프 파싱 및 편집
-├── allsorts v0.17+      — TrueType 폰트 서브셋팅 (Prince 조판 소프트웨어에서 실제 검증됨)
-└── ttf-parser           — 폰트 메타데이터 읽기 (bbox, units_per_em, ascender)
+├── ttf-parser           — 폰트 메타데이터 읽기 (bbox, units_per_em, ascender)
+└── [내장 TTF 서브셋팅]   — 순수 Rust TrueType 서브셋팅 엔진（외부 의존성 없음）
 ```
 
 폰트 처리 파이프라인:
 
 1. 사용된 문자 수집 → Unicode 코드 포인트 집합 생성
 2. 폰트 `cmap` 테이블로 코드 포인트 → 원래 GID 매핑 (ttf-parser)
-3. allsorts로 사용된 글리프만 TTF 서브셋 생성 (GID **0..N으로 재번호 지정**)
+3. 내장 엔진으로 사용된 글리프만 TTF 서브셋 생성 (GID **0..N으로 재번호 지정**)
 4. `gid_to_char`와 어드밴스 폭을 원래 GID → 새 GID로 **재매핑** (글자 깨짐 방지)
 5. PDF CID 폰트 객체 그래프 구성: `Type0 → CIDFontType2 → FontDescriptor → FontFile2`
 6. `/ToUnicode` CMap 스트림 생성 (뷰어에서 텍스트 복사/검색 가능)
 7. 페이지 `/Contents` 배열에 새 콘텐츠 스트림 추가
 
 서브셋팅은 **지연 실행**: `embed_font()`는 원시 TTF 바이트를 저장하고, `save()` 시에 모든 페이지의 사용 문자를 수집하여 폰트별로 한 번만 처리합니다.
+
+### 의존성 최소화
+
+harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을 목표로 합니다.
+
+- **TrueType 서브셋팅** — 내장 순수 Rust 구현（v1.1+）; TTF + TTC（컬렉션） 지원, 재귀적 복합 글리프 분석
+- **폰트 파싱** — ttf-parser（전문 용도, 추이적 의존 없음）
+- **이미지 디코딩** — `png` crate（선택사항, feature 게이트됨）
+- **암호화** — getrandom（OS 엔트로피만; AES-256 암호화 키 생성 필요）
+
+**직접 의존수**: 3개（getrandom, lopdf, ttf-parser, 옵션 `png`）  
+**추이적 의존（기본 빌드）**: 약 8개（lopdf 내부 유틸리티만）
 
 ---
 
