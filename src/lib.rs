@@ -1,7 +1,20 @@
 //! # harumi
 //!
 //! A pure-Rust library for overlaying text onto existing PDFs, with full
-//! support for CJK (Japanese / Chinese / Korean) fonts.
+//! support for CJK (Chinese / Japanese / Korean) fonts.
+//!
+//! ## Use cases
+//!
+//! | Scenario | Key API |
+//! |---|---|
+//! | OCR invisible text layer | `add_invisible_text` · `add_invisible_text_runs` |
+//! | AI / RAG text extraction | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
+//! | PDF watermark / stamp | `add_text` · `add_text_with_rotation` |
+//! | Scanned PDF → searchable | `add_invisible_text` + hOCR helpers (`ocr` feature) |
+//! | HTML → PDF | `render_html_to_pdf` (`html` feature) |
+//! | PDF text replacement | `replace_text` · `replace_text_resubset` |
+//! | Page merge / split | `merge_from` · `extract_pages` |
+//! | WASM / Edge / Lambda | All APIs — zero C/C++ dependencies |
 //!
 //! ## Motivation
 //!
@@ -46,12 +59,16 @@
 //!
 //! ## Feature flags
 //!
-//! | Flag    | What it enables |
-//! |---------|-----------------|
-//! | `ocr`   | [`ocr`] module: helpers for converting Tesseract/hOCR pixel coordinates to PDF points |
-//! | `draw`  | [`PageHandle::add_rect`], [`PageHandle::add_line`] — filled rectangles and stroked lines (no extra dependencies) |
-//! | `image` | [`PageHandle::add_image`], [`PageHandle::add_image_with_opacity`], [`Document::extract_page_image`] — JPEG/PNG raster image overlay + extraction (enables `draw`, adds `image` crate) |
+//! | Flag                | Enables | Extra deps |
+//! |---------------------|---------|------------|
+//! | `ocr`               | hOCR pixel→PDF coordinate helpers | none |
+//! | `draw`              | Shapes: rect, line, ellipse, polygon, path | none |
+//! | `image`             | JPEG/PNG embed + extraction; enables `draw` | `image` crate |
+//! | `flow`              | `FlowDocument` auto-pagination builder + headers/footers | none |
+//! | `html`              | HTML→PDF renderer; enables `flow` | `scraper` |
+//! | `digital-signature` | PDF digital signature metadata extraction | `cms`, `rsa`, `x509-cert` |
 
+mod chunk;
 mod content;
 mod document;
 mod error;
@@ -75,9 +92,10 @@ pub mod flow;
 #[cfg(feature = "digital-signature")]
 pub mod signature;
 
+pub use chunk::{ChunkType, TextChunk};
 pub use document::{Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun, VerticalAlign};
 pub use error::{Error, Result};
-pub use extract::TextFragment;
+pub use extract::{sort_by_reading_order, TextFragment};
 pub use font::FontHandle;
 
 #[cfg(feature = "image")]
