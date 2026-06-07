@@ -8,7 +8,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://kent-tokyo.github.io/harumi/)
 
-[English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
+[English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md)
 
 **[브라우저에서 데모 체험하기 →](https://kent-tokyo.github.io/harumi/)** — 텍스트·사각형·직선·자유 펜 어노테이션 편집기 (WASM으로 브라우저 완결)
 
