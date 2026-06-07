@@ -13,7 +13,7 @@ homepage = "https://kent-tokyo.github.io/harumi/"
 name = "harumi-mcp"
 
 [dependencies]
-harumi = { path = "..", features = ["html"] }
+harumi = { version = "1", features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
