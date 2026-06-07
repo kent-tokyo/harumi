@@ -21,7 +21,7 @@ pub(crate) enum ImageData {
 /// Prepare an image for PDF embedding.
 ///
 /// JPEG files are embedded without decoding (DCTDecode filter).
-/// Other formats are decoded via the `image` crate:
+/// PNG files are decoded via the `png` crate:
 /// - Fully opaque PNG → `ImageData::Rgb` (no SMask needed)
 /// - PNG with any transparent pixel → `ImageData::RgbWithAlpha` (PDF SMask)
 pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
@@ -30,13 +30,11 @@ pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
         return Ok(PreparedImage { width: w, height: h, data: ImageData::Jpeg(bytes.to_vec()) });
     }
 
-    // Check dimensions before decoding to prevent OOM on crafted inputs.
-    // `into_dimensions()` reads only the image header — no pixel allocation.
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|e| Error::ImageDecode(e.to_string()))?
-        .into_dimensions()
+    // PNG: parse header to get dimensions without full decode.
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let reader = decoder.read_info()
         .map_err(|e| Error::ImageDecode(e.to_string()))?;
+    let (w, h) = (reader.info().width, reader.info().height);
     let pixel_count = w as u64 * h as u64;
     if pixel_count > 200_000_000 {
         return Err(Error::InvalidInput(format!(
@@ -44,26 +42,88 @@ pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
         )));
     }
 
-    let img = image::load_from_memory(bytes)
+    // Full PNG decode: read all pixels.
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info()
         .map_err(|e| Error::ImageDecode(e.to_string()))?;
-    let rgba = img.to_rgba8();
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let _ = reader.next_frame(&mut buf)
+        .map_err(|e| Error::ImageDecode(e.to_string()))?;
 
-    let has_alpha = rgba.pixels().any(|p| p[3] < 255);
-    if has_alpha {
-        let mut rgb   = Vec::with_capacity((pixel_count * 3) as usize);
-        let mut alpha = Vec::with_capacity(pixel_count as usize);
-        for p in rgba.pixels() {
-            rgb.extend_from_slice(&[p[0], p[1], p[2]]);
-            alpha.push(p[3]);
+    // Parse color type and extract RGB/RGBA data.
+    let info = reader.info();
+    let has_alpha = matches!(info.color_type, png::ColorType::Rgba | png::ColorType::GrayscaleAlpha);
+
+    let pixel_bytes = match info.color_type {
+        png::ColorType::Rgb => {
+            // Already RGB, no alpha check needed.
+            buf.truncate(w as usize * h as usize * 3);
+            buf
         }
-        Ok(PreparedImage { width: w, height: h, data: ImageData::RgbWithAlpha { rgb, alpha } })
-    } else {
-        let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
-        for p in rgba.pixels() {
-            rgb.extend_from_slice(&[p[0], p[1], p[2]]);
+        png::ColorType::Rgba => {
+            // Has alpha; check for transparency.
+            let rgba = buf;
+            let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
+            let mut alpha = Vec::with_capacity(pixel_count as usize);
+            let mut any_alpha_less_than_255 = false;
+            for chunk in rgba.chunks_exact(4) {
+                rgb.extend_from_slice(&chunk[..3]);
+                alpha.push(chunk[3]);
+                if chunk[3] < 255 {
+                    any_alpha_less_than_255 = true;
+                }
+            }
+            if any_alpha_less_than_255 {
+                return Ok(PreparedImage {
+                    width: w,
+                    height: h,
+                    data: ImageData::RgbWithAlpha { rgb, alpha },
+                });
+            }
+            rgb
         }
-        Ok(PreparedImage { width: w, height: h, data: ImageData::Rgb { bytes: rgb } })
-    }
+        png::ColorType::Grayscale => {
+            // Grayscale: convert to RGB by duplicating.
+            let gray = buf;
+            let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
+            for &g in &gray {
+                rgb.extend_from_slice(&[g, g, g]);
+            }
+            rgb
+        }
+        png::ColorType::GrayscaleAlpha => {
+            // Grayscale + alpha.
+            let ga = buf;
+            let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
+            let mut alpha = Vec::with_capacity(pixel_count as usize);
+            let mut any_alpha_less_than_255 = false;
+            for chunk in ga.chunks_exact(2) {
+                let g = chunk[0];
+                rgb.extend_from_slice(&[g, g, g]);
+                alpha.push(chunk[1]);
+                if chunk[1] < 255 {
+                    any_alpha_less_than_255 = true;
+                }
+            }
+            if any_alpha_less_than_255 {
+                return Ok(PreparedImage {
+                    width: w,
+                    height: h,
+                    data: ImageData::RgbWithAlpha { rgb, alpha },
+                });
+            }
+            rgb
+        }
+        png::ColorType::Indexed => {
+            return Err(Error::ImageDecode("indexed color PNG not supported".into()));
+        }
+    };
+
+    Ok(PreparedImage {
+        width: w,
+        height: h,
+        data: ImageData::Rgb { bytes: pixel_bytes },
+    })
 }
 
 /// Add an Image XObject to the lopdf document and return its object ID.

@@ -17,13 +17,13 @@ categories = ["encoding", "text-processing", "parser-implementations", "multimed
 lopdf = "0.40"
 subsetter = "0.2"
 ttf-parser = "0.25"
-image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
+png = { version = "0.17", optional = true }
 scraper = { version = "0.19", optional = true }
 
 [features]
 default = []
 draw = []
-image = ["dep:image", "draw"]
+image = ["dep:png", "draw"]
 ocr = []
 flow = ["draw"]
 html = ["flow", "dep:scraper"]

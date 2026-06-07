@@ -26,6 +26,10 @@ pub enum Error {
     #[cfg(feature = "image")]
     ImageDecode(String),
 
+    #[cfg(not(feature = "image"))]
+    #[doc(hidden)]
+    _ImageDecode,
+
     /// A caller-supplied parameter is invalid (e.g. NaN coordinate, zero-size box).
     InvalidInput(String),
 
@@ -51,6 +55,8 @@ impl fmt::Display for Error {
             Error::InvalidFont(handle) => write!(f, "font handle {} is invalid", handle),
             #[cfg(feature = "image")]
             Error::ImageDecode(msg) => write!(f, "image decode error: {}", msg),
+            #[cfg(not(feature = "image"))]
+            Error::_ImageDecode => unreachable!(),
             Error::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
             Error::FontCharNotMapped { ch, font_name } => {
                 write!(
