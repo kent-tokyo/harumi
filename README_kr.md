@@ -631,12 +631,12 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | 플래그 | 활성화되는 기능 | 추가 의존성 |
 |---|---|---|
-| *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| *(기본)* | 텍스트 오버레이, 폰트 임베드, `add_text_box`, `add_text_box_aligned`, `add_text_with_opacity`, `add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 도형 그리기 | 없음 |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지 삽입；`extract_page_image` — 스캔 PDF에서 임베드 이미지 추출（`draw` 자동 활성화） | `image` crate |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 이미지 삽입；`extract_page_image` — 스캔 PDF에서 임베드 이미지 추출（`draw` 자동 활성화） | `png` crate（순수 Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` — Tesseract 좌표 변환 헬퍼 | 없음 |
 | `flow` | `FlowDocument` 푸시형 빌더, 자동 페이지 나누기（`push_heading`, `push_paragraph`, `push_key_value_table`, `push_list`, `push_page_break`, `render`）; `{{page}}`/`{{total}}` 치환 기능이 있는 `HeaderFooter`; 제목에서 자동 북마크 생성 `auto_bookmarks` | 없음 |
-| `html` | `render_html_to_pdf` — HTML→PDF 변환（h1–h6, p, table, ul/ol, 페이지 나누기; `flow` 자동 활성화） | `scraper` |
+| `html` | `render_html_to_pdf` — HTML→PDF 변환（h1–h6, p, table, ul/ol, 페이지 나누기; `flow` 자동 활성화）; 내장 순수 Rust HTML 토크나이저 | 없음 |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);

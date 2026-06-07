@@ -748,12 +748,12 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | フラグ | 有効になる機能 | 追加依存 |
 |---|---|---|
-| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, allsorts, ttf-parser |
+| *(デフォルト)* | テキスト重ね合わせ・フォント埋め込み・`add_text_box`・`add_text_box_aligned`・`add_text_with_opacity`・`add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 図形描画 | なし |
-| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 画像埋め込み；`extract_page_image` — スキャン PDF から画像を取り出す（`draw` を有効化） | `image` クレート |
+| `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 画像埋め込み；`extract_page_image` — スキャン PDF から画像を取り出す（`draw` を有効化） | `png` クレート（純Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`・`ocr::hocr_x_to_pdf`・`ocr::pixel_size_to_pt` — Tesseract 座標変換ヘルパー | なし |
 | `flow` | `FlowDocument` push 型ビルダー・自動改ページ（`push_heading`・`push_paragraph`・`push_key_value_table`・`push_list`・`push_page_break`・`render`）；`HeaderFooter` によるページごとのヘッダ/フッタ（`{{page}}`/`{{total}}` 展開）；見出しから自動ブックマーク生成（`auto_bookmarks`） | なし |
-| `html` | `render_html_to_pdf` — HTML→PDF変換（h1–h6・p・table・ul/ol・改ページ。`flow` を有効化） | `scraper` |
+| `html` | `render_html_to_pdf` — HTML→PDF変換（h1–h6・p・table・ul/ol・改ページ。`flow` を有効化）；内部に純Rust HTMLトークナイザを実装 | なし |
 
 ```rust
 let pdf_y = harumi::ocr::hocr_y_to_pdf(pixel_y, page_height_pts, image_dpi);
