@@ -1,10 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use allsorts::{
-    font_data::FontData,
-    subset::{subset, CmapTarget, SubsetProfile},
-    binary::read::ReadScope,
-};
+use subsetter::GlyphRemapper;
 use ttf_parser::Face;
 
 use crate::error::{Error, Result};
@@ -20,9 +16,9 @@ pub struct SubsetResult {
     pub font_kind: FontKind,
 }
 
-/// Returns true if the OTF/CFF file contains a `CFF2` table (variable font).
-/// allsorts v0.17 cannot subset CFF2; callers should use the TTF variant.
-fn has_cff2_table(data: &[u8]) -> bool {
+/// Returns true if the font is CFF (OpenType with CFF outlines).
+/// subsetter does not support CFF fonts; only TrueType (glyf) is supported.
+fn is_cff_font(data: &[u8]) -> bool {
     if data.len() < 12 {
         return false;
     }
@@ -32,7 +28,7 @@ fn has_cff2_table(data: &[u8]) -> bool {
         if base + 4 > data.len() {
             break;
         }
-        if &data[base..base + 4] == b"CFF2" {
+        if &data[base..base + 4] == b"CFF " || &data[base..base + 4] == b"CFF2" {
             return true;
         }
     }
@@ -45,10 +41,11 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         None => return Err(Error::FontParse("unrecognised font magic bytes".into())),
     };
 
-    if matches!(font_kind, FontKind::Cff) && has_cff2_table(ttf_bytes) {
+    // subsetter only supports TrueType (glyf), not CFF.
+    if is_cff_font(ttf_bytes) {
         return Err(Error::FontParse(
-            "CFF2 variable font is not supported by allsorts v0.17; \
-             use the TTF variant (e.g. NotoSansCJKjp-Regular.ttf) instead"
+            "CFF fonts are not supported by subsetter; \
+             use the TrueType variant (e.g. NotoSansCJKjp-Regular.ttf) instead"
                 .into(),
         ));
     }
@@ -86,24 +83,17 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         orig_gid_to_advance.insert(gid, advance);
     }
 
-    // Use allsorts for the actual font subsetting.
-    let scope = ReadScope::new(ttf_bytes);
-    let font_file = scope
-        .read::<FontData<'_>>()
-        .map_err(|e| Error::FontParse(e.to_string()))?;
-    let provider = font_file
-        .table_provider(0)
-        .map_err(|e| Error::FontParse(e.to_string()))?;
+    // Use subsetter for the actual font subsetting.
+    // Build a GlyphRemapper that includes all glyphs we need.
+    let mut remapper = GlyphRemapper::new();
+    for &gid in &gids {
+        remapper.remap(gid);
+    }
 
-    let subsetted = subset(
-        &provider,
-        &gids,
-        &SubsetProfile::Pdf,
-        CmapTarget::Unicode,
-    )
-    .map_err(|e| Error::FontParse(e.to_string()))?;
+    let subsetted = subsetter::subset(ttf_bytes, 0, &remapper)
+        .map_err(|e| Error::FontParse(format!("subsetter error: {}", e)))?;
 
-    // allsorts reassigns GIDs to 0..N in the order of the input `gids` slice.
+    // subsetter reassigns GIDs via the remapper.
     // Guard: new GIDs are u16 indices, so the subset cannot exceed 65535 glyphs.
     if gids.len() > u16::MAX as usize {
         return Err(Error::FontParse(format!(
@@ -111,19 +101,19 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
             gids.len(), u16::MAX
         )));
     }
-    let orig_to_new: BTreeMap<u16, u16> = gids.iter()
-        .enumerate()
-        .map(|(new_gid, &orig_gid)| (orig_gid, new_gid as u16))
-        .collect();
 
     let gid_to_char: BTreeMap<u16, char> = orig_gid_to_char
         .into_iter()
-        .filter_map(|(orig, ch)| orig_to_new.get(&orig).map(|&new| (new, ch)))
+        .filter_map(|(orig, ch)| {
+            remapper.get(orig).map(|new| (new as u16, ch))
+        })
         .collect();
 
     let gid_to_advance: BTreeMap<u16, u16> = orig_gid_to_advance
         .into_iter()
-        .filter_map(|(orig, adv)| orig_to_new.get(&orig).map(|&new| (new, adv)))
+        .filter_map(|(orig, adv)| {
+            remapper.get(orig).map(|new| (new as u16, adv))
+        })
         .collect();
 
     Ok(SubsetResult {

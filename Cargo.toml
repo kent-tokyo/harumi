@@ -15,7 +15,7 @@ categories = ["encoding", "text-processing", "parser-implementations", "multimed
 
 [dependencies]
 lopdf = "0.40"
-allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
+subsetter = "0.2"
 ttf-parser = "0.25"
 thiserror = "2"
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
