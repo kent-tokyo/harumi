@@ -17,11 +17,9 @@
 //! | `<strong>`, `<em>`, … | Text content extracted; styling ignored in v1 |
 //! | `<head>`, `<script>`, `<style>`, … | Skipped entirely |
 
-use scraper::{ElementRef, Html};
-
 use crate::{Error, Result};
 
-use super::{FlowDocument, FlowOptions, InlineSpan, Margins};
+use super::{html_tokenizer::{parse_html, HtmlNode}, FlowDocument, FlowOptions, InlineSpan, Margins};
 
 /// Options for [`render_html_to_pdf`].
 pub struct HtmlRenderOptions {
@@ -83,9 +81,11 @@ pub fn render_html_to_pdf(html: &str, options: HtmlRenderOptions) -> Result<Vec<
 
     let mut flow = FlowDocument::new(options.font_bytes, flow_opts)?;
 
-    let document = Html::parse_document(html);
+    let document = parse_html(html);
     // Walk the tree iteratively to avoid stack overflows from deeply nested HTML.
-    walk_iterative(document.root_element(), &mut flow)?;
+    for child in document.children() {
+        walk_iterative(child, &mut flow)?;
+    }
 
     flow.render()
 }
@@ -96,8 +96,8 @@ pub fn render_html_to_pdf(html: &str, options: HtmlRenderOptions) -> Result<Vec<
 ///
 /// Using an explicit stack instead of recursion prevents stack overflows when
 /// processing deeply nested HTML (e.g. `<div><div><div>…</div></div></div>`).
-fn walk_iterative<'a>(root: ElementRef<'a>, flow: &mut FlowDocument) -> Result<()> {
-    let mut stack: Vec<ElementRef<'a>> = vec![root];
+fn walk_iterative<'a>(root: &'a HtmlNode, flow: &mut FlowDocument) -> Result<()> {
+    let mut stack: Vec<&'a HtmlNode> = vec![root];
 
     while let Some(elem) = stack.pop() {
         process_one(elem, flow, &mut stack)?;
@@ -109,11 +109,14 @@ fn walk_iterative<'a>(root: ElementRef<'a>, flow: &mut FlowDocument) -> Result<(
 /// Process a single element. If this element is a block container, its children
 /// are pushed onto `stack` in reverse order (so the first child is processed first).
 fn process_one<'a>(
-    elem: ElementRef<'a>,
+    elem: &'a HtmlNode,
     flow: &mut FlowDocument,
-    stack: &mut Vec<ElementRef<'a>>,
+    stack: &mut Vec<&'a HtmlNode>,
 ) -> Result<()> {
-    let tag = elem.value().name();
+    let tag = match elem.tag_name() {
+        Some(t) => t,
+        None => return Ok(()), // Skip text nodes
+    };
 
     match tag {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -153,10 +156,7 @@ fn process_one<'a>(
         // Block containers and everything else: push children so they are processed.
         _ => {
             // Push in reverse order so the first child is at the top of the stack.
-            let children: Vec<ElementRef<'_>> = elem
-                .children()
-                .filter_map(ElementRef::wrap)
-                .collect();
+            let children: Vec<&HtmlNode> = elem.children().collect();
             for child in children.into_iter().rev() {
                 stack.push(child);
             }
@@ -173,8 +173,8 @@ fn process_one<'a>(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn collect_text(elem: ElementRef<'_>) -> String {
-    elem.text().collect()
+fn collect_text(elem: &HtmlNode) -> String {
+    elem.text_content()
 }
 
 /// Collect inline styled spans from an element's children, preserving bold/italic/color.
@@ -182,7 +182,7 @@ fn collect_text(elem: ElementRef<'_>) -> String {
 /// Handles: `<strong>`, `<b>` (bold), `<em>`, `<i>` (italic),
 /// `<span style="color:...">` (color), `<a href="...">` (blue link color).
 /// Other inline elements fall through as plain text.
-fn collect_inline_spans(elem: ElementRef<'_>) -> Vec<InlineSpan> {
+fn collect_inline_spans(elem: &HtmlNode) -> Vec<InlineSpan> {
     let mut spans: Vec<InlineSpan> = Vec::new();
     collect_inline_spans_inner(elem, false, false, [0.0; 3], &mut spans);
     // Trim leading/trailing whitespace from the overall collection.
@@ -199,53 +199,57 @@ fn collect_inline_spans(elem: ElementRef<'_>) -> Vec<InlineSpan> {
 }
 
 fn collect_inline_spans_inner(
-    elem: ElementRef<'_>,
+    elem: &HtmlNode,
     parent_bold: bool,
     parent_italic: bool,
     parent_color: [f32; 3],
     out: &mut Vec<InlineSpan>,
 ) {
-    use scraper::node::Node;
+    let tag = match elem.tag_name() {
+        Some(t) => t,
+        None => {
+            // Text node
+            if let Some(text) = elem.as_text() {
+                if !text.is_empty() {
+                    out.push(InlineSpan {
+                        text: text.to_string(),
+                        bold: parent_bold,
+                        italic: parent_italic,
+                        color: parent_color.into(),
+                    });
+                }
+            }
+            return;
+        }
+    };
 
-    let tag = elem.value().name();
     let bold = parent_bold || matches!(tag, "strong" | "b");
     let italic = parent_italic || matches!(tag, "em" | "i");
     let color = inherited_color(elem, tag, parent_color);
 
     for child in elem.children() {
-        match child.value() {
-            Node::Text(text) => {
-                let t = text.to_string();
-                if !t.is_empty() {
-                    out.push(InlineSpan { text: t, bold, italic, color: color.into() });
-                }
+        let child_tag = child.tag_name();
+        // Skip non-content elements.
+        if let Some(ct) = child_tag {
+            if matches!(ct, "script" | "style" | "head") {
+                continue;
             }
-            Node::Element(_) => {
-                if let Some(child_ref) = ElementRef::wrap(child) {
-                    let child_tag = child_ref.value().name();
-                    // Skip non-content elements.
-                    if matches!(child_tag, "script" | "style" | "head") {
-                        continue;
-                    }
-                    collect_inline_spans_inner(child_ref, bold, italic, color, out);
-                }
-            }
-            _ => {}
         }
+        collect_inline_spans_inner(child, bold, italic, color, out);
     }
 }
 
 /// Resolve the effective color for an element, inheriting from parent if not overridden.
-fn inherited_color(elem: ElementRef<'_>, tag: &str, parent_color: [f32; 3]) -> [f32; 3] {
+fn inherited_color(elem: &HtmlNode, tag: &str, parent_color: [f32; 3]) -> [f32; 3] {
     // <a> defaults to a blue link color.
     if tag == "a" {
         return [0.0, 0.0, 0.8];
     }
     // Look for inline style="color: ...".
-    if let Some(style) = elem.value().attr("style")
-        && let Some(c) = parse_css_color(style)
-    {
-        return c;
+    if let Some(style) = elem.attr("style") {
+        if let Some(c) = parse_css_color(&style) {
+            return c;
+        }
     }
     parent_color
 }
@@ -289,9 +293,9 @@ fn parse_css_color(style: &str) -> Option<[f32; 3]> {
     None
 }
 
-fn has_page_break(elem: ElementRef<'_>) -> bool {
-    let style = elem.value().attr("style").unwrap_or("");
-    let class = elem.value().attr("class").unwrap_or("");
+fn has_page_break(elem: &HtmlNode) -> bool {
+    let style = elem.attr("style").unwrap_or_default();
+    let class = elem.attr("class").unwrap_or_default();
     style.contains("page-break-after: always")
         || style.contains("page-break-after:always")
         || class.split_whitespace().any(|c| c == "page-break")
@@ -299,15 +303,15 @@ fn has_page_break(elem: ElementRef<'_>) -> bool {
 
 /// Collects `<tr>` elements that are direct or `<tbody>`/`<thead>`/`<tfoot>`-wrapped
 /// children of `table` — without descending into nested `<table>` elements.
-fn table_rows(table: ElementRef<'_>) -> Vec<ElementRef<'_>> {
+fn table_rows(table: &HtmlNode) -> Vec<&HtmlNode> {
     let mut rows = Vec::new();
-    for child in table.children().filter_map(ElementRef::wrap) {
-        match child.value().name() {
-            "tr" => rows.push(child),
-            "tbody" | "thead" | "tfoot" => {
+    for child in table.children() {
+        match child.tag_name() {
+            Some("tr") => rows.push(child),
+            Some("tbody") | Some("thead") | Some("tfoot") => {
                 // One level of tbody/thead/tfoot wrapping — stop here.
-                for tr in child.children().filter_map(ElementRef::wrap) {
-                    if tr.value().name() == "tr" {
+                for tr in child.children() {
+                    if tr.tag_name() == Some("tr") {
                         rows.push(tr);
                     }
                 }
@@ -319,15 +323,14 @@ fn table_rows(table: ElementRef<'_>) -> Vec<ElementRef<'_>> {
     rows
 }
 
-fn process_table(table: ElementRef<'_>, flow: &mut FlowDocument) -> Result<()> {
+fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
     let mut rows: Vec<(String, String)> = Vec::new();
 
     for tr in table_rows(table) {
         // Collect only direct <th>/<td> children of this <tr>.
         let cells: Vec<String> = tr
             .children()
-            .filter_map(ElementRef::wrap)
-            .filter(|e| matches!(e.value().name(), "th" | "td"))
+            .filter(|e| matches!(e.tag_name(), Some("th") | Some("td")))
             .map(|e| collect_text(e).trim().to_owned())
             .collect();
 
@@ -347,12 +350,11 @@ fn process_table(table: ElementRef<'_>, flow: &mut FlowDocument) -> Result<()> {
     flow.push_key_value_table(&rows_ref)
 }
 
-fn process_list(list: ElementRef<'_>, flow: &mut FlowDocument, ordered: bool) -> Result<()> {
+fn process_list(list: &HtmlNode, flow: &mut FlowDocument, ordered: bool) -> Result<()> {
     // Only collect direct <li> children to avoid duplicating text from nested lists.
     let items: Vec<String> = list
         .children()
-        .filter_map(ElementRef::wrap)
-        .filter(|e| e.value().name() == "li")
+        .filter(|e| e.tag_name() == Some("li"))
         .map(|li| collect_text(li).trim().to_owned())
         .filter(|s| !s.is_empty())
         .collect();

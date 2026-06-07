@@ -21,6 +21,9 @@
 //! ```
 
 #[cfg(feature = "html")]
+mod html_tokenizer;
+
+#[cfg(feature = "html")]
 pub mod html;
 
 use ttf_parser::Face;
