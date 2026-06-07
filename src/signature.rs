@@ -1,8 +1,7 @@
 //! Digital signature verification for PDFs.
 //!
-//! This module provides signature verification for PKCS#7-signed PDFs when the
-//! `digital-signature` feature is enabled.
-//! Signatures are verified against their byte ranges and certificate chains.
+//! This module provides signature verification for PKCS#7-signed PDFs.
+//! Currently, signatures are extracted but not cryptographically verified (stub implementation).
 
 use lopdf::{Dictionary, Object};
 
@@ -10,7 +9,7 @@ use crate::{Document, Result};
 
 /// Information about a PDF signature field.
 ///
-/// Returned by [`Document::verify_signatures`] when the `digital-signature` feature is enabled.
+/// Returned by [`Document::verify_signatures`].
 #[derive(Clone, Debug)]
 pub struct SignatureInfo {
     /// The signature field name (from `/T` in the signature dictionary).
@@ -60,7 +59,6 @@ impl Document {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "digital-signature")]
     pub fn verify_signatures(&self, pdf_bytes: &[u8]) -> Result<Vec<SignatureInfo>> {
         let mut signatures = Vec::new();
 
@@ -107,17 +105,7 @@ impl Document {
         Ok(signatures)
     }
 
-    /// Verifies all signatures in the PDF document.
-    ///
-    /// This method is a stub when the `digital-signature` feature is not enabled.
-    /// It always returns an empty vector.
-    #[cfg(not(feature = "digital-signature"))]
-    pub fn verify_signatures(&self, _pdf_bytes: &[u8]) -> Result<Vec<SignatureInfo>> {
-        Ok(Vec::new())
-    }
-
     /// Extracts signature information from a signature field dictionary.
-    #[cfg(feature = "digital-signature")]
     fn extract_signature_info(&self, field: &Dictionary, _pdf_bytes: &[u8]) -> Option<SignatureInfo> {
         // Get field name
         let field_name = match field.get(b"T") {
