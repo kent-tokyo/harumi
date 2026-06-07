@@ -8,6 +8,9 @@ description = "MCP server for harumi PDF library — OCR text overlay, text extr
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kent-tokyo/harumi"
 homepage = "https://kent-tokyo.github.io/harumi/"
+readme = "README.md"
+keywords = ["pdf", "mcp", "ocr", "html-to-pdf", "cjk"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "harumi-mcp"
