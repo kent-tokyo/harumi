@@ -155,16 +155,20 @@ fn extract_xobject_image(doc: &lopdf::Document, id: ObjectId) -> Result<PageImag
 
             let mut cursor = std::io::Cursor::new(Vec::new());
             if channels == 1 {
-                let gray = image::GrayImage::from_raw(width, height, raw_pixels)
-                    .ok_or_else(|| Error::InvalidInput("pixel buffer too small for image".into()))?;
-                image::DynamicImage::ImageLuma8(gray)
-                    .write_to(&mut cursor, image::ImageFormat::Png)
+                let mut encoder = png::Encoder::new(&mut cursor, width, height);
+                encoder.set_color(png::ColorType::Grayscale);
+                encoder.set_depth(png::BitDepth::Eight);
+                let mut writer = encoder.write_header()
+                    .map_err(|e| Error::ImageDecode(e.to_string()))?;
+                writer.write_image_data(&raw_pixels)
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
             } else {
-                let rgb = image::RgbImage::from_raw(width, height, raw_pixels)
-                    .ok_or_else(|| Error::InvalidInput("pixel buffer too small for image".into()))?;
-                image::DynamicImage::ImageRgb8(rgb)
-                    .write_to(&mut cursor, image::ImageFormat::Png)
+                let mut encoder = png::Encoder::new(&mut cursor, width, height);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                let mut writer = encoder.write_header()
+                    .map_err(|e| Error::ImageDecode(e.to_string()))?;
+                writer.write_image_data(&raw_pixels)
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
             }
 
