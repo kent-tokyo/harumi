@@ -12,6 +12,20 @@ Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-r
 
 **[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)** — annotation editor (text · rect · line · freehand pen) running entirely in your browser via WASM
 
+### 🔌 Available as MCP Server
+
+Use harumi directly from Claude Code, Cursor, or Continue via the **[harumi-mcp](harumi-mcp/)** Model Context Protocol server:
+
+```bash
+# Build the MCP server
+cargo build -p harumi-mcp
+
+# Use in Claude Code, Cursor, or Continue (configure in your IDE settings)
+# MCP tools available: pdf_extract_text, pdf_add_invisible_text, pdf_html_to_pdf, pdf_merge, pdf_page_info
+```
+
+Register on [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) for one-click installation.
+
 ---
 
 ## What harumi solves

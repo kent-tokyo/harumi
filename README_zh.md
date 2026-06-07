@@ -12,6 +12,24 @@
 
 **[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)** — 注释编辑器（文字・矩形・直线・自由笔）完全通过 WASM 在浏览器中运行
 
+### 🔌 作为 MCP 服务器可用
+
+从 Claude Code、Cursor 或 Continue IDE 直接使用 harumi 的 PDF 工具：
+
+```bash
+# 构建 MCP 服务器（纯 Rust，无运行时依赖）
+cargo build -p harumi-mcp
+
+# IDE 配置中可用的工具：
+# - pdf_extract_text: 带位置的文本提取
+# - pdf_add_invisible_text: OCR 可搜索层
+# - pdf_html_to_pdf: HTML→PDF 转换
+# - pdf_merge: PDF 合并
+# - pdf_page_info: 获取页面信息
+```
+
+在 [smithery.ai](https://smithery.ai) 或 [mcp.so](https://mcp.so) 上注册中。
+
 ---
 
 ## harumi 解决了什么

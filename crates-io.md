@@ -108,6 +108,26 @@ harumi = { version = "1", features = ["image", "html"] }
 
 ---
 
+## Use via MCP Server
+
+Use harumi's PDF tools directly from Claude Code, Cursor, or Continue IDE:
+
+```bash
+# Build the MCP server (pure Rust, no runtime dependency)
+cargo build -p harumi-mcp
+
+# Configure in your IDE and use tools:
+# - pdf_extract_text: Extract text with positions
+# - pdf_add_invisible_text: Add searchable OCR layer
+# - pdf_html_to_pdf: HTML to PDF conversion
+# - pdf_merge: Merge PDFs
+# - pdf_page_info: Get page count & dimensions
+```
+
+**Register on:** [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) (coming soon)
+
+---
+
 ## Why choose harumi?
 
 ✅ **Pure Rust** — zero C/C++ dependencies; works in WASM, Lambda, cross-compile  
