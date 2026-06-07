@@ -1,7 +1,8 @@
 //! # harumi
 //!
-//! A pure-Rust library for overlaying text onto existing PDFs, with full
-//! support for CJK (Chinese / Japanese / Korean) fonts.
+//! Pure-Rust PDF library — CJK font embedding (Chinese/Japanese/Korean),
+//! OCR text overlay, text extraction, HTML→PDF, page merge/split.
+//! Zero C/C++ dependencies. WASM-compatible.
 //!
 //! ## Use cases
 //!
@@ -63,9 +64,9 @@
 //! |---------------------|---------|------------|
 //! | `ocr`               | hOCR pixel→PDF coordinate helpers | none |
 //! | `draw`              | Shapes: rect, line, ellipse, polygon, path | none |
-//! | `image`             | JPEG/PNG embed + extraction; enables `draw` | `image` crate |
+//! | `image`             | JPEG/PNG embed + extraction; enables `draw` | `png` crate |
 //! | `flow`              | `FlowDocument` auto-pagination builder + headers/footers | none |
-//! | `html`              | HTML→PDF renderer; enables `flow` | `scraper` |
+//! | `html`              | HTML→PDF renderer; enables `flow` | none (internal tokenizer) |
 
 mod chunk;
 mod content;

@@ -4,14 +4,14 @@ version = "1.0.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]
-description = "Pure Rust PDF library: CJK text overlay (Chinese / Japanese / Korean), AI/RAG text chunking, HTML→PDF, page operations — WASM-ready, zero C deps"
+description = "Pure-Rust PDF — CJK font embedding (Chinese/Japanese/Korean), OCR text overlay, text extraction, HTML→PDF, page merge/split. WASM-ready, zero C deps."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kent-tokyo/harumi"
 homepage = "https://kent-tokyo.github.io/harumi/"
 documentation = "https://docs.rs/harumi"
-readme = "README.md"
-keywords = ["pdf", "cjk", "japanese", "wasm", "rag"]
-categories = ["encoding", "text-processing", "parser-implementations", "multimedia::images", "wasm"]
+readme = "crates-io.md"
+keywords = ["pdf", "cjk", "ocr", "wasm", "rag"]
+categories = ["rendering::data-formats", "text-processing", "parser-implementations", "multimedia::images", "wasm"]
 
 [dependencies]
 lopdf = "0.40"
