@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
@@ -111,7 +111,7 @@ fn extract_text(params: Option<serde_json::Value>) -> serde_json::Value {
         Err(e) => return json!({"error": format!("Cannot read PDF: {}", e)}),
     };
 
-    let mut doc = match harumi::Document::from_bytes(&pdf_bytes) {
+    let doc = match harumi::Document::from_bytes(&pdf_bytes) {
         Ok(d) => d,
         Err(e) => return json!({"error": format!("Invalid PDF: {}", e)}),
     };
@@ -195,7 +195,6 @@ fn add_invisible_text(params: Option<serde_json::Value>) -> serde_json::Value {
         Err(e) => return json!({"error": format!("Cannot embed font: {}", e)}),
     };
 
-    let mut doc = doc;  // Make doc mutable for this operation
     match doc.page(page) {
         Ok(mut p) => {
             if let Err(e) = p.add_invisible_text(text, font, [x, y], size) {
