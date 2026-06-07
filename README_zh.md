@@ -632,7 +632,7 @@ harumi = { version = "0.5", features = ["ocr"] }
 
 | 标志 | 启用的功能 | 额外依赖 |
 |---|---|---|
-| *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, subsetter, ttf-parser |
+| *(默认)* | 文本叠加、字体嵌入、`add_text_box`、`add_text_box_aligned`、`add_text_with_opacity`、`add_text_box_with_opacity` | lopdf, ttf-parser |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_polyline`, `add_ellipse` — 图形绘制 | 无 |
 | `image` | `add_image`, `add_image_with_opacity` — JPEG/PNG 图像嵌入；`extract_page_image` — 从扫描版 PDF 中提取嵌入图像（自动启用 `draw`） | `png` crate（纯 Rust） |
 | `ocr` | `ocr::hocr_y_to_pdf`、`ocr::hocr_x_to_pdf`、`ocr::pixel_size_to_pt` — Tesseract 坐标转换工具 | 无 |
@@ -651,9 +651,9 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 
 | 字体格式 | 支持状态 |
 |---|---|
-| TrueType (`.ttf`) | 支持，已验证 |
-| OpenType CFF (`.otf`) | 接受，依赖 allsorts（见下文） |
-| TTC 字体集合 | 已支持（使用 index 0） |
+| TrueType (`.ttf`) | ✅ 完全支持 — 纯 Rust 子集化引擎 |
+| TTC 字体集合 | ✅ 完全支持 — 通过 `embed_font_at(bytes, face_index)` 指定面索引 |
+| OpenType CFF (`.otf`) | ⚠️ 接受（不支持子集化） — 按原样嵌入 |
 
 推荐使用 [Noto Sans CJK](https://github.com/notofonts/noto-cjk) 的 **TrueType** 版本（已端到端验证）：
 
@@ -664,7 +664,7 @@ NotoSansCJKjp-Regular.ttf  （日语）
 NotoSansCJKkr-Regular.ttf  （韩语）
 ```
 
-> **OTF 说明**：harumi 接受 `.otf` 文件并通过 `FontFile3 /OpenType` 嵌入。但 allsorts v0.17 无法子集化所有 CFF 变体（如 CFF2 可变字体），此时 `save()` 会返回 `FontParse` 错误。如需确保兼容，请使用 TTF 变体。
+> **OTF 说明**：harumi 接受 `.otf` 文件并通过 `FontFile3 /OpenType` 嵌入，但**不支持 CFF 字体子集化** — 字体内所有字形都会被嵌入，导致 PDF 文件较大。为优化大小，请使用上述 TTF 变体。
 
 ---
 
@@ -673,21 +673,33 @@ NotoSansCJKkr-Regular.ttf  （韩语）
 ```
 harumi
 ├── lopdf v0.40          — 解析和修改现有 PDF 对象图
-├── allsorts v0.17+      — TrueType 字体子集化（在 Prince 排版软件中经过生产验证）
-└── ttf-parser           — 字体元数据读取（bbox、units_per_em、ascender）
+├── ttf-parser           — 字体元数据读取（bbox、units_per_em、ascender）
+└── [内置 TTF 子集化器]  — 纯 Rust TrueType 子集化引擎（无外部依赖）
 ```
 
 字体处理流程：
 
 1. 收集已使用字符 → 建立 Unicode 码点集合
 2. 通过字体 `cmap` 表将码点映射为原始 GID（ttf-parser）
-3. 使用 allsorts 仅对已使用字形进行 TTF 子集化（GID **重新编号为 0..N**）
+3. 使用内置引擎仅对已使用字形进行 TTF 子集化（GID **重新编号为 0..N**）
 4. 将 `gid_to_char` 和字形宽度从原始 GID **重新映射到新 GID**（防止乱码）
 5. 构建 CID 字体对象图：`Type0 → CIDFontType2 → FontDescriptor → FontFile2`
 6. 生成 `/ToUnicode` CMap 流（使查看器能够复制/搜索文本）
 7. 向页面 `/Contents` 数组追加新内容流
 
 子集化采用**延迟执行**：`embed_font()` 仅存储原始 TTF 字节；`save()` 时收集所有页面已使用字符，每个字体只执行一次处理。
+
+### 依赖最小化
+
+harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）。
+
+- **TrueType 子集化** — 内置纯 Rust 实现（v1.1+）；支持 TTF + TTC（集合）、递归复合字形解析
+- **字体解析** — ttf-parser（专业用途，无推移依赖）
+- **图像解码** — `png` crate（可选，feature 门控）
+- **加密** — getrandom（仅 OS 熵；AES-256 加密密钥生成需要）
+
+**直接依赖数**: 3 个（getrandom、lopdf、ttf-parser，加上可选 `png`）  
+**推移依赖（默认构建）**: 约 8 个（仅 lopdf 内部实用程序）
 
 ---
 
