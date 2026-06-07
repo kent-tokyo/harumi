@@ -8,7 +8,7 @@ Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-r
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://kent-tokyo.github.io/harumi/)
 
-[日本語](README_ja.md) | [中文](README_zh.md) | [한국어](README_kr.md)
+[中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_kr.md)
 
 **[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)** — annotation editor (text · rect · line · freehand pen) running entirely in your browser via WASM
 
