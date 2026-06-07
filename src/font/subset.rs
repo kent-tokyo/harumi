@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 
-use subsetter::GlyphRemapper;
 use ttf_parser::Face;
 
 use crate::error::{Error, Result};
 use super::FontKind;
+use super::ttf_subset::{GlyphRemapper, subset as subsetter_subset};
 
 pub struct SubsetResult {
     pub bytes: Vec<u8>,
@@ -90,8 +90,8 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         remapper.remap(gid);
     }
 
-    let subsetted = subsetter::subset(ttf_bytes, 0, &remapper)
-        .map_err(|e| Error::FontParse(format!("subsetter error: {}", e)))?;
+    let subsetted = subsetter_subset(ttf_bytes, 0, &remapper)
+        .map_err(|e| Error::FontParse(format!("font subsetting failed: {}", e)))?;
 
     // subsetter reassigns GIDs via the remapper.
     // Guard: new GIDs are u16 indices, so the subset cannot exceed 65535 glyphs.

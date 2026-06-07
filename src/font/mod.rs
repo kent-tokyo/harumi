@@ -1,6 +1,7 @@
 pub mod cmap;
 pub mod embed;
 pub mod subset;
+mod ttf_subset;
 
 use std::collections::BTreeMap;
 
