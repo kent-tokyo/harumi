@@ -12,6 +12,24 @@
 
 **[ブラウザでデモを試す →](https://kent-tokyo.github.io/harumi/)** — テキスト・矩形・直線・フリーハンドペンのアノテーションエディタ（WASMでブラウザ完結）
 
+### 🔌 MCP サーバーとして利用可能
+
+Claude Code・Cursor・Continue IDE から harumi のPDF操作ツールを直接利用できます：
+
+```bash
+# MCPサーバーをビルド（純Rust、ランタイム依存なし）
+cargo build -p harumi-mcp
+
+# IDE設定で以下のツールを利用可能に：
+# - pdf_extract_text: テキスト位置付き抽出
+# - pdf_add_invisible_text: OCR検索レイヤー追加
+# - pdf_html_to_pdf: HTML→PDF変換
+# - pdf_merge: PDF結合
+# - pdf_page_info: ページ情報取得
+```
+
+[smithery.ai](https://smithery.ai) または [mcp.so](https://mcp.so) に登録予定。
+
 ---
 
 ## harumi が解決すること

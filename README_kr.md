@@ -12,6 +12,24 @@
 
 **[브라우저에서 데모 체험하기 →](https://kent-tokyo.github.io/harumi/)** — 텍스트·사각형·직선·자유 펜 어노테이션 편집기 (WASM으로 브라우저 완결)
 
+### 🔌 MCP 서버로 사용 가능
+
+Claude Code, Cursor 또는 Continue IDE에서 harumi의 PDF 도구를 직접 사용합니다:
+
+```bash
+# MCP 서버 빌드 (순수 Rust, 런타임 의존성 없음)
+cargo build -p harumi-mcp
+
+# IDE 설정에서 사용 가능한 도구:
+# - pdf_extract_text: 위치 정보 포함 텍스트 추출
+# - pdf_add_invisible_text: OCR 검색 가능 레이어
+# - pdf_html_to_pdf: HTML→PDF 변환
+# - pdf_merge: PDF 병합
+# - pdf_page_info: 페이지 정보 조회
+```
+
+[smithery.ai](https://smithery.ai) 또는 [mcp.so](https://mcp.so)에 등록 예정.
+
 ---
 
 ## harumi가 해결하는 것
