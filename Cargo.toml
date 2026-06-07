@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "harumi-mcp"]
+
 [package]
 name = "harumi"
 version = "1.0.1"

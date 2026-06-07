@@ -1,0 +1,19 @@
+[package]
+name = "harumi-mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]
+description = "MCP server for harumi PDF library — OCR text overlay, text extraction, HTML→PDF, CJK font embedding"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kent-tokyo/harumi"
+homepage = "https://kent-tokyo.github.io/harumi/"
+
+[[bin]]
+name = "harumi-mcp"
+
+[dependencies]
+harumi = { path = "..", features = ["html"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
