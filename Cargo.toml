@@ -15,7 +15,6 @@ categories = ["encoding", "text-processing", "parser-implementations", "multimed
 
 [dependencies]
 lopdf = "0.40"
-subsetter = "0.2"
 ttf-parser = "0.25"
 png = { version = "0.17", optional = true }
 
