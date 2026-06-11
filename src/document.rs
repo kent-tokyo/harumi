@@ -1750,7 +1750,8 @@ impl Document {
         field_name: &str,
     ) -> Result<Vec<u8>> {
         use crate::signature_create::inner::{hash_pdf_content, sign_hash};
-        let _ = field_name; // TODO: use when implementing incremental update
+        use crate::cms_builder::CmsSignedDataBuilder;
+        use crate::pdf_incremental::IncrementalUpdateBuilder;
 
         if self.finalized {
             return Err(Error::InvalidInput(
@@ -1758,25 +1759,33 @@ impl Document {
             ));
         }
 
-        // Get PDF bytes (this calls finalize() internally)
-        let buf = self.save_to_bytes()?;
+        // Phase 5 Implementation (v1.2.1):
+        // 1. Generate base PDF
+        let base_pdf = self.save_to_bytes()?;
 
-        // Hash the PDF content (SHA-256)
-        let hash = hash_pdf_content(&buf);
+        // 2. Hash PDF content for signing
+        let hash = hash_pdf_content(&base_pdf);
 
-        // Create RSA signature (PKCS#1 v1.5)
-        let _sig_bytes = sign_hash(context.private_key(), &hash)?;
+        // 3. Generate RSA signature
+        let sig_bytes = sign_hash(context.private_key(), &hash)?;
 
-        // TODO v1.2.1: Implement full PDF incremental update with:
-        // 1. /ByteRange calculation [0, X, Y, Z]
-        // 2. PKCS#7 SignedData structure with signature
-        // 3. /Contents field embedding
-        // 4. xref table update
-        //
-        // For v1.2.0, we return the PDF without signature embedding.
-        // The signature generation logic is verified, ready for full PDF integration.
+        // 4. Build PKCS#7/CMS SignedData
+        let cms_builder = CmsSignedDataBuilder::new(
+            context.cert_der().to_vec(),
+            sig_bytes,
+            hash,
+        );
+        let cms_hex = cms_builder.to_hex_string()?;
 
-        Ok(buf)
+        // 5. Build PDF incremental update section
+        let incremental_builder = IncrementalUpdateBuilder::new(
+            base_pdf,
+            field_name.to_string(),
+            cms_hex,
+        );
+        let signed_pdf = incremental_builder.build()?;
+
+        Ok(signed_pdf)
     }
 
     pub fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
