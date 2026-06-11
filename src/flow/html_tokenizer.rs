@@ -10,7 +10,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlNode {
     Text(String),
-    Element { tag: String, attrs: HashMap<String, String>, children: Vec<HtmlNode> },
+    Element {
+        tag: String,
+        attrs: HashMap<String, String>,
+        children: Vec<HtmlNode>,
+    },
 }
 
 impl HtmlNode {
@@ -35,7 +39,10 @@ impl HtmlNode {
         match self {
             HtmlNode::Element { attrs, .. } => {
                 let lower = name.to_ascii_lowercase();
-                attrs.iter().find(|(k, _)| k.to_ascii_lowercase() == lower).map(|(_, v)| v.clone())
+                attrs
+                    .iter()
+                    .find(|(k, _)| k.to_ascii_lowercase() == lower)
+                    .map(|(_, v)| v.clone())
             }
             HtmlNode::Text(_) => None,
         }
@@ -61,9 +68,11 @@ impl HtmlNode {
     pub(crate) fn text_content(&self) -> String {
         match self {
             HtmlNode::Text(s) => s.clone(),
-            HtmlNode::Element { children, .. } => {
-                children.iter().map(|child| child.text_content()).collect::<Vec<_>>().join("")
-            }
+            HtmlNode::Element { children, .. } => children
+                .iter()
+                .map(|child| child.text_content())
+                .collect::<Vec<_>>()
+                .join(""),
         }
     }
 }
@@ -89,16 +98,27 @@ struct HtmlParser {
 
 impl HtmlParser {
     fn new(html: &str) -> Self {
-        HtmlParser { input: html.chars().collect(), pos: 0 }
+        HtmlParser {
+            input: html.chars().collect(),
+            pos: 0,
+        }
     }
 
     fn current(&self) -> Option<char> {
-        if self.pos < self.input.len() { Some(self.input[self.pos]) } else { None }
+        if self.pos < self.input.len() {
+            Some(self.input[self.pos])
+        } else {
+            None
+        }
     }
 
     fn peek(&self, offset: usize) -> Option<char> {
         let p = self.pos + offset;
-        if p < self.input.len() { Some(self.input[p]) } else { None }
+        if p < self.input.len() {
+            Some(self.input[p])
+        } else {
+            None
+        }
     }
 
     fn advance(&mut self) {
@@ -214,7 +234,10 @@ impl HtmlParser {
             self.advance(); // skip second '-'
             // Skip until '-->'
             while self.current().is_some() {
-                if self.current() == Some('-') && self.peek(1) == Some('-') && self.peek(2) == Some('>') {
+                if self.current() == Some('-')
+                    && self.peek(1) == Some('-')
+                    && self.peek(2) == Some('>')
+                {
                     self.advance();
                     self.advance();
                     self.advance();
@@ -250,7 +273,21 @@ impl HtmlParser {
     }
 
     fn is_self_closing_tag(tag: &str) -> bool {
-        matches!(tag, "br" | "hr" | "img" | "input" | "meta" | "link" | "area" | "base" | "col" | "embed" | "source" | "track" | "wbr")
+        matches!(
+            tag,
+            "br" | "hr"
+                | "img"
+                | "input"
+                | "meta"
+                | "link"
+                | "area"
+                | "base"
+                | "col"
+                | "embed"
+                | "source"
+                | "track"
+                | "wbr"
+        )
     }
 
     fn decode_html_entities(text: &str) -> String {
@@ -318,7 +355,11 @@ impl HtmlParser {
                     if let Some((tag, _, _)) = stack.last() {
                         if closing_tag == *tag {
                             let (tag, attrs, children) = stack.pop().unwrap();
-                            let node = HtmlNode::Element { tag, attrs, children };
+                            let node = HtmlNode::Element {
+                                tag,
+                                attrs,
+                                children,
+                            };
                             if let Some((_, _, parent_children)) = stack.last_mut() {
                                 parent_children.push(node);
                             }
@@ -326,7 +367,11 @@ impl HtmlParser {
                     }
                 } else if let Some((tag, attrs, is_self_closing)) = self.parse_tag() {
                     if is_self_closing || Self::is_self_closing_tag(&tag) {
-                        let node = HtmlNode::Element { tag, attrs, children: Vec::new() };
+                        let node = HtmlNode::Element {
+                            tag,
+                            attrs,
+                            children: Vec::new(),
+                        };
                         if let Some((_, _, children)) = stack.last_mut() {
                             children.push(node);
                         }
@@ -354,9 +399,17 @@ impl HtmlParser {
         }
 
         if let Some((_, _, children)) = stack.pop() {
-            HtmlNode::Element { tag: "root".to_string(), attrs: HashMap::new(), children }
+            HtmlNode::Element {
+                tag: "root".to_string(),
+                attrs: HashMap::new(),
+                children,
+            }
         } else {
-            HtmlNode::Element { tag: "root".to_string(), attrs: HashMap::new(), children: Vec::new() }
+            HtmlNode::Element {
+                tag: "root".to_string(),
+                attrs: HashMap::new(),
+                children: Vec::new(),
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ use harumi::{Document, PdfMetadata};
 // ---------------------------------------------------------------------------
 
 fn pdf_with_info(title: &str, author: &str) -> Vec<u8> {
-    use harumi::lopdf::{dictionary, Document as LDoc, Object, StringFormat};
+    use harumi::lopdf::{Document as LDoc, Object, StringFormat, dictionary};
 
     let mut doc = LDoc::with_version("1.4");
     let pages_id = doc.new_object_id();

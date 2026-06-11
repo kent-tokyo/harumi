@@ -25,7 +25,10 @@ pub(crate) fn rect_stream(rect: &[f32; 4], color: Color, gs_name: &str) -> Vec<u
     format!(
         "q\n/{gs} gs\n{fill}\n{x:.4} {y:.4} {w:.4} {h:.4} re\nf\nQ\n",
         gs = gs_name,
-        x = rect[0], y = rect[1], w = rect[2], h = rect[3],
+        x = rect[0],
+        y = rect[1],
+        w = rect[2],
+        h = rect[3],
     )
     .into_bytes()
 }
@@ -46,8 +49,10 @@ pub(crate) fn line_stream(
         "q\n/{gs} gs\n{stroke}\n{lw:.4} w\n{x1:.4} {y1:.4} m\n{x2:.4} {y2:.4} l\nS\nQ\n",
         gs = gs_name,
         lw = width,
-        x1 = from[0], y1 = from[1],
-        x2 = to[0], y2 = to[1],
+        x1 = from[0],
+        y1 = from[1],
+        x2 = to[0],
+        y2 = to[1],
     )
     .into_bytes()
 }
@@ -64,7 +69,10 @@ pub(crate) fn rect_stroke_stream(
         "q\n/{gs} gs\n{stroke}\n{lw:.4} w\n{x:.4} {y:.4} {w:.4} {h:.4} re\nS\nQ\n",
         gs = gs_name,
         lw = line_width,
-        x = rect[0], y = rect[1], w = rect[2], h = rect[3],
+        x = rect[0],
+        y = rect[1],
+        w = rect[2],
+        h = rect[3],
     )
     .into_bytes()
 }
@@ -123,7 +131,8 @@ pub(crate) fn polyline_stream(
         "q\n/{gs} gs\n{stroke}\n{lw:.4} w\n{x0:.4} {y0:.4} m\n",
         gs = gs_name,
         lw = width,
-        x0 = points[0][0], y0 = points[0][1],
+        x0 = points[0][0],
+        y0 = points[0][1],
     );
     for pt in &points[1..] {
         s.push_str(&format!("{:.4} {:.4} l\n", pt[0], pt[1]));
@@ -173,19 +182,39 @@ pub(crate) fn ellipse_stream(
     // 4 quadrants (counter-clockwise)
     s.push_str(&format!(
         "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
-        cx + kx, cy + ry, cx + rx, cy + ky, cx + rx, cy
+        cx + kx,
+        cy + ry,
+        cx + rx,
+        cy + ky,
+        cx + rx,
+        cy
     ));
     s.push_str(&format!(
         "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
-        cx + rx, cy - ky, cx + kx, cy - ry, cx, cy - ry
+        cx + rx,
+        cy - ky,
+        cx + kx,
+        cy - ry,
+        cx,
+        cy - ry
     ));
     s.push_str(&format!(
         "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
-        cx - kx, cy - ry, cx - rx, cy - ky, cx - rx, cy
+        cx - kx,
+        cy - ry,
+        cx - rx,
+        cy - ky,
+        cx - rx,
+        cy
     ));
     s.push_str(&format!(
         "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} c\n",
-        cx - rx, cy + ky, cx - kx, cy + ry, cx, cy + ry
+        cx - rx,
+        cy + ky,
+        cx - kx,
+        cy + ry,
+        cx,
+        cy + ry
     ));
     s.push_str(&format!("h\n{}\nQ\n", paint_op));
     s.into_bytes()
@@ -237,20 +266,35 @@ mod tests {
 
     #[test]
     fn rect_stream_contains_operators() {
-        let bytes = rect_stream(&[10.0, 20.0, 100.0, 50.0], Color::Rgb([1.0, 0.0, 0.0]), "GS0");
+        let bytes = rect_stream(
+            &[10.0, 20.0, 100.0, 50.0],
+            Color::Rgb([1.0, 0.0, 0.0]),
+            "GS0",
+        );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS0 gs"), "should set ExtGState");
         assert!(s.contains("re\nf"), "should fill rectangle");
-        assert!(s.contains("1.0000 0.0000 0.0000 rg"), "should set fill color");
+        assert!(
+            s.contains("1.0000 0.0000 0.0000 rg"),
+            "should set fill color"
+        );
     }
 
     #[test]
     fn rect_stroke_stream_uses_capital_rg() {
-        let bytes = rect_stroke_stream(&[10.0, 20.0, 100.0, 50.0], Color::Rgb([1.0, 0.0, 0.0]), 2.0, "GS0");
+        let bytes = rect_stroke_stream(
+            &[10.0, 20.0, 100.0, 50.0],
+            Color::Rgb([1.0, 0.0, 0.0]),
+            2.0,
+            "GS0",
+        );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS0 gs"));
         assert!(s.contains("re\nS"), "should stroke rectangle");
-        assert!(s.contains("1.0000 0.0000 0.0000 RG"), "should use stroke color (RG)");
+        assert!(
+            s.contains("1.0000 0.0000 0.0000 RG"),
+            "should use stroke color (RG)"
+        );
         assert!(s.contains("2.0000 w"), "should set line width");
         assert!(!s.contains(" rg"), "should NOT set fill color");
     }
@@ -294,12 +338,27 @@ mod tests {
         assert!(polygon_stream(&[], Color::Rgb([0.0; 3]), "GS0", true, 0.0).is_empty());
         assert!(polygon_stream(&[[0.0, 0.0]], Color::Rgb([0.0; 3]), "GS0", true, 0.0).is_empty());
         // neither fill nor stroke → empty
-        assert!(polygon_stream(&[[0.0, 0.0], [10.0, 0.0]], Color::Rgb([0.0; 3]), "GS0", false, 0.0).is_empty());
+        assert!(
+            polygon_stream(
+                &[[0.0, 0.0], [10.0, 0.0]],
+                Color::Rgb([0.0; 3]),
+                "GS0",
+                false,
+                0.0
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn line_stream_contains_operators() {
-        let bytes = line_stream(&[0.0, 0.0], &[100.0, 0.0], Color::Rgb([0.0, 0.0, 1.0]), 2.0, "GS1");
+        let bytes = line_stream(
+            &[0.0, 0.0],
+            &[100.0, 0.0],
+            Color::Rgb([0.0, 0.0, 1.0]),
+            2.0,
+            "GS1",
+        );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS1 gs"), "should set ExtGState");
         assert!(s.contains("m\n"), "should have moveto");

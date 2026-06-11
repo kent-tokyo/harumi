@@ -92,9 +92,12 @@ pub mod flow;
 pub mod signature;
 
 pub use chunk::{ChunkType, TextChunk};
-pub use document::{Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun, VerticalAlign};
+pub use document::{
+    Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun,
+    VerticalAlign, calculate_text_width, glyph_advance_pt, wrap_paragraph,
+};
 pub use error::{Error, Result};
-pub use extract::{sort_by_reading_order, TextFragment};
+pub use extract::{TextFragment, sort_by_reading_order};
 pub use font::FontHandle;
 
 #[cfg(feature = "image")]
@@ -104,7 +107,7 @@ pub use extract_image::{PageImage, PageImageFormat};
 pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 
 #[cfg(feature = "html")]
-pub use flow::html::{render_html_to_pdf, HtmlRenderOptions};
+pub use flow::html::{HtmlRenderOptions, render_html_to_pdf};
 
 pub use signature::SignatureInfo;
 

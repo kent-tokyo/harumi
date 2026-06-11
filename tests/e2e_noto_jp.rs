@@ -146,7 +146,7 @@ fn e2e_batch_runs_cmap_coverage() {
 // ---------------------------------------------------------------------------
 #[test]
 fn e2e_multipage_font_resources() {
-    use lopdf::{dictionary, Stream};
+    use lopdf::{Stream, dictionary};
 
     // Build a 3-page PDF manually.
     let mut lpdf = lopdf::Document::with_version("1.4");
@@ -199,9 +199,18 @@ fn e2e_multipage_font_resources() {
     let mut doc = Document::from_bytes(&base_buf).expect("load");
     let fh = doc.embed_font(&font()).expect("embed_font");
 
-    doc.page(1).unwrap().add_invisible_text("ページ一：晴海", fh, [72.0, 700.0], 12.0).unwrap();
-    doc.page(2).unwrap().add_invisible_text("ページ二：テスト", fh, [72.0, 700.0], 12.0).unwrap();
-    doc.page(3).unwrap().add_invisible_text("ページ三：検索可能", fh, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("ページ一：晴海", fh, [72.0, 700.0], 12.0)
+        .unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_invisible_text("ページ二：テスト", fh, [72.0, 700.0], 12.0)
+        .unwrap();
+    doc.page(3)
+        .unwrap()
+        .add_invisible_text("ページ三：検索可能", fh, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let out = doc.save_to_bytes().expect("save");
 
@@ -218,8 +227,16 @@ fn e2e_multipage_font_resources() {
             Object::Dictionary(d) => d,
             other => panic!("unexpected Resources: {:?}", other),
         };
-        let font_dict = resources.get(b"Font").expect("missing /Font").as_dict().unwrap();
-        assert!(!font_dict.is_empty(), "page {} must have font in /Resources", page_num);
+        let font_dict = resources
+            .get(b"Font")
+            .expect("missing /Font")
+            .as_dict()
+            .unwrap();
+        assert!(
+            !font_dict.is_empty(),
+            "page {} must have font in /Resources",
+            page_num
+        );
     }
 }
 
@@ -242,7 +259,9 @@ fn e2e_write_output_pdf() {
     let out_path = match std::env::var("HARUMI_E2E_OUT") {
         Ok(p) => p,
         Err(_) => {
-            eprintln!("Skipping e2e_write_output_pdf (set HARUMI_E2E_OUT=/path/to/output.pdf to enable)");
+            eprintln!(
+                "Skipping e2e_write_output_pdf (set HARUMI_E2E_OUT=/path/to/output.pdf to enable)"
+            );
             return;
         }
     };
@@ -251,20 +270,44 @@ fn e2e_write_output_pdf() {
     let fh = doc.embed_font(&font()).expect("embed_font");
 
     // Invisible OCR layer
-    doc.page(1).unwrap().add_invisible_text_runs(&[
-        TextRun { text: "晴海ライブラリ".into(), font: fh, x: 72.0, y: 750.0, font_size: 14.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "日本語のPDF検索".into(), font: fh, x: 72.0, y: 720.0, font_size: 12.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "純Rust製・CJK対応".into(), font: fh, x: 72.0, y: 690.0, font_size: 12.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-    ]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text_runs(&[
+            TextRun {
+                text: "晴海ライブラリ".into(),
+                font: fh,
+                x: 72.0,
+                y: 750.0,
+                font_size: 14.0,
+                render_mode: 3,
+                color: harumi::Color::Rgb([0.0; 3]),
+            },
+            TextRun {
+                text: "日本語のPDF検索".into(),
+                font: fh,
+                x: 72.0,
+                y: 720.0,
+                font_size: 12.0,
+                render_mode: 3,
+                color: harumi::Color::Rgb([0.0; 3]),
+            },
+            TextRun {
+                text: "純Rust製・CJK対応".into(),
+                font: fh,
+                x: 72.0,
+                y: 690.0,
+                font_size: 12.0,
+                render_mode: 3,
+                color: harumi::Color::Rgb([0.0; 3]),
+            },
+        ])
+        .unwrap();
 
     // Visible label
-    doc.page(1).unwrap().add_text(
-        "E2E テスト出力",
-        fh,
-        [72.0, 650.0],
-        16.0,
-        [0.0, 0.3, 0.7],
-    ).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("E2E テスト出力", fh, [72.0, 650.0], 16.0, [0.0, 0.3, 0.7])
+        .unwrap();
 
     doc.save(&out_path).expect("save to output file");
     println!("Written: {out_path}");

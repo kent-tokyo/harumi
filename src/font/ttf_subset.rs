@@ -139,7 +139,12 @@ pub(super) fn subset(
     let new_loca = build_loca(&new_glyph_offsets, index_to_loc_format as u8)?;
 
     // Build new hmtx table.
-    let new_hmtx = build_hmtx(hmtx, num_h_metrics, face.units_per_em() as usize, &gids_to_keep)?;
+    let new_hmtx = build_hmtx(
+        hmtx,
+        num_h_metrics,
+        face.units_per_em() as usize,
+        &gids_to_keep,
+    )?;
 
     // Patch head, hhea, maxp tables with new metrics.
     let mut new_head = head.to_vec();
@@ -180,7 +185,10 @@ pub(super) fn subset(
         if matches!(tag.as_str(), "cmap" | "OS/2" | "VORG") {
             continue; // Skip; not needed for PDF CIDFont embedding.
         }
-        if !matches!(tag.as_str(), "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx") {
+        if !matches!(
+            tag.as_str(),
+            "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx"
+        ) {
             output_tables.insert(tag.clone(), data_slice.to_vec());
         }
     }
@@ -205,9 +213,11 @@ fn parse_offset_table(data: &[u8]) -> Result<OffsetTable, Box<dyn std::error::Er
     let is_truetype = scaler == 0x00010000 || scaler == 0x74727565; // 0x00010000 or 'true'
 
     let num_tables = u16::from_be_bytes([data[4], data[5]]) as usize;
-    Ok(OffsetTable { is_truetype, num_tables })
+    Ok(OffsetTable {
+        is_truetype,
+        num_tables,
+    })
 }
-
 
 fn parse_table_records_raw(
     data: &[u8],
@@ -220,13 +230,22 @@ fn parse_table_records_raw(
             return Err("table directory truncated".into());
         }
         let tag = String::from_utf8_lossy(&data[base..base + 4]).to_string();
-        let offset = u32::from_be_bytes([data[base + 8], data[base + 9], data[base + 10], data[base + 11]]) as usize;
-        let length = u32::from_be_bytes([data[base + 12], data[base + 13], data[base + 14], data[base + 15]]) as usize;
+        let offset = u32::from_be_bytes([
+            data[base + 8],
+            data[base + 9],
+            data[base + 10],
+            data[base + 11],
+        ]) as usize;
+        let length = u32::from_be_bytes([
+            data[base + 12],
+            data[base + 13],
+            data[base + 14],
+            data[base + 15],
+        ]) as usize;
         records.push((tag, offset, length));
     }
     Ok(records)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -251,7 +270,12 @@ fn parse_loca(
             if i * 4 + 4 > loca.len() {
                 return Err("loca table truncated".into());
             }
-            let offset = u32::from_be_bytes([loca[i * 4], loca[i * 4 + 1], loca[i * 4 + 2], loca[i * 4 + 3]]);
+            let offset = u32::from_be_bytes([
+                loca[i * 4],
+                loca[i * 4 + 1],
+                loca[i * 4 + 2],
+                loca[i * 4 + 3],
+            ]);
             offsets.push(offset);
         }
     }
@@ -357,7 +381,7 @@ fn build_loca(glyph_offsets: &[u32], format: u8) -> Result<Vec<u8>, Box<dyn std:
     let mut loca = Vec::new();
     if format == 0 {
         for &offset in glyph_offsets {
-        let half = (offset / 2) as u16;
+            let half = (offset / 2) as u16;
             loca.extend_from_slice(&half.to_be_bytes());
         }
     } else {
@@ -418,7 +442,11 @@ fn assemble_font(
     let mut font = Vec::new();
 
     // Offset table (12 bytes).
-    let scaler = if is_truetype { 0x00010000u32 } else { 0x4F544F54u32 }; // 0x00010000 or 'OTTO'
+    let scaler = if is_truetype {
+        0x00010000u32
+    } else {
+        0x4F544F54u32
+    }; // 0x00010000 or 'OTTO'
     font.extend_from_slice(&scaler.to_be_bytes());
     font.extend_from_slice(&(num_tables as u16).to_be_bytes());
     font.extend_from_slice(&search_range.to_be_bytes());

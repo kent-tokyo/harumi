@@ -39,7 +39,11 @@ fn extract_text_chunks_paragraphs_only() {
     let chunks = doc2.extract_text_chunks(1).unwrap();
 
     // All three should be classified as paragraphs.
-    assert_eq!(chunks.len(), 1, "same-font-size text should merge into one paragraph chunk");
+    assert_eq!(
+        chunks.len(),
+        1,
+        "same-font-size text should merge into one paragraph chunk"
+    );
     assert_eq!(chunks[0].chunk_type, ChunkType::Paragraph);
     assert!(chunks[0].text.contains("First"));
     assert!(chunks[0].text.contains("Second"));
@@ -69,13 +73,31 @@ fn extract_text_chunks_heading_and_paragraph() {
     let chunks = doc2.extract_text_chunks(1).unwrap();
 
     // Should have 2 chunks: heading + paragraph.
-    assert_eq!(chunks.len(), 2, "expected 2 chunks (heading and paragraph), got: {:?}", chunks);
+    assert_eq!(
+        chunks.len(),
+        2,
+        "expected 2 chunks (heading and paragraph), got: {:?}",
+        chunks
+    );
 
     // First chunk should be heading (28pt is ~2.3× baseline 12pt).
-    assert!(matches!(chunks[0].chunk_type, ChunkType::Heading(_)), "first chunk should be heading");
-    assert_eq!(chunks[1].chunk_type, ChunkType::Paragraph, "second chunk should be paragraph");
-    assert!(chunks[0].text.contains("Title"), "heading should contain 'Title'");
-    assert!(chunks[1].text.contains("body text"), "paragraph should contain 'body text'");
+    assert!(
+        matches!(chunks[0].chunk_type, ChunkType::Heading(_)),
+        "first chunk should be heading"
+    );
+    assert_eq!(
+        chunks[1].chunk_type,
+        ChunkType::Paragraph,
+        "second chunk should be paragraph"
+    );
+    assert!(
+        chunks[0].text.contains("Title"),
+        "heading should contain 'Title'"
+    );
+    assert!(
+        chunks[1].text.contains("body text"),
+        "paragraph should contain 'body text'"
+    );
 }
 
 #[test]
@@ -147,9 +169,18 @@ fn extract_as_markdown_basic() {
     let markdown = doc2.extract_as_markdown(1).unwrap();
 
     // Should contain heading marker and text.
-    assert!(markdown.contains("#"), "markdown should have heading marker");
-    assert!(markdown.contains("Title"), "markdown should contain heading text");
-    assert!(markdown.contains("Body text"), "markdown should contain paragraph text");
+    assert!(
+        markdown.contains("#"),
+        "markdown should have heading marker"
+    );
+    assert!(
+        markdown.contains("Title"),
+        "markdown should contain heading text"
+    );
+    assert!(
+        markdown.contains("Body text"),
+        "markdown should contain paragraph text"
+    );
     // No trailing newlines.
     assert!(!markdown.ends_with('\n'), "markdown should be trimmed");
 }

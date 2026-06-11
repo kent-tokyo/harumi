@@ -27,32 +27,43 @@ pub(crate) enum ImageData {
 pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
     if bytes.starts_with(b"\xff\xd8\xff") {
         let (w, h) = parse_jpeg_dims(bytes)?;
-        return Ok(PreparedImage { width: w, height: h, data: ImageData::Jpeg(bytes.to_vec()) });
+        return Ok(PreparedImage {
+            width: w,
+            height: h,
+            data: ImageData::Jpeg(bytes.to_vec()),
+        });
     }
 
     // PNG: parse header to get dimensions without full decode.
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let reader = decoder.read_info()
+    let reader = decoder
+        .read_info()
         .map_err(|e| Error::ImageDecode(e.to_string()))?;
     let (w, h) = (reader.info().width, reader.info().height);
     let pixel_count = w as u64 * h as u64;
     if pixel_count > 200_000_000 {
         return Err(Error::InvalidInput(format!(
-            "image too large: {w}x{h} = {} pixels (limit 200 MP)", pixel_count
+            "image too large: {w}x{h} = {} pixels (limit 200 MP)",
+            pixel_count
         )));
     }
 
     // Full PNG decode: read all pixels.
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder.read_info()
+    let mut reader = decoder
+        .read_info()
         .map_err(|e| Error::ImageDecode(e.to_string()))?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
-    let _ = reader.next_frame(&mut buf)
+    let _ = reader
+        .next_frame(&mut buf)
         .map_err(|e| Error::ImageDecode(e.to_string()))?;
 
     // Parse color type and extract RGB/RGBA data.
     let info = reader.info();
-    let has_alpha = matches!(info.color_type, png::ColorType::Rgba | png::ColorType::GrayscaleAlpha);
+    let has_alpha = matches!(
+        info.color_type,
+        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
+    );
 
     let pixel_bytes = match info.color_type {
         png::ColorType::Rgb => {
@@ -156,24 +167,24 @@ pub(crate) fn embed_xobject(doc: &mut lopdf::Document, img: PreparedImage) -> Re
             // SMask sub-object: grayscale image carrying the alpha channel.
             // Not registered in /Resources — referenced only by the main image dict.
             let mut smask_dict = Dictionary::new();
-            smask_dict.set("Type",             Object::Name(b"XObject".to_vec()));
-            smask_dict.set("Subtype",          Object::Name(b"Image".to_vec()));
-            smask_dict.set("Width",            Object::Integer(img.width as i64));
-            smask_dict.set("Height",           Object::Integer(img.height as i64));
-            smask_dict.set("ColorSpace",       Object::Name(b"DeviceGray".to_vec()));
+            smask_dict.set("Type", Object::Name(b"XObject".to_vec()));
+            smask_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+            smask_dict.set("Width", Object::Integer(img.width as i64));
+            smask_dict.set("Height", Object::Integer(img.height as i64));
+            smask_dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
             smask_dict.set("BitsPerComponent", Object::Integer(8));
             let mut smask_stream = Stream::new(smask_dict, alpha);
             let _ = smask_stream.compress();
             let smask_id = doc.add_object(Object::Stream(smask_stream));
 
             let mut dict = Dictionary::new();
-            dict.set("Type",             Object::Name(b"XObject".to_vec()));
-            dict.set("Subtype",          Object::Name(b"Image".to_vec()));
-            dict.set("Width",            Object::Integer(img.width as i64));
-            dict.set("Height",           Object::Integer(img.height as i64));
-            dict.set("ColorSpace",       Object::Name(b"DeviceRGB".to_vec()));
+            dict.set("Type", Object::Name(b"XObject".to_vec()));
+            dict.set("Subtype", Object::Name(b"Image".to_vec()));
+            dict.set("Width", Object::Integer(img.width as i64));
+            dict.set("Height", Object::Integer(img.height as i64));
+            dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
             dict.set("BitsPerComponent", Object::Integer(8));
-            dict.set("SMask",            Object::Reference(smask_id));
+            dict.set("SMask", Object::Reference(smask_id));
             let mut stream = Stream::new(dict, rgb);
             let _ = stream.compress();
             Ok(doc.add_object(Object::Stream(stream)))
@@ -189,8 +200,10 @@ pub(crate) fn image_stream(xobj_name: &str, rect: &[f32; 4], gs_name: &str) -> V
     format!(
         "q\n/{gs} gs\n{w:.4} 0 0 {h:.4} {x:.4} {y:.4} cm\n/{name} Do\nQ\n",
         gs = gs_name,
-        w = rect[2], h = rect[3],
-        x = rect[0], y = rect[1],
+        w = rect[2],
+        h = rect[3],
+        x = rect[0],
+        y = rect[1],
         name = xobj_name,
     )
     .into_bytes()
@@ -214,7 +227,17 @@ pub(crate) fn parse_jpeg_dims(data: &[u8]) -> Result<(u32, u32)> {
         // SOF markers carry image dimensions; skip others.
         if matches!(
             marker,
-            0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE
+            0xC0 | 0xC1
+                | 0xC2
+                | 0xC3
+                | 0xC5
+                | 0xC6
+                | 0xC7
+                | 0xC9
+                | 0xCA
+                | 0xCB
+                | 0xCD
+                | 0xCE
                 | 0xCF
         ) && i + 8 < data.len()
         {
@@ -238,7 +261,9 @@ pub(crate) fn parse_jpeg_dims(data: &[u8]) -> Result<(u32, u32)> {
         }
         i += 2 + seg_len;
     }
-    Err(Error::ImageDecode("JPEG: could not find SOF marker with valid dimensions".into()))
+    Err(Error::ImageDecode(
+        "JPEG: could not find SOF marker with valid dimensions".into(),
+    ))
 }
 
 #[cfg(test)]

@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use lopdf::{Dictionary, Object, ObjectId, Stream};
 
 use crate::error::{Error, Result};
-use crate::extract::{collect_fonts, page_content_streams, FontInfo};
+use crate::extract::{FontInfo, collect_fonts, page_content_streams};
 use crate::font::{cmap, embed::build_widths_array, subset::subset_font};
-use crate::replace::{collect_char_segments, encode_str_hex, parse_ops, ArrElem, Operand};
+use crate::replace::{ArrElem, Operand, collect_char_segments, encode_str_hex, parse_ops};
 
 // ---------------------------------------------------------------------------
 // Object-graph navigation
@@ -41,24 +41,25 @@ pub(crate) fn resolve_cid_font_ids(
     let font_dict = crate::extract::resolve_dict(doc, font_obj)
         .ok_or_else(|| Error::InvalidInput("cannot resolve /Font dict".into()))?;
 
-    let font_ref = font_dict
-        .get(font_name)
-        .map_err(|_| {
-            Error::InvalidInput(format!(
-                "font '{}' not found in /Resources/Font",
-                String::from_utf8_lossy(font_name)
-            ))
-        })?;
+    let font_ref = font_dict.get(font_name).map_err(|_| {
+        Error::InvalidInput(format!(
+            "font '{}' not found in /Resources/Font",
+            String::from_utf8_lossy(font_name)
+        ))
+    })?;
     let Object::Reference(type0_oid) = font_ref else {
         return Err(Error::InvalidInput("font entry is not a Reference".into()));
     };
     let type0_dict = doc.get_object(*type0_oid)?.as_dict()?;
 
     // Verify Type0
-    let subtype = type0_dict
-        .get(b"Subtype")
-        .ok()
-        .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+    let subtype = type0_dict.get(b"Subtype").ok().and_then(|o| {
+        if let Object::Name(n) = o {
+            Some(n.as_slice())
+        } else {
+            None
+        }
+    });
     if subtype != Some(b"Type0") {
         return Err(Error::InvalidInput(
             "replace_text_resubset only supports CIDFontType2 (Type0) fonts; \
@@ -73,7 +74,7 @@ pub(crate) fn resolve_cid_font_ids(
         _ => {
             return Err(Error::InvalidInput(
                 "Type0 font has no /ToUnicode stream".into(),
-            ))
+            ));
         }
     };
 
@@ -82,7 +83,9 @@ pub(crate) fn resolve_cid_font_ids(
         .get(b"DescendantFonts")
         .map_err(|_| Error::InvalidInput("Type0 font missing /DescendantFonts".into()))?;
     let Object::Array(desc_arr) = desc_obj else {
-        return Err(Error::InvalidInput("/DescendantFonts is not an Array".into()));
+        return Err(Error::InvalidInput(
+            "/DescendantFonts is not an Array".into(),
+        ));
     };
     let Some(Object::Reference(cid_oid)) = desc_arr.first() else {
         return Err(Error::InvalidInput(
@@ -110,7 +113,9 @@ pub(crate) fn resolve_cid_font_ids(
         .get(b"FontDescriptor")
         .map_err(|_| Error::InvalidInput("CIDFont missing /FontDescriptor".into()))?;
     let Object::Reference(descriptor_oid) = desc_ref else {
-        return Err(Error::InvalidInput("/FontDescriptor is not a Reference".into()));
+        return Err(Error::InvalidInput(
+            "/FontDescriptor is not a Reference".into(),
+        ));
     };
     let descriptor = doc.get_object(*descriptor_oid)?.as_dict()?;
 
@@ -148,7 +153,9 @@ pub(crate) fn update_cid_font(
     // 1. Replace font file stream content.
     let ff_stream = doc.get_object_mut(ids.font_file_id)?.as_stream_mut()?;
     ff_stream.content = new_bytes.clone();
-    ff_stream.dict.set("Length1", Object::Integer(new_bytes.len() as i64));
+    ff_stream
+        .dict
+        .set("Length1", Object::Integer(new_bytes.len() as i64));
     // Remove any compression filter so content is raw.
     ff_stream.dict.remove(b"Filter");
     ff_stream.dict.remove(b"DecodeParms");
@@ -164,7 +171,9 @@ pub(crate) fn update_cid_font(
     tu_stream.content = cmap_bytes.clone();
     tu_stream.dict.remove(b"Filter");
     tu_stream.dict.remove(b"DecodeParms");
-    tu_stream.dict.set("Length", Object::Integer(cmap_bytes.len() as i64));
+    tu_stream
+        .dict
+        .set("Length", Object::Integer(cmap_bytes.len() as i64));
 
     Ok(())
 }
@@ -275,8 +284,7 @@ pub(crate) fn reencode_stream_for_font(
                     for elem in arr {
                         match elem {
                             ArrElem::Str(b) => {
-                                let new_raw =
-                                    remap_gids(b, old_gid_to_char, new_char_to_gid);
+                                let new_raw = remap_gids(b, old_gid_to_char, new_char_to_gid);
                                 out.extend_from_slice(&encode_str_hex(&new_raw));
                             }
                             ArrElem::Num(n) => {
@@ -334,6 +342,9 @@ pub(crate) struct ResubsetWork {
     pub font_bytes: Vec<u8>,
     /// (page_id, old_text, new_text) triples that need replacement on that font.
     pub replacements: Vec<(ObjectId, String, String)>,
+    /// Wrap parameters for text replacements (old_text → WrapParams).
+    #[allow(dead_code)]
+    pub wrap_params_by_old_text: std::collections::HashMap<String, crate::replace::WrapParams>,
 }
 
 /// Perform the full re-subsetting pipeline for a single font.
@@ -355,11 +366,7 @@ pub(crate) fn resubset_and_replace(
 
     // --- Step 1: collect existing chars and old GID map ---
     // Use the first page that has this font to get FontInfo.
-    let anchor_page = work
-        .replacements
-        .first()
-        .map(|(pid, _, _)| *pid)
-        .unwrap();
+    let anchor_page = work.replacements.first().map(|(pid, _, _)| *pid).unwrap();
     let fonts_on_anchor = collect_fonts(doc, anchor_page);
     let streams_on_anchor = page_content_streams(doc, anchor_page);
     let (old_gid_to_char, mut all_chars) =
@@ -432,18 +439,17 @@ pub(crate) fn resubset_and_replace(
                     new_content.push(b'\n');
                 }
             }
-            let new_id = doc.add_object(Object::Stream(Stream::new(
-                Dictionary::new(),
-                new_content,
-            )));
-            doc.get_object_mut(pid)?.as_dict_mut()?.set("Contents", Object::Reference(new_id));
+            let new_id =
+                doc.add_object(Object::Stream(Stream::new(Dictionary::new(), new_content)));
+            doc.get_object_mut(pid)?
+                .as_dict_mut()?
+                .set("Contents", Object::Reference(new_id));
         }
     }
 
     // --- Step 5: apply text replacement via preserve-font path ---
     // Group replacements by page.
-    let mut by_page: HashMap<ObjectId, Vec<crate::replace::TextReplacePreserveOp>> =
-        HashMap::new();
+    let mut by_page: HashMap<ObjectId, Vec<crate::replace::TextReplacePreserveOp>> = HashMap::new();
     for (pid, old_text, new_text) in &work.replacements {
         by_page
             .entry(*pid)
@@ -454,13 +460,21 @@ pub(crate) fn resubset_and_replace(
             });
     }
     for (pid, ops) in by_page {
-        let new_content =
-            crate::replace::rewrite_page_streams_preserve_font(doc, pid, &ops)?;
-        let new_id = doc.add_object(Object::Stream(Stream::new(
-            Dictionary::new(),
-            new_content,
-        )));
-        doc.get_object_mut(pid)?.as_dict_mut()?.set("Contents", Object::Reference(new_id));
+        let wrap_params_by_old_text = if work.wrap_params_by_old_text.is_empty() {
+            None
+        } else {
+            Some(&work.wrap_params_by_old_text)
+        };
+        let new_content = crate::replace::rewrite_page_streams_preserve_font(
+            doc,
+            pid,
+            &ops,
+            wrap_params_by_old_text,
+        )?;
+        let new_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), new_content)));
+        doc.get_object_mut(pid)?
+            .as_dict_mut()?
+            .set("Contents", Object::Reference(new_id));
     }
 
     Ok(())

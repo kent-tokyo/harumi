@@ -74,7 +74,10 @@ mod inner {
 
     #[test]
     fn auto_bookmarks_generates_outlines() {
-        let opts = FlowOptions { auto_bookmarks: true, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
         doc.push_heading("Chapter 1", 1).unwrap();
         doc.push_paragraph("Body.").unwrap();
@@ -84,19 +87,34 @@ mod inner {
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
-        assert!(catalog.get(b"Outlines").is_ok(), "/Outlines must be present when auto_bookmarks=true");
+        assert!(
+            catalog.get(b"Outlines").is_ok(),
+            "/Outlines must be present when auto_bookmarks=true"
+        );
 
         let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-        let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
         let count = outlines.get(b"Count").unwrap().as_i64().unwrap();
         assert_eq!(count, 2, "Two headings should produce two bookmarks");
     }
 
     #[test]
     fn auto_bookmarks_disabled_produces_no_outlines() {
-        let opts = FlowOptions { auto_bookmarks: false, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: false,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
         doc.push_heading("Chapter 1", 1).unwrap();
         doc.push_paragraph("Body.").unwrap();
@@ -104,44 +122,77 @@ mod inner {
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
-        assert!(catalog.get(b"Outlines").is_err(), "/Outlines must NOT be present when auto_bookmarks=false");
+        assert!(
+            catalog.get(b"Outlines").is_err(),
+            "/Outlines must NOT be present when auto_bookmarks=false"
+        );
     }
 
     #[test]
     fn auto_bookmarks_all_heading_levels_recorded() {
-        let opts = FlowOptions { auto_bookmarks: true, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
         for level in 1u8..=6 {
-            doc.push_heading(&format!("Heading {level}"), level).unwrap();
+            doc.push_heading(&format!("Heading {level}"), level)
+                .unwrap();
             doc.push_paragraph("Short paragraph.").unwrap();
         }
 
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
         let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-        let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
         let count = outlines.get(b"Count").unwrap().as_i64().unwrap();
         assert_eq!(count, 6, "Six headings should produce six bookmarks");
     }
 
     #[test]
     fn auto_bookmarks_no_headings_produces_no_outlines() {
-        let opts = FlowOptions { auto_bookmarks: true, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
-        doc.push_paragraph("Just a paragraph, no headings.").unwrap();
+        doc.push_paragraph("Just a paragraph, no headings.")
+            .unwrap();
 
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
         // No headings → no pending bookmarks → no /Outlines in catalog
-        assert!(catalog.get(b"Outlines").is_err(), "/Outlines must be absent when there are no headings");
+        assert!(
+            catalog.get(b"Outlines").is_err(),
+            "/Outlines must be absent when there are no headings"
+        );
     }
 
     // ---------------------------------------------------------------------------
@@ -190,7 +241,10 @@ mod inner {
 
     #[test]
     fn auto_bookmarks_cjk_heading_title() {
-        let opts = FlowOptions { auto_bookmarks: true, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
         doc.push_heading("第1章　日本語見出し", 1).unwrap();
         doc.push_paragraph("本文テキスト").unwrap();
@@ -198,14 +252,25 @@ mod inner {
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
-        assert!(catalog.get(b"Outlines").is_ok(), "/Outlines must be present for CJK heading");
+        assert!(
+            catalog.get(b"Outlines").is_ok(),
+            "/Outlines must be present for CJK heading"
+        );
     }
 
     #[test]
     fn hierarchical_outline_two_levels() {
-        let opts = FlowOptions { auto_bookmarks: true, ..Default::default() };
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            ..Default::default()
+        };
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
 
         // Push h1 and h2 headings to create a hierarchy.
@@ -221,10 +286,19 @@ mod inner {
         let bytes = doc.render().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
         let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-        let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
 
         // Root should have both top-level chapters.
         let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
@@ -237,7 +311,11 @@ mod inner {
         // The first h1 should have /First pointing to its first h2 child (if it has children).
         if let Ok(h1_first) = first_item.get(b"First") {
             let h1_first_ref = h1_first.as_reference().unwrap();
-            let h2_item = reloaded.get_object(h1_first_ref).unwrap().as_dict().unwrap();
+            let h2_item = reloaded
+                .get_object(h1_first_ref)
+                .unwrap()
+                .as_dict()
+                .unwrap();
 
             // The h2 item should have a /Parent pointing back to the h1 item.
             let h2_parent_ref = h2_item.get(b"Parent").unwrap().as_reference().unwrap();
@@ -265,10 +343,19 @@ mod inner {
         let bytes = doc.save_to_bytes().unwrap();
         let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-        let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
         let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-        let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
 
         // All three bookmarks should be at the top level (siblings).
         let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();

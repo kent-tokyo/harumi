@@ -6,7 +6,7 @@
 mod helpers;
 
 use harumi::Document;
-use lopdf::{dictionary, Object, Stream};
+use lopdf::{Object, Stream, dictionary};
 
 // ---------------------------------------------------------------------------
 // Helper: build a PDF with the given /Contents value
@@ -87,7 +87,10 @@ fn overlay_and_verify(pdf: &[u8], text: &str) {
     assert_eq!(reloaded.page_count(), 1);
 
     // Output must be larger (font was embedded).
-    assert!(out.len() > pdf.len(), "output should be larger after embedding");
+    assert!(
+        out.len() > pdf.len(),
+        "output should be larger after embedding"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -193,8 +196,14 @@ fn smoke_contents_array() {
     let mut doc = LDoc::with_version("1.4");
     let pages_id = doc.new_object_id();
 
-    let s1 = doc.add_object(Object::Stream(Stream::new(dictionary! {}, b"q Q\n".to_vec())));
-    let s2 = doc.add_object(Object::Stream(Stream::new(dictionary! {}, b"q Q\n".to_vec())));
+    let s1 = doc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        b"q Q\n".to_vec(),
+    )));
+    let s2 = doc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        b"q Q\n".to_vec(),
+    )));
 
     let page_id = doc.new_object_id();
     doc.objects.insert(
@@ -335,15 +344,28 @@ fn smoke_multipage() {
     let mut hdoc = Document::from_bytes(&buf).expect("load");
     let fh = hdoc.embed_font(&font).expect("embed");
 
-    hdoc.page(1).unwrap().add_invisible_text("ページ一", fh, [72.0, 700.0], 12.0).unwrap();
-    hdoc.page(2).unwrap().add_invisible_text("ページ二", fh, [72.0, 700.0], 12.0).unwrap();
-    hdoc.page(3).unwrap().add_invisible_text("ページ三", fh, [72.0, 700.0], 12.0).unwrap();
+    hdoc.page(1)
+        .unwrap()
+        .add_invisible_text("ページ一", fh, [72.0, 700.0], 12.0)
+        .unwrap();
+    hdoc.page(2)
+        .unwrap()
+        .add_invisible_text("ページ二", fh, [72.0, 700.0], 12.0)
+        .unwrap();
+    hdoc.page(3)
+        .unwrap()
+        .add_invisible_text("ページ三", fh, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let mut out = Vec::new();
     hdoc.save_to_writer(&mut out).expect("save");
 
     let reloaded = Document::from_bytes(&out).expect("reload");
-    assert_eq!(reloaded.page_count(), 3, "multi-page count should be preserved");
+    assert_eq!(
+        reloaded.page_count(),
+        3,
+        "multi-page count should be preserved"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -359,8 +381,14 @@ fn smoke_two_fonts_same_page() {
     let fh1 = doc.embed_font(&font).expect("embed font 1");
     let fh2 = doc.embed_font(&font).expect("embed font 2");
 
-    doc.page(1).unwrap().add_invisible_text("フォント一", fh1, [72.0, 700.0], 12.0).unwrap();
-    doc.page(1).unwrap().add_invisible_text("フォント二", fh2, [72.0, 680.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("フォント一", fh1, [72.0, 700.0], 12.0)
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("フォント二", fh2, [72.0, 680.0], 12.0)
+        .unwrap();
 
     let mut out = Vec::new();
     doc.save_to_writer(&mut out).expect("save");
@@ -375,7 +403,11 @@ fn smoke_two_fonts_same_page() {
         other => panic!("unexpected resources: {:?}", other),
     };
     let font_dict = resources.get(b"Font").unwrap().as_dict().unwrap();
-    assert_eq!(font_dict.len(), 2, "should have two font entries: F0 and F1");
+    assert_eq!(
+        font_dict.len(),
+        2,
+        "should have two font entries: F0 and F1"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -423,9 +455,16 @@ fn smoke_mediabox_inherited() {
     doc.save_to(&mut buf).unwrap();
 
     let mut hdoc = Document::from_bytes(&buf).expect("load");
-    let (w, h) = hdoc.page(1).expect("page").size().expect("size from parent");
+    let (w, h) = hdoc
+        .page(1)
+        .expect("page")
+        .size()
+        .expect("size from parent");
     assert!((w - 595.0).abs() < 1.0, "A4 width should be 595pt, got {w}");
-    assert!((h - 842.0).abs() < 1.0, "A4 height should be 842pt, got {h}");
+    assert!(
+        (h - 842.0).abs() < 1.0,
+        "A4 height should be 842pt, got {h}"
+    );
 }
 #[test]
 fn smoke_page_size_letter() {
@@ -463,6 +502,12 @@ fn smoke_page_size_letter() {
 
     let mut hdoc = Document::from_bytes(&buf).expect("load");
     let (w, h) = hdoc.page(1).expect("page").size().expect("size");
-    assert!((w - 612.0).abs() < 1.0, "Letter width should be 612pt, got {w}");
-    assert!((h - 792.0).abs() < 1.0, "Letter height should be 792pt, got {h}");
+    assert!(
+        (w - 612.0).abs() < 1.0,
+        "Letter width should be 612pt, got {w}"
+    );
+    assert!(
+        (h - 792.0).abs() < 1.0,
+        "Letter height should be 792pt, got {h}"
+    );
 }

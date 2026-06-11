@@ -22,11 +22,17 @@ cargo build -p harumi-mcp
 
 # IDE 配置中可用的工具：
 # - pdf_extract_text: 带位置的文本提取
+# - pdf_extract_all_pages: 提取所有页面的带位置文本
+# - pdf_replace_text: 保持版面进行文本替换/翻译
 # - pdf_add_invisible_text: OCR 可搜索层
 # - pdf_html_to_pdf: HTML→PDF 转换
 # - pdf_merge: PDF 合并
 # - pdf_page_info: 获取页面信息
 ```
+
+PDF 翻译流程：先用 `pdf_extract_all_pages` 提取所有页面的文本片段，翻译后再用
+`pdf_replace_text` 在保留原版面的前提下替换文本。如果 PDF 因非 Identity
+`CIDToGIDMap` 无法重新子集化，请指定 Unicode TTF 并使用 `mode: "new_font"`。
 
 在 [smithery.ai](https://smithery.ai) 或 [mcp.so](https://mcp.so) 上注册中。
 
@@ -134,6 +140,29 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 [dependencies]
 harumi = "0.7"
 ```
+
+### 获取 CJK 字体
+
+用于日文、中文和韩文 PDF 处理，请从 Google Fonts（免费，OFL 许可）下载 **NotoSansCJK 字体**：
+
+```bash
+# 日文
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKjp-Regular.ttf
+
+# 简体中文
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKsc-Regular.ttf
+
+# 繁体中文
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKtc-Regular.ttf
+
+# 韩文
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKkr-Regular.ttf
+```
+
+**其他来源：**
+- **Google Fonts 网站**：https://fonts.google.com（搜索 "Noto Sans CJK"）
+- **Adobe Fonts**：https://fonts.adobe.com（订阅版本）
+- **系统字体**：使用 `fc-list | grep -i noto` 检查是否已安装
 
 ### 不可见 OCR 文本层
 
@@ -306,7 +335,9 @@ let n = doc.page(1)?.replace_text_resubset("Hello", "中文字", font_bytes)?;
 doc.save("output.pdf")?;
 ```
 
-> 需要提供原始未子集化的字体文件。仅支持 CIDFontType2（harumi 嵌入格式）。
+> 需要提供原始未子集化的字体文件。仅支持使用 `CIDToGIDMap /Identity` 的 CIDFontType2（harumi 嵌入格式）。
+> 其他工具生成的 PDF 可能使用非 Identity `CIDToGIDMap`；这种情况下请使用新嵌入字体的
+> `replace_text`，或 MCP `pdf_replace_text` 的 `mode: "new_font"`。
 
 ### 读写 PDF 元数据
 
@@ -736,7 +767,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v0.5** | `add_link_url`、`add_link_internal` — 可点击 PDF 链接注释；`add_bookmark` — 含 CJK UTF-16BE 标题的文档大纲/书签；`HeaderFooter` + `{{page}}`/`{{total}}`；安全修复 |
 | **v0.6** | 加密 PDF 读取（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；标记注释（高亮、下划线、删除线、便利贴）；AcroForm `form_fields()` / `fill_form()`；AGL 表格 +116 条目；Identity-H 文字提取回退 |
 | **v0.7** *（当前）* | `set_encryption` — 写入密码保护 PDF；`add_squiggly` — 波浪下划线注释；页面框全类型支持（裁切框、修边框、出血框、媒体框读写） |
-| **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；`cargo semver-checks` CI |
+| **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；MCP `pdf_replace_text` 保持版面的翻译流程和非 Identity `CIDToGIDMap` 诊断；`cargo semver-checks` CI |
 
 ---
 

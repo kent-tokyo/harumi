@@ -57,8 +57,10 @@ fn set_encryption_after_save_returns_error() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap()
-        .add_invisible_text("test", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("test", font, [72.0, 700.0], 12.0)
+        .unwrap();
     let _ = doc.save_to_bytes().unwrap();
     assert!(matches!(
         doc.set_encryption("pw", "pw"),
@@ -72,8 +74,10 @@ fn encrypted_pdf_with_content_roundtrips() {
 
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap()
-        .add_invisible_text("日本語テスト", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("日本語テスト", font, [72.0, 700.0], 12.0)
+        .unwrap();
     doc.set_encryption("pw", "owpw").unwrap();
     let bytes = doc.save_to_bytes().unwrap();
 
@@ -148,8 +152,10 @@ fn aes256_after_save_returns_error() {
     let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap()
-        .add_invisible_text("test", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("test", font, [72.0, 700.0], 12.0)
+        .unwrap();
     let _ = doc.save_to_bytes().unwrap();
     assert!(matches!(
         doc.set_encryption_aes256("pw", "pw"),
@@ -162,8 +168,10 @@ fn aes256_encrypted_pdf_with_content_roundtrips() {
     let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap()
-        .add_invisible_text("日本語テスト", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("日本語テスト", font, [72.0, 700.0], 12.0)
+        .unwrap();
     doc.set_encryption_aes256("pw", "owpw").unwrap();
     let bytes = doc.save_to_bytes().unwrap();
 
@@ -181,7 +189,12 @@ fn aes256_encrypt_dict_has_v5_r6() {
 
     // Parse with lopdf and inspect the /Encrypt dictionary.
     let lpdf = lopdf::Document::load_from(bytes.as_slice()).unwrap();
-    let encrypt_ref = lpdf.trailer.get(b"Encrypt").unwrap().as_reference().unwrap();
+    let encrypt_ref = lpdf
+        .trailer
+        .get(b"Encrypt")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let encrypt_dict = lpdf.get_object(encrypt_ref).unwrap().as_dict().unwrap();
 
     let v = encrypt_dict.get(b"V").unwrap().as_i64().unwrap();

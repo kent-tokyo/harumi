@@ -26,7 +26,10 @@ fn media_box_matches_document_size() {
 #[test]
 fn set_media_box_changes_page_size() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    doc.page(1).unwrap().set_media_box([0.0, 0.0, 612.0, 792.0]).unwrap(); // Letter
+    doc.page(1)
+        .unwrap()
+        .set_media_box([0.0, 0.0, 612.0, 792.0])
+        .unwrap(); // Letter
     let bytes = doc.save_to_bytes().unwrap();
 
     let mut reloaded = Document::from_bytes(&bytes).unwrap();
@@ -60,7 +63,12 @@ fn set_crop_box_roundtrips() {
 #[test]
 fn set_crop_box_nan_returns_error() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    assert!(doc.page(1).unwrap().set_crop_box([f32::NAN, 0.0, 100.0, 100.0]).is_err());
+    assert!(
+        doc.page(1)
+            .unwrap()
+            .set_crop_box([f32::NAN, 0.0, 100.0, 100.0])
+            .is_err()
+    );
 }
 
 // ---------------------------------------------------------------------------

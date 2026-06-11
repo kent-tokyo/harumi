@@ -1,4 +1,4 @@
-use harumi::{Document, TextFieldOptions, FieldType};
+use harumi::{Document, FieldType, TextFieldOptions};
 
 #[test]
 fn create_text_field_then_read_back() {
@@ -79,7 +79,10 @@ fn create_radio_group() {
     // So we see 3 child fields (red, green, blue) with parent name "color"
     assert_eq!(fields.len(), 3);
     // All three children should have the parent name prepended
-    let color_fields: Vec<_> = fields.iter().filter(|f| f.name.starts_with("color")).collect();
+    let color_fields: Vec<_> = fields
+        .iter()
+        .filter(|f| f.name.starts_with("color"))
+        .collect();
     assert_eq!(color_fields.len(), 3);
     // Find the selected one
     let selected = color_fields.iter().find(|f| f.value == "green");
@@ -101,9 +104,7 @@ fn fill_created_field() {
     let mut reloaded = Document::from_bytes(&pdf_bytes).unwrap();
 
     // Fill the field
-    let count = reloaded
-        .fill_form(&[("username", "Alice Smith")])
-        .unwrap();
+    let count = reloaded.fill_form(&[("username", "Alice Smith")]).unwrap();
     assert_eq!(count, 1);
 
     let pdf_bytes2 = reloaded.save_to_bytes().unwrap();
@@ -157,7 +158,13 @@ fn radio_group_default_selection() {
 
     let fields = reloaded.form_fields().unwrap();
     // Find the selected child field (should be "small" selected by default)
-    let size_fields: Vec<_> = fields.iter().filter(|f| f.name.starts_with("size")).collect();
+    let size_fields: Vec<_> = fields
+        .iter()
+        .filter(|f| f.name.starts_with("size"))
+        .collect();
     let selected = size_fields.iter().find(|f| f.value == "small");
-    assert!(selected.is_some(), "first option 'small' should be selected by default");
+    assert!(
+        selected.is_some(),
+        "first option 'small' should be selected by default"
+    );
 }

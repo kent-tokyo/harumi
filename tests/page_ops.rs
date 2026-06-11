@@ -12,7 +12,7 @@ use lopdf::Object;
 // ---------------------------------------------------------------------------
 
 fn three_page_pdf() -> Vec<u8> {
-    use lopdf::{dictionary, Document as LDoc, Stream};
+    use lopdf::{Document as LDoc, Stream, dictionary};
 
     let mut doc = LDoc::with_version("1.4");
     let pages_id = doc.new_object_id();
@@ -148,11 +148,23 @@ fn smoke_remove_page_middle() {
     let out = doc.save_to_bytes().unwrap();
 
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
-    assert_eq!(reloaded.get_pages().len(), 2, "should have 2 pages after removal");
+    assert_eq!(
+        reloaded.get_pages().len(),
+        2,
+        "should have 2 pages after removal"
+    );
 
     // Original pages 1 (h=100) and 3 (h=300) should remain.
-    assert_eq!(page_height(&out, 1), 100.0, "new page 1 should be old page 1");
-    assert_eq!(page_height(&out, 2), 300.0, "new page 2 should be old page 3");
+    assert_eq!(
+        page_height(&out, 1),
+        100.0,
+        "new page 1 should be old page 1"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        300.0,
+        "new page 2 should be old page 3"
+    );
 }
 
 #[test]
@@ -161,15 +173,26 @@ fn smoke_remove_page_first() {
     doc.remove_page(1).unwrap();
     let out = doc.save_to_bytes().unwrap();
 
-    assert_eq!(page_height(&out, 1), 200.0, "new page 1 should be old page 2");
-    assert_eq!(page_height(&out, 2), 300.0, "new page 2 should be old page 3");
+    assert_eq!(
+        page_height(&out, 1),
+        200.0,
+        "new page 1 should be old page 2"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        300.0,
+        "new page 2 should be old page 3"
+    );
 }
 
 #[test]
 fn smoke_remove_page_only_one() {
     let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let err = doc.remove_page(1).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "should error on last page");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "should error on last page"
+    );
 }
 
 #[test]
@@ -191,8 +214,16 @@ fn smoke_insert_blank_prepend() {
 
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     assert_eq!(reloaded.get_pages().len(), 2, "should have 2 pages");
-    assert_eq!(page_height(&out, 1), 300.0, "page 1 should be the new blank (h=300)");
-    assert_eq!(page_height(&out, 2), 842.0, "page 2 should be the original A4");
+    assert_eq!(
+        page_height(&out, 1),
+        300.0,
+        "page 1 should be the new blank (h=300)"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        842.0,
+        "page 2 should be the original A4"
+    );
 }
 
 #[test]
@@ -203,8 +234,16 @@ fn smoke_insert_blank_append() {
 
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     assert_eq!(reloaded.get_pages().len(), 2);
-    assert_eq!(page_height(&out, 1), 842.0, "page 1 should be the original A4");
-    assert_eq!(page_height(&out, 2), 400.0, "page 2 should be the new blank (h=400)");
+    assert_eq!(
+        page_height(&out, 1),
+        842.0,
+        "page 1 should be the original A4"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        400.0,
+        "page 2 should be the new blank (h=400)"
+    );
 }
 
 #[test]
@@ -258,14 +297,20 @@ fn smoke_reorder_rotate_left() {
 fn smoke_reorder_length_mismatch() {
     let mut doc = Document::from_bytes(&three_page_pdf()).unwrap();
     let err = doc.reorder_pages(&[1, 2]).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "length mismatch should be InvalidInput");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "length mismatch should be InvalidInput"
+    );
 }
 
 #[test]
 fn smoke_reorder_duplicate() {
     let mut doc = Document::from_bytes(&three_page_pdf()).unwrap();
     let err = doc.reorder_pages(&[1, 1, 3]).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "duplicate should be InvalidInput");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "duplicate should be InvalidInput"
+    );
 }
 
 #[test]
@@ -293,20 +338,32 @@ fn smoke_page_ops_after_save_returns_error() {
     let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf")
         .expect("NotoSansJP-Regular.ttf not found");
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_invisible_text("test", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("test", font, [72.0, 700.0], 12.0)
+        .unwrap();
     doc.save_to_bytes().unwrap(); // sets finalized = true
 
     let err = doc.rotate_page(1, 90).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "rotate after save should error");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "rotate after save should error"
+    );
 
     let err = doc.remove_page(1).unwrap_err();
     assert!(matches!(err, Error::InvalidInput(_)));
 
     let err = doc.insert_blank_page(0, (595.0, 842.0)).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "insert_blank_page after save should error");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "insert_blank_page after save should error"
+    );
 
     let err = doc.reorder_pages(&[1]).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "reorder_pages after save should error");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "reorder_pages after save should error"
+    );
 
     assert!(doc.page(1).is_err(), "page() after save should error");
 }
@@ -318,10 +375,13 @@ fn smoke_page_ops_after_save_returns_error() {
 #[test]
 fn smoke_rotate_real_rotate_value() {
     // Craft a page dict with /Rotate stored as Object::Real (some PDF generators do this).
-    use lopdf::{dictionary, Document as LDoc, Object, Stream};
+    use lopdf::{Document as LDoc, Object, Stream, dictionary};
     let mut ldoc = LDoc::with_version("1.4");
     let pages_id = ldoc.new_object_id();
-    let sid = ldoc.add_object(Object::Stream(Stream::new(dictionary! {}, b"q Q\n".to_vec())));
+    let sid = ldoc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        b"q Q\n".to_vec(),
+    )));
     let page_id = ldoc.add_object(Object::Dictionary(dictionary! {
         "Type" => Object::Name(b"Page".to_vec()),
         "Parent" => Object::Reference(pages_id),
@@ -333,11 +393,14 @@ fn smoke_rotate_real_rotate_value() {
         "Contents" => Object::Reference(sid),
         "Resources" => Object::Dictionary(dictionary! {}),
     }));
-    ldoc.objects.insert(pages_id, Object::Dictionary(dictionary! {
-        "Type" => Object::Name(b"Pages".to_vec()),
-        "Kids" => Object::Array(vec![Object::Reference(page_id)]),
-        "Count" => Object::Integer(1),
-    }));
+    ldoc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            "Count" => Object::Integer(1),
+        }),
+    );
     let cat = ldoc.add_object(Object::Dictionary(dictionary! {
         "Type" => Object::Name(b"Catalog".to_vec()),
         "Pages" => Object::Reference(pages_id),
@@ -368,7 +431,9 @@ fn smoke_rotate_zero_is_noop() {
     let pages = reloaded.get_pages();
     let page = reloaded.get_object(pages[&1]).unwrap().as_dict().unwrap();
     // /Rotate 0 may or may not be written; either way the value is 0.
-    let rotate = page.get(b"Rotate").ok()
+    let rotate = page
+        .get(b"Rotate")
+        .ok()
         .and_then(|o| o.as_i64().ok())
         .unwrap_or(0);
     assert_eq!(rotate, 0, "zero rotation should leave page at 0°");
@@ -382,21 +447,30 @@ fn smoke_rotate_zero_is_noop() {
 fn smoke_insert_blank_nan_size() {
     let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let err = doc.insert_blank_page(0, (f32::NAN, 842.0)).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "NaN size should return InvalidInput");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "NaN size should return InvalidInput"
+    );
 }
 
 #[test]
 fn smoke_insert_blank_zero_size() {
     let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let err = doc.insert_blank_page(0, (0.0, 842.0)).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "zero width should return InvalidInput");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "zero width should return InvalidInput"
+    );
 }
 
 #[test]
 fn smoke_insert_blank_negative_size() {
     let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let err = doc.insert_blank_page(0, (595.0, -100.0)).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "negative height should return InvalidInput");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "negative height should return InvalidInput"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +503,10 @@ fn smoke_insert_blank_then_add_text() {
 
     let font = doc.embed_font(&font_bytes).unwrap();
     // Add text to the newly inserted blank page (page 1)
-    doc.page(1).unwrap().add_invisible_text("新しいページ", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("新しいページ", font, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
@@ -478,12 +555,22 @@ fn smoke_merge_then_add_text() {
         .expect("NotoSansJP-Regular.ttf not found");
     let font = base.embed_font(&font_bytes).unwrap();
     // Add to page 2 (originally other's page 1) and page 1 (base's original page)
-    base.page(1).unwrap().add_invisible_text("Hello", font, [72.0, 700.0], 12.0).unwrap();
-    base.page(2).unwrap().add_invisible_text("World", font, [72.0, 600.0], 12.0).unwrap();
+    base.page(1)
+        .unwrap()
+        .add_invisible_text("Hello", font, [72.0, 700.0], 12.0)
+        .unwrap();
+    base.page(2)
+        .unwrap()
+        .add_invisible_text("World", font, [72.0, 600.0], 12.0)
+        .unwrap();
 
     let out = base.save_to_bytes().unwrap();
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
-    assert_eq!(reloaded.get_pages().len(), 4, "page count unchanged after add_text");
+    assert_eq!(
+        reloaded.get_pages().len(),
+        4,
+        "page count unchanged after add_text"
+    );
 }
 
 #[test]
@@ -495,10 +582,17 @@ fn smoke_merge_rejects_pending() {
     let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf")
         .expect("NotoSansJP-Regular.ttf not found");
     let font = other.embed_font(&font_bytes).unwrap();
-    other.page(1).unwrap().add_invisible_text("pending", font, [72.0, 700.0], 12.0).unwrap();
+    other
+        .page(1)
+        .unwrap()
+        .add_invisible_text("pending", font, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let err = base.merge_from(other).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "expected InvalidInput, got {err:?}");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
 }
 
 #[test]
@@ -509,12 +603,18 @@ fn smoke_merge_rejects_finalized() {
         .expect("NotoSansJP-Regular.ttf not found");
     let mut base = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let font = base.embed_font(&font_bytes).unwrap();
-    base.page(1).unwrap().add_invisible_text("x", font, [72.0, 700.0], 12.0).unwrap();
+    base.page(1)
+        .unwrap()
+        .add_invisible_text("x", font, [72.0, 700.0], 12.0)
+        .unwrap();
     let _ = base.save_to_bytes().unwrap(); // finalize (pending ops → finalized=true)
 
     let other = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
     let err = base.merge_from(other).unwrap_err();
-    assert!(matches!(err, Error::InvalidInput(_)), "expected InvalidInput, got {err:?}");
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
 }
 
 #[test]
@@ -530,7 +630,13 @@ fn smoke_merge_two_then_two() {
     let other = Document::from_bytes(&other_bytes).unwrap();
     base.merge_from(other).unwrap();
     let out = base.save_to_bytes().unwrap();
-    assert_eq!(lopdf::Document::load_from(out.as_slice()).unwrap().get_pages().len(), 4);
+    assert_eq!(
+        lopdf::Document::load_from(out.as_slice())
+            .unwrap()
+            .get_pages()
+            .len(),
+        4
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -542,9 +648,17 @@ fn smoke_extract_subset() {
     // Extract only page 2 from a 3-page doc → 1-page result with height=200
     let doc = Document::from_bytes(&three_page_pdf()).unwrap();
     let mut extracted = doc.extract_pages(&[2]).unwrap();
-    assert_eq!(extracted.page_count(), 1, "extracted doc should have 1 page");
+    assert_eq!(
+        extracted.page_count(),
+        1,
+        "extracted doc should have 1 page"
+    );
     let out = extracted.save_to_bytes().unwrap();
-    assert_eq!(page_height(&out, 1), 200.0, "extracted page should have height=200 (old page 2)");
+    assert_eq!(
+        page_height(&out, 1),
+        200.0,
+        "extracted page should have height=200 (old page 2)"
+    );
 }
 
 #[test]
@@ -554,8 +668,16 @@ fn smoke_extract_range() {
     let mut extracted = doc.extract_pages(&[1, 2]).unwrap();
     assert_eq!(extracted.page_count(), 2);
     let out = extracted.save_to_bytes().unwrap();
-    assert_eq!(page_height(&out, 1), 100.0, "page 1 should be old page 1 (h=100)");
-    assert_eq!(page_height(&out, 2), 200.0, "page 2 should be old page 2 (h=200)");
+    assert_eq!(
+        page_height(&out, 1),
+        100.0,
+        "page 1 should be old page 1 (h=100)"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        200.0,
+        "page 2 should be old page 2 (h=200)"
+    );
 }
 
 #[test]
@@ -565,8 +687,16 @@ fn smoke_extract_order_preserved() {
     let mut extracted = doc.extract_pages(&[3, 1]).unwrap();
     assert_eq!(extracted.page_count(), 2);
     let out = extracted.save_to_bytes().unwrap();
-    assert_eq!(page_height(&out, 1), 300.0, "new page 1 should be old page 3 (h=300)");
-    assert_eq!(page_height(&out, 2), 100.0, "new page 2 should be old page 1 (h=100)");
+    assert_eq!(
+        page_height(&out, 1),
+        300.0,
+        "new page 1 should be old page 3 (h=300)"
+    );
+    assert_eq!(
+        page_height(&out, 2),
+        100.0,
+        "new page 2 should be old page 1 (h=100)"
+    );
 }
 
 #[test]
@@ -641,14 +771,21 @@ fn regression_remove_page_pending_cleared() {
     let mut doc = Document::from_bytes(&three_page_pdf()).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
     // Queue ops for page 2 then remove it before save.
-    doc.page(2).unwrap().add_invisible_text("これは消えるページ", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_invisible_text("これは消えるページ", font, [72.0, 700.0], 12.0)
+        .unwrap();
     doc.remove_page(2).unwrap();
 
     // Must not error — pre-fix would either fail (object gone) or silently write
     // orphaned data (if object was still there).
     let out = doc.save_to_bytes().unwrap();
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
-    assert_eq!(reloaded.get_pages().len(), 2, "page 2 removed: 3 - 1 = 2 pages");
+    assert_eq!(
+        reloaded.get_pages().len(),
+        2,
+        "page 2 removed: 3 - 1 = 2 pages"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +806,7 @@ fn regression_remove_page_pending_cleared() {
 /// Root /Pages has NO MediaBox; intermediate /Pages has MediaBox [0 0 w h].
 /// Both pages inherit MediaBox from the intermediate node.
 fn nested_pages_pdf(width: f32, height: f32) -> Vec<u8> {
-    use lopdf::{dictionary, Document as LDoc, Stream};
+    use lopdf::{Document as LDoc, Stream, dictionary};
 
     let mut doc = LDoc::with_version("1.4");
 
@@ -694,26 +831,32 @@ fn nested_pages_pdf(width: f32, height: f32) -> Vec<u8> {
     let p2 = make_page(&mut doc, inter_pages_id);
 
     // Intermediate /Pages: has the MediaBox that pages inherit.
-    doc.set_object(inter_pages_id, Object::Dictionary(dictionary! {
-        "Type" => Object::Name(b"Pages".to_vec()),
-        "Parent" => Object::Reference(root_pages_id),
-        "MediaBox" => Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Real(width), Object::Real(height),
-        ]),
-        "Count" => Object::Integer(2),
-        "Kids" => Object::Array(vec![
-            Object::Reference(p1),
-            Object::Reference(p2),
-        ])
-    }));
+    doc.set_object(
+        inter_pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Parent" => Object::Reference(root_pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Real(width), Object::Real(height),
+            ]),
+            "Count" => Object::Integer(2),
+            "Kids" => Object::Array(vec![
+                Object::Reference(p1),
+                Object::Reference(p2),
+            ])
+        }),
+    );
 
     // Root /Pages: no MediaBox of its own.
-    doc.set_object(root_pages_id, Object::Dictionary(dictionary! {
-        "Type" => Object::Name(b"Pages".to_vec()),
-        "Count" => Object::Integer(2),
-        "Kids" => Object::Array(vec![Object::Reference(inter_pages_id)])
-    }));
+    doc.set_object(
+        root_pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Count" => Object::Integer(2),
+            "Kids" => Object::Array(vec![Object::Reference(inter_pages_id)])
+        }),
+    );
 
     let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
         "Type" => Object::Name(b"Catalog".to_vec()),

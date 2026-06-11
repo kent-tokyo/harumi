@@ -1,23 +1,66 @@
-pub(crate) mod shapes;
 #[cfg(feature = "image")]
 pub(crate) mod image;
+pub(crate) mod shapes;
 
 use std::collections::BTreeMap;
 
-use lopdf::{Dictionary, Object};
 use crate::document::Color;
+use lopdf::{Dictionary, Object};
 
 /// A pending draw operation (non-text).
 pub(crate) enum DrawOp {
-    Rect       { rect: [f32; 4], color: Color, opacity: f32 },
-    RectStroke { rect: [f32; 4], color: Color, line_width: f32, opacity: f32 },
-    Line       { from: [f32; 2], to: [f32; 2], color: Color, width: f32, opacity: f32 },
-    Polygon    { points: Vec<[f32; 2]>, color: Color, opacity: f32, filled: bool, stroke_width: f32 },
-    Polyline   { points: Vec<[f32; 2]>, color: Color, width: f32, opacity: f32 },
-    Ellipse    { rect: [f32; 4], color: Color, opacity: f32, filled: bool, stroke_width: f32 },
-    Path       { points: Vec<[f32; 2]>, closed: bool, color: Color, opacity: f32, filled: bool, stroke_width: f32 },
+    Rect {
+        rect: [f32; 4],
+        color: Color,
+        opacity: f32,
+    },
+    RectStroke {
+        rect: [f32; 4],
+        color: Color,
+        line_width: f32,
+        opacity: f32,
+    },
+    Line {
+        from: [f32; 2],
+        to: [f32; 2],
+        color: Color,
+        width: f32,
+        opacity: f32,
+    },
+    Polygon {
+        points: Vec<[f32; 2]>,
+        color: Color,
+        opacity: f32,
+        filled: bool,
+        stroke_width: f32,
+    },
+    Polyline {
+        points: Vec<[f32; 2]>,
+        color: Color,
+        width: f32,
+        opacity: f32,
+    },
+    Ellipse {
+        rect: [f32; 4],
+        color: Color,
+        opacity: f32,
+        filled: bool,
+        stroke_width: f32,
+    },
+    Path {
+        points: Vec<[f32; 2]>,
+        closed: bool,
+        color: Color,
+        opacity: f32,
+        filled: bool,
+        stroke_width: f32,
+    },
     #[cfg(feature = "image")]
-    Image      { bytes: Vec<u8>, rect: [f32; 4], opacity: f32 },
+    Image {
+        bytes: Vec<u8>,
+        rect: [f32; 4],
+        opacity: f32,
+    },
 }
 
 /// Maps opacity values → `/ExtGState` resource names, deduplicating equal opacities.
@@ -29,7 +72,10 @@ pub(crate) struct ExtGStateRegistry {
 
 impl ExtGStateRegistry {
     pub fn new() -> Self {
-        Self { map: BTreeMap::new(), next_idx: 0 }
+        Self {
+            map: BTreeMap::new(),
+            next_idx: 0,
+        }
     }
 
     pub fn is_empty(&self) -> bool {

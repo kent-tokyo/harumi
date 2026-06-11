@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use lopdf::{Dictionary, Object, ObjectId, Stream};
 
+use super::{FontKind, cmap};
 use crate::error::Result;
-use super::{cmap, FontKind};
 
 pub struct EmbedParams<'a> {
     pub font_name: &'a str,
@@ -29,11 +29,20 @@ pub fn embed_cid_font(doc: &mut lopdf::Document, params: EmbedParams<'_>) -> Res
     // --- FontDescriptor ---
     let mut descriptor = Dictionary::new();
     descriptor.set("Type", Object::Name(b"FontDescriptor".to_vec()));
-    descriptor.set("FontName", Object::Name(params.font_name.as_bytes().to_vec()));
+    descriptor.set(
+        "FontName",
+        Object::Name(params.font_name.as_bytes().to_vec()),
+    );
     descriptor.set("Flags", Object::Integer(4)); // Symbolic
     descriptor.set(
         "FontBBox",
-        Object::Array(params.font_bbox.iter().map(|&v| Object::Integer(v as i64)).collect()),
+        Object::Array(
+            params
+                .font_bbox
+                .iter()
+                .map(|&v| Object::Integer(v as i64))
+                .collect(),
+        ),
     );
     descriptor.set("ItalicAngle", Object::Integer(0));
     descriptor.set("Ascent", Object::Integer(params.ascent as i64));
@@ -68,7 +77,10 @@ pub fn embed_cid_font(doc: &mut lopdf::Document, params: EmbedParams<'_>) -> Res
     let mut cid_font = Dictionary::new();
     cid_font.set("Type", Object::Name(b"Font".to_vec()));
     cid_font.set("Subtype", Object::Name(b"CIDFontType2".to_vec()));
-    cid_font.set("BaseFont", Object::Name(params.font_name.as_bytes().to_vec()));
+    cid_font.set(
+        "BaseFont",
+        Object::Name(params.font_name.as_bytes().to_vec()),
+    );
     cid_font.set(
         "CIDSystemInfo",
         Object::Dictionary({
@@ -94,9 +106,15 @@ pub fn embed_cid_font(doc: &mut lopdf::Document, params: EmbedParams<'_>) -> Res
     let mut type0 = Dictionary::new();
     type0.set("Type", Object::Name(b"Font".to_vec()));
     type0.set("Subtype", Object::Name(b"Type0".to_vec()));
-    type0.set("BaseFont", Object::Name(params.font_name.as_bytes().to_vec()));
+    type0.set(
+        "BaseFont",
+        Object::Name(params.font_name.as_bytes().to_vec()),
+    );
     type0.set("Encoding", Object::Name(b"Identity-H".to_vec()));
-    type0.set("DescendantFonts", Object::Array(vec![Object::Reference(cid_id)]));
+    type0.set(
+        "DescendantFonts",
+        Object::Array(vec![Object::Reference(cid_id)]),
+    );
     type0.set("ToUnicode", Object::Reference(to_unicode_id));
     let type0_id = doc.add_object(Object::Dictionary(type0));
 
@@ -113,9 +131,7 @@ pub(crate) fn build_widths_array(
         return vec![];
     }
 
-    let scale = |adv: u16| -> i64 {
-        (adv as f64 * 1000.0 / units_per_em as f64).round() as i64
-    };
+    let scale = |adv: u16| -> i64 { (adv as f64 * 1000.0 / units_per_em as f64).round() as i64 };
 
     // Group consecutive GIDs into runs.
     let gids: Vec<u16> = gid_to_advance.keys().copied().collect();
@@ -124,10 +140,20 @@ pub(crate) fn build_widths_array(
 
     while i < gids.len() {
         let run_start = gids[i];
-        let mut run: Vec<Object> = vec![Object::Integer(scale(gid_to_advance.get(&gids[i]).copied().unwrap_or(units_per_em)))];
+        let mut run: Vec<Object> = vec![Object::Integer(scale(
+            gid_to_advance
+                .get(&gids[i])
+                .copied()
+                .unwrap_or(units_per_em),
+        ))];
         let mut j = i + 1;
         while j < gids.len() && gids[j] == gids[j - 1] + 1 {
-            run.push(Object::Integer(scale(gid_to_advance.get(&gids[j]).copied().unwrap_or(units_per_em))));
+            run.push(Object::Integer(scale(
+                gid_to_advance
+                    .get(&gids[j])
+                    .copied()
+                    .unwrap_or(units_per_em),
+            )));
             j += 1;
         }
         result.push(Object::Integer(run_start as i64));

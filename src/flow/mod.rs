@@ -29,8 +29,8 @@ pub mod html;
 use ttf_parser::Face;
 
 use crate::{
-    document::{glyph_advance_pt, wrap_paragraph},
     Document, FontHandle, Result,
+    document::{glyph_advance_pt, wrap_paragraph},
 };
 
 /// Page margin settings in PDF points.
@@ -45,7 +45,12 @@ pub struct Margins {
 impl Margins {
     /// All four margins set to the same value.
     pub fn uniform(pt: f32) -> Self {
-        Margins { top: pt, right: pt, bottom: pt, left: pt }
+        Margins {
+            top: pt,
+            right: pt,
+            bottom: pt,
+            left: pt,
+        }
     }
 
     /// Standard 20 mm (≈ 56.7 pt) margins suitable for A4 documents.
@@ -95,14 +100,23 @@ pub struct HeaderFooter {
 
 impl Default for HeaderFooter {
     fn default() -> Self {
-        HeaderFooter { left: None, center: None, right: None, font_size: 9.0, color: crate::Color::Rgb([0.3, 0.3, 0.3]) }
+        HeaderFooter {
+            left: None,
+            center: None,
+            right: None,
+            font_size: 9.0,
+            color: crate::Color::Rgb([0.3, 0.3, 0.3]),
+        }
     }
 }
 
 impl HeaderFooter {
     /// A centered footer showing `"page / total"` in dark gray at 9 pt.
     pub fn page_number() -> Self {
-        HeaderFooter { center: Some("{{page}} / {{total}}".into()), ..Default::default() }
+        HeaderFooter {
+            center: Some("{{page}} / {{total}}".into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -191,19 +205,39 @@ pub struct InlineSpan {
 impl InlineSpan {
     /// Plain black text.
     pub fn plain(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: false, color: crate::Color::Rgb([0.0; 3]) }
+        InlineSpan {
+            text: text.into(),
+            bold: false,
+            italic: false,
+            color: crate::Color::Rgb([0.0; 3]),
+        }
     }
     /// Bold text.
     pub fn bold(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: true, italic: false, color: crate::Color::Rgb([0.0; 3]) }
+        InlineSpan {
+            text: text.into(),
+            bold: true,
+            italic: false,
+            color: crate::Color::Rgb([0.0; 3]),
+        }
     }
     /// Italic text.
     pub fn italic(text: impl Into<String>) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: true, color: crate::Color::Rgb([0.0; 3]) }
+        InlineSpan {
+            text: text.into(),
+            bold: false,
+            italic: true,
+            color: crate::Color::Rgb([0.0; 3]),
+        }
     }
     /// Colored text (bold and italic both false).
     pub fn colored(text: impl Into<String>, color: impl Into<crate::Color>) -> Self {
-        InlineSpan { text: text.into(), bold: false, italic: false, color: color.into() }
+        InlineSpan {
+            text: text.into(),
+            bold: false,
+            italic: false,
+            color: color.into(),
+        }
     }
 }
 
@@ -298,7 +332,13 @@ impl FlowDocument {
 
     // ── Measurement ─────────────────────────────────────────────────────────
 
-    fn measure_lines(&self, text: &str, font_size: f32, width: f32, font_bytes: &[u8]) -> Vec<String> {
+    fn measure_lines(
+        &self,
+        text: &str,
+        font_size: f32,
+        width: f32,
+        font_bytes: &[u8],
+    ) -> Vec<String> {
         match Face::parse(font_bytes, 0) {
             Ok(face) => text
                 .split('\n')
@@ -344,14 +384,21 @@ impl FlowDocument {
         let level = level.clamp(1, 6) as usize;
         let font_size = self.options.body_font_size * self.options.heading_size_scale[level - 1];
         let line_h = font_size * self.options.line_height_factor;
-        let font_bytes = self.heading_font_bytes.as_deref().unwrap_or(&self.body_font_bytes);
+        let font_bytes = self
+            .heading_font_bytes
+            .as_deref()
+            .unwrap_or(&self.body_font_bytes);
         let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
 
         // Keep pre-heading spacing + the full block together on one page.
         // Compute spacing BEFORE ensure_space so that the heading is not orphaned at the
         // bottom of a page with only its spacing above it.
         let block_h = lines.len() as f32 * line_h;
-        let pre_spacing = if self.content_y > 0.0 { self.options.paragraph_spacing * 1.5 } else { 0.0 };
+        let pre_spacing = if self.content_y > 0.0 {
+            self.options.paragraph_spacing * 1.5
+        } else {
+            0.0
+        };
         self.ensure_space(pre_spacing + block_h)?;
         // After a potential page break content_y resets to 0; only add spacing when still
         // on the same page (content_y > 0 means we didn't just start a fresh page).
@@ -363,7 +410,8 @@ impl FlowDocument {
         if self.options.auto_bookmarks {
             let bm_y = self.pdf_top_y(self.content_y);
             let bm_page = self.current_page;
-            self.outline_entries.push((text.to_owned(), bm_page, bm_y, level as u8));
+            self.outline_entries
+                .push((text.to_owned(), bm_page, bm_y, level as u8));
         }
 
         let x = self.options.margins.left;
@@ -372,7 +420,13 @@ impl FlowDocument {
 
         for line in &lines {
             let y = self.pdf_baseline_y(self.content_y, font_size);
-            self.inner.page(current_page)?.add_text(line, font, [x, y], font_size, [0.0, 0.0, 0.0])?;
+            self.inner.page(current_page)?.add_text(
+                line,
+                font,
+                [x, y],
+                font_size,
+                [0.0, 0.0, 0.0],
+            )?;
             self.content_y += line_h;
         }
 
@@ -392,7 +446,8 @@ impl FlowDocument {
 
         let font_size = self.options.body_font_size;
         let line_h = font_size * self.options.line_height_factor;
-        let lines = self.measure_lines(text, font_size, self.content_width(), &self.body_font_bytes);
+        let lines =
+            self.measure_lines(text, font_size, self.content_width(), &self.body_font_bytes);
 
         let x = self.options.margins.left;
         let font = self.body_font;
@@ -401,7 +456,13 @@ impl FlowDocument {
             self.ensure_space(line_h)?;
             let current_page = self.current_page;
             let y = self.pdf_baseline_y(self.content_y, font_size);
-            self.inner.page(current_page)?.add_text(line, font, [x, y], font_size, [0.0, 0.0, 0.0])?;
+            self.inner.page(current_page)?.add_text(
+                line,
+                font,
+                [x, y],
+                font_size,
+                [0.0, 0.0, 0.0],
+            )?;
             self.content_y += line_h;
         }
 
@@ -475,25 +536,34 @@ impl FlowDocument {
             while run_start < char_cursor + line_len {
                 let span_idx = char_spans[run_start].1;
                 let mut run_end = run_start + 1;
-                while run_end < char_cursor + line_len
-                    && char_spans[run_end].1 == span_idx
-                {
+                while run_end < char_cursor + line_len && char_spans[run_end].1 == span_idx {
                     run_end += 1;
                 }
 
-                let run_text: String =
-                    char_spans[run_start..run_end].iter().map(|(ch, _)| ch).collect();
+                let run_text: String = char_spans[run_start..run_end]
+                    .iter()
+                    .map(|(ch, _)| ch)
+                    .collect();
                 let span = non_empty[span_idx];
 
                 self.inner.page(current_page)?.add_text_styled(
-                    &run_text, font, [x, y], font_size, span.color, span.bold, span.italic,
+                    &run_text,
+                    font,
+                    [x, y],
+                    font_size,
+                    span.color,
+                    span.bold,
+                    span.italic,
                 )?;
 
                 // Advance x by measured width of the run.
                 if let Some(ref f) = face {
                     x += run_text
                         .chars()
-                        .map(|ch| crate::document::glyph_advance_pt(f, ch, font_size))
+                        .map(|ch| {
+                            crate::document::glyph_advance_pt(f, ch, font_size)
+                                .unwrap_or(font_size * 0.5)
+                        })
                         .sum::<f32>();
                 }
 
@@ -565,12 +635,24 @@ impl FlowDocument {
                 let mut page = self.inner.page(page_num)?;
 
                 // Top separator (also acts as outer top border for first row)
-                page.add_line([x_left, row_top_y], [x_right, row_top_y], border_color, border_lw, 1.0)?;
+                page.add_line(
+                    [x_left, row_top_y],
+                    [x_right, row_top_y],
+                    border_color,
+                    border_lw,
+                    1.0,
+                )?;
 
                 // Key cell text
                 for (i, line) in key_lines.iter().enumerate() {
                     let y = row_top_y - cell_pad - font_size - i as f32 * line_h;
-                    page.add_text(line, font, [x_left + cell_pad, y], font_size, [0.0, 0.0, 0.0])?;
+                    page.add_text(
+                        line,
+                        font,
+                        [x_left + cell_pad, y],
+                        font_size,
+                        [0.0, 0.0, 0.0],
+                    )?;
                 }
 
                 // Value cell text
@@ -580,11 +662,23 @@ impl FlowDocument {
                 }
 
                 // Vertical divider between key and value columns
-                page.add_line([x_divider, row_top_y], [x_divider, row_bot_y], border_color, border_lw, 1.0)?;
+                page.add_line(
+                    [x_divider, row_top_y],
+                    [x_divider, row_bot_y],
+                    border_color,
+                    border_lw,
+                    1.0,
+                )?;
 
                 // Bottom border on last row
                 if idx == last_idx {
-                    page.add_line([x_left, row_bot_y], [x_right, row_bot_y], border_color, border_lw, 1.0)?;
+                    page.add_line(
+                        [x_left, row_bot_y],
+                        [x_right, row_bot_y],
+                        border_color,
+                        border_lw,
+                        1.0,
+                    )?;
                 }
             }
         }
@@ -624,11 +718,18 @@ impl FlowDocument {
 
         let font_size = self.options.body_font_size;
         let line_h = font_size * self.options.line_height_factor;
-        let font_bytes = self.code_font_bytes.as_deref().unwrap_or(&self.body_font_bytes);
+        let font_bytes = self
+            .code_font_bytes
+            .as_deref()
+            .unwrap_or(&self.body_font_bytes);
         let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
 
         let block_h = lines.len() as f32 * line_h;
-        let pre_spacing = if self.content_y > 0.0 { self.options.paragraph_spacing } else { 0.0 };
+        let pre_spacing = if self.content_y > 0.0 {
+            self.options.paragraph_spacing
+        } else {
+            0.0
+        };
         self.ensure_space(pre_spacing + block_h)?;
         if self.content_y > 0.0 {
             self.content_y += pre_spacing;
@@ -644,18 +745,28 @@ impl FlowDocument {
         if let Some(bg_color) = self.options.code_background {
             let right_x = self.options.page_size.0 - self.options.margins.right;
             let padding = 2.0;
-            self.inner.page(current_page)?
-                .add_rect(
-                    [x - padding, y_bottom - padding, right_x - x + 2.0 * padding, block_h + 2.0 * padding],
-                    bg_color,
-                    1.0,
-                )?;
+            self.inner.page(current_page)?.add_rect(
+                [
+                    x - padding,
+                    y_bottom - padding,
+                    right_x - x + 2.0 * padding,
+                    block_h + 2.0 * padding,
+                ],
+                bg_color,
+                1.0,
+            )?;
         }
 
         // Render the text lines
         for line in &lines {
             let y = self.pdf_baseline_y(self.content_y, font_size);
-            self.inner.page(current_page)?.add_text(line, font, [x, y], font_size, [0.0, 0.0, 0.0])?;
+            self.inner.page(current_page)?.add_text(
+                line,
+                font,
+                [x, y],
+                font_size,
+                [0.0, 0.0, 0.0],
+            )?;
             self.content_y += line_h;
         }
 
@@ -687,15 +798,33 @@ impl FlowDocument {
         // Render header on every page.
         if let Some(ref hdr) = self.options.header.clone() {
             for pg in 1..=total_pages {
-                render_hf_on_page(&mut self.inner, pg, hdr, total_pages, true, body_font,
-                    self.options.page_size, self.options.margins, face.as_ref())?;
+                render_hf_on_page(
+                    &mut self.inner,
+                    pg,
+                    hdr,
+                    total_pages,
+                    true,
+                    body_font,
+                    self.options.page_size,
+                    self.options.margins,
+                    face.as_ref(),
+                )?;
             }
         }
         // Render footer on every page.
         if let Some(ref ftr) = self.options.footer.clone() {
             for pg in 1..=total_pages {
-                render_hf_on_page(&mut self.inner, pg, ftr, total_pages, false, body_font,
-                    self.options.page_size, self.options.margins, face.as_ref())?;
+                render_hf_on_page(
+                    &mut self.inner,
+                    pg,
+                    ftr,
+                    total_pages,
+                    false,
+                    body_font,
+                    self.options.page_size,
+                    self.options.margins,
+                    face.as_ref(),
+                )?;
             }
         }
 
@@ -721,7 +850,10 @@ fn hf_subst(tmpl: &str, page: u32, total: u32) -> String {
 /// Measure the rendered width of `text` in PDF points given a parsed face.
 fn hf_measure(face: Option<&Face<'_>>, text: &str, font_size: f32) -> f32 {
     match face {
-        Some(f) => text.chars().map(|ch| glyph_advance_pt(f, ch, font_size)).sum(),
+        Some(f) => text
+            .chars()
+            .map(|ch| glyph_advance_pt(f, ch, font_size).unwrap_or(font_size * 0.5))
+            .sum(),
         // Fallback: use character count (not byte length) so CJK multi-byte chars don't
         // over-estimate the width and mis-position right-aligned / centered text.
         None => text.chars().count() as f32 * font_size * 0.5,
@@ -741,7 +873,11 @@ fn render_hf_on_page(
     margins: Margins,
     face: Option<&Face<'_>>,
 ) -> Result<()> {
-    let fs = if hf.font_size > 0.0 { hf.font_size } else { 9.0 };
+    let fs = if hf.font_size > 0.0 {
+        hf.font_size
+    } else {
+        9.0
+    };
     let color = hf.color;
     let margin_left = margins.left;
     let margin_right = margins.right;
@@ -756,19 +892,25 @@ fn render_hf_on_page(
 
     if let Some(ref tmpl) = hf.left {
         let text = hf_subst(tmpl, page_num, total_pages);
-        inner.page(page_num)?.add_text(&text, font, [margin_left, y], fs, color)?;
+        inner
+            .page(page_num)?
+            .add_text(&text, font, [margin_left, y], fs, color)?;
     }
     if let Some(ref tmpl) = hf.center {
         let text = hf_subst(tmpl, page_num, total_pages);
         let w = hf_measure(face, &text, fs);
         let x = margin_left + (content_w - w) / 2.0;
-        inner.page(page_num)?.add_text(&text, font, [x, y], fs, color)?;
+        inner
+            .page(page_num)?
+            .add_text(&text, font, [x, y], fs, color)?;
     }
     if let Some(ref tmpl) = hf.right {
         let text = hf_subst(tmpl, page_num, total_pages);
         let w = hf_measure(face, &text, fs);
         let x = page_size.0 - margin_right - w;
-        inner.page(page_num)?.add_text(&text, font, [x, y], fs, color)?;
+        inner
+            .page(page_num)?
+            .add_text(&text, font, [x, y], fs, color)?;
     }
 
     Ok(())

@@ -22,11 +22,18 @@ cargo build -p harumi-mcp
 
 # IDE 설정에서 사용 가능한 도구:
 # - pdf_extract_text: 위치 정보 포함 텍스트 추출
+# - pdf_extract_all_pages: 모든 페이지의 위치 정보 포함 텍스트 추출
+# - pdf_replace_text: 레이아웃을 유지한 텍스트 교체/번역
 # - pdf_add_invisible_text: OCR 검색 가능 레이어
 # - pdf_html_to_pdf: HTML→PDF 변환
 # - pdf_merge: PDF 병합
 # - pdf_page_info: 페이지 정보 조회
 ```
+
+PDF 번역은 `pdf_extract_all_pages` 로 모든 페이지의 텍스트 조각을 추출하고,
+번역한 뒤 `pdf_replace_text` 로 기존 레이아웃을 유지하며 교체합니다. 비 Identity
+`CIDToGIDMap` 때문에 재서브셋팅할 수 없는 PDF는 Unicode TTF를 지정하고
+`mode: "new_font"` 를 사용하세요.
 
 [smithery.ai](https://smithery.ai) 또는 [mcp.so](https://mcp.so)에 등록 예정.
 
@@ -134,6 +141,29 @@ JavaScript에는 [`pdf-lib`](https://pdf-lib.js.org/)가 있어서 폰트 서브
 [dependencies]
 harumi = "0.7"
 ```
+
+### CJK 글꼴 다운로드
+
+일본어, 중국어, 한국어 PDF 처리를 위해 Google Fonts(무료, OFL 라이선스)에서 **NotoSansCJK 글꼴**을 다운로드하세요:
+
+```bash
+# 일본어
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKjp-Regular.ttf
+
+# 간체 중국어
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKsc-Regular.ttf
+
+# 번체 중국어
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKtc-Regular.ttf
+
+# 한국어
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKkr-Regular.ttf
+```
+
+**다른 출처:**
+- **Google Fonts 웹사이트**: https://fonts.google.com ("Noto Sans CJK" 검색)
+- **Adobe Fonts**: https://fonts.adobe.com (구독 버전)
+- **시스템 글꼴**: `fc-list | grep -i noto` 로 이미 설치된 글꼴 확인
 
 ### 보이지 않는 OCR 텍스트 레이어
 
@@ -305,7 +335,9 @@ let n = doc.page(1)?.replace_text_resubset("Hello", "한국어", font_bytes)?;
 doc.save("output.pdf")?;
 ```
 
-> 원본 서브셋화되지 않은 폰트 파일이 필요합니다. CIDFontType2 폰트만 지원됩니다.
+> 원본 서브셋화되지 않은 폰트 파일이 필요합니다. `CIDToGIDMap /Identity` 를 사용하는 CIDFontType2 폰트만 지원됩니다.
+> 다른 도구가 만든 PDF는 비 Identity `CIDToGIDMap` 을 사용할 수 있습니다. 이 경우 새로 임베드한 폰트로
+> `replace_text` 를 사용하거나 MCP `pdf_replace_text` 의 `mode: "new_font"` 를 사용하세요.
 
 ### PDF 메타데이터 읽기/쓰기
 
@@ -735,7 +767,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v0.5** | `add_link_url`, `add_link_internal` — 클릭 가능한 PDF 링크 어노테이션; `add_bookmark` — CJK UTF-16BE 아웃라인; `HeaderFooter`; 보안 수정 |
 | **v0.6** | 암호화 PDF 읽기（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）; 마크업 주석（하이라이트·밑줄·취소선·메모）; AcroForm `form_fields()` / `fill_form()`; AGL 테이블 +116 항목; Identity-H 텍스트 추출 폴백 |
 | **v0.7** *（현재）* | `set_encryption` — 암호화된 PDF 저장; `add_squiggly` — 물결 밑줄 주석; 페이지 박스 전체 지원（크롭·트림·블리드·미디어 박스 읽기/쓰기） |
-| **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; `cargo semver-checks` CI |
+| **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; MCP `pdf_replace_text` 레이아웃 유지 번역 워크플로와 비 Identity `CIDToGIDMap` 진단; `cargo semver-checks` CI |
 
 ---
 

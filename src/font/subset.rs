@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use ttf_parser::Face;
 
-use crate::error::{Error, Result};
 use super::FontKind;
 use super::ttf_subset::{GlyphRemapper, subset as subsetter_subset};
+use crate::error::{Error, Result};
 
 pub struct SubsetResult {
     pub bytes: Vec<u8>,
@@ -51,8 +51,7 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
     }
 
     // Use ttf-parser for char→GID mapping (simpler API).
-    let face = Face::parse(ttf_bytes, 0)
-        .map_err(|e| Error::FontParse(e.to_string()))?;
+    let face = Face::parse(ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
     let units_per_em = face.units_per_em();
     let mut gids: Vec<u16> = vec![0]; // always include .notdef
@@ -98,22 +97,19 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
     if gids.len() > u16::MAX as usize {
         return Err(Error::FontParse(format!(
             "font has {} glyphs; maximum supported is {}",
-            gids.len(), u16::MAX
+            gids.len(),
+            u16::MAX
         )));
     }
 
     let gid_to_char: BTreeMap<u16, char> = orig_gid_to_char
         .into_iter()
-        .filter_map(|(orig, ch)| {
-            remapper.get(orig).map(|new| (new as u16, ch))
-        })
+        .filter_map(|(orig, ch)| remapper.get(orig).map(|new| (new as u16, ch)))
         .collect();
 
     let gid_to_advance: BTreeMap<u16, u16> = orig_gid_to_advance
         .into_iter()
-        .filter_map(|(orig, adv)| {
-            remapper.get(orig).map(|new| (new as u16, adv))
-        })
+        .filter_map(|(orig, adv)| remapper.get(orig).map(|new| (new as u16, adv)))
         .collect();
 
     Ok(SubsetResult {
