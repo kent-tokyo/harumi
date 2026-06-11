@@ -15,6 +15,7 @@
 //! | HTML → PDF | `render_html_to_pdf` (`html` feature) |
 //! | PDF text replacement | `replace_text` · `replace_text_resubset` |
 //! | Page merge / split | `merge_from` · `extract_pages` |
+//! | Digital signature creation | `sign_document` · `add_signature_field` (`digital-signature` feature) |
 //! | WASM / Edge / Lambda | All APIs — zero C/C++ dependencies |
 //!
 //! ## Motivation
@@ -67,6 +68,7 @@
 //! | `image`             | JPEG/PNG embed + extraction; enables `draw` | `png` crate |
 //! | `flow`              | `FlowDocument` auto-pagination builder + headers/footers | none |
 //! | `html`              | HTML→PDF renderer; enables `flow` | none (internal tokenizer) |
+//! | `digital-signature` | Create and verify PKCS#7/CMS signatures | RustCrypto crates |
 
 mod chunk;
 mod content;
@@ -91,6 +93,9 @@ pub mod flow;
 
 pub mod signature;
 
+#[cfg(feature = "digital-signature")]
+pub mod signature_create;
+
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun,
@@ -110,6 +115,11 @@ pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 pub use flow::html::{HtmlRenderOptions, render_html_to_pdf};
 
 pub use signature::SignatureInfo;
+
+#[cfg(feature = "digital-signature")]
+pub use signature_create::{
+    CertificateInput, PrivateKeyInput, SignatureFieldOptions, SigningContext,
+};
 
 // Re-export lopdf for integration test access.
 #[doc(hidden)]

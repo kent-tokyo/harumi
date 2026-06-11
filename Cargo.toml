@@ -20,6 +20,15 @@ categories = ["rendering::data-formats", "text-processing", "parser-implementati
 lopdf = "0.40"
 ttf-parser = "0.25"
 png = { version = "0.17", optional = true }
+sha2 = { version = "0.10", optional = true }
+rsa = { version = "0.9", optional = true }
+pkcs1 = { version = "0.7", optional = true }
+pkcs8 = { version = "0.10", optional = true }
+x509-cert = { version = "0.2", optional = true }
+der = { version = "0.7", optional = true }
+cms = { version = "0.2", optional = true }
+rand = { version = "0.8", optional = true }
+zeroize = { version = "1.8", optional = true }
 
 [features]
 default = []
@@ -28,6 +37,7 @@ image = ["dep:png", "draw"]
 ocr = []
 flow = ["draw"]
 html = ["flow"]
+digital-signature = ["dep:sha2", "dep:rsa", "dep:pkcs1", "dep:pkcs8", "dep:x509-cert", "dep:der", "dep:cms", "dep:rand", "dep:zeroize"]
 
 # getrandom is needed for AES-256 key generation. Backend differs per target family.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -41,6 +51,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 lopdf = "0.40"
 ttf-parser = "0.25"
 wasm-bindgen-test = "0.3"
+rcgen = "0.12"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }
