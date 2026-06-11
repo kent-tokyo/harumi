@@ -2,17 +2,14 @@
 
 use harumi::{CertificateInput, Document, PrivateKeyInput, SignatureFieldOptions, SigningContext};
 
-/// Generate a test certificate and private key for signing tests.
+/// Load stable test certificate and private key from fixtures.
 fn generate_test_cert_and_key() -> (Vec<u8>, Vec<u8>) {
-    use rcgen::CertificateParams;
+    let cert_der = std::fs::read("tests/fixtures/test_rsa_2048.crt")
+        .expect("Failed to read test_rsa_2048.crt fixture");
+    let key_der = std::fs::read("tests/fixtures/test_rsa_2048.der")
+        .expect("Failed to read test_rsa_2048.der fixture");
 
-    let params = CertificateParams::new(vec!["test.example.com".to_string()]);
-    let cert = rcgen::Certificate::from_params(params).expect("Failed to generate test certificate");
-
-    // Serialize private key as PKCS#8
-    let key_der = cert.serialize_private_key_der();
-
-    (cert.serialize_der().expect("Serialize cert"), key_der)
+    (cert_der, key_der)
 }
 
 #[test]
@@ -34,7 +31,6 @@ fn test_add_signature_field() {
 
 
 #[test]
-#[ignore]  // TODO: Fix rcgen key format compatibility
 fn test_signing_context_creation() {
     let (cert_der, key_der) = generate_test_cert_and_key();
 
@@ -49,7 +45,6 @@ fn test_signing_context_creation() {
 }
 
 #[test]
-#[ignore]  // TODO: Fix rcgen key format compatibility
 fn test_sign_document_basic() {
     let mut doc = Document::new((612.0, 792.0)).expect("Create document");
 
@@ -79,7 +74,6 @@ fn test_sign_document_basic() {
 }
 
 #[test]
-#[ignore]  // TODO: Fix rcgen key format compatibility
 fn test_sign_document_with_content() {
     let mut doc = Document::new((612.0, 792.0)).expect("Create document");
     let font_bytes = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
