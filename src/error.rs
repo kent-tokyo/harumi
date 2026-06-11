@@ -39,6 +39,38 @@ pub enum Error {
 
     /// The password provided for an encrypted PDF was incorrect.
     WrongPassword,
+
+    /// A certificate or private key could not be parsed (requires the `digital-signature` feature).
+    #[cfg(feature = "digital-signature")]
+    InvalidCertificate(String),
+
+    #[cfg(not(feature = "digital-signature"))]
+    #[doc(hidden)]
+    _InvalidCertificate,
+
+    /// A private key could not be parsed (requires the `digital-signature` feature).
+    #[cfg(feature = "digital-signature")]
+    InvalidPrivateKey(String),
+
+    #[cfg(not(feature = "digital-signature"))]
+    #[doc(hidden)]
+    _InvalidPrivateKey,
+
+    /// PKCS#12 file could not be parsed (requires the `digital-signature` feature).
+    #[cfg(feature = "digital-signature")]
+    Pkcs12Parse(String),
+
+    #[cfg(not(feature = "digital-signature"))]
+    #[doc(hidden)]
+    _Pkcs12Parse,
+
+    /// Signature operation failed (requires the `digital-signature` feature).
+    #[cfg(feature = "digital-signature")]
+    SignatureFailed(String),
+
+    #[cfg(not(feature = "digital-signature"))]
+    #[doc(hidden)]
+    _SignatureFailed,
 }
 
 impl fmt::Display for Error {
@@ -66,6 +98,22 @@ impl fmt::Display for Error {
                 )
             }
             Error::WrongPassword => write!(f, "wrong password for encrypted PDF"),
+            #[cfg(feature = "digital-signature")]
+            Error::InvalidCertificate(msg) => write!(f, "invalid certificate: {}", msg),
+            #[cfg(not(feature = "digital-signature"))]
+            Error::_InvalidCertificate => unreachable!(),
+            #[cfg(feature = "digital-signature")]
+            Error::InvalidPrivateKey(msg) => write!(f, "invalid private key: {}", msg),
+            #[cfg(not(feature = "digital-signature"))]
+            Error::_InvalidPrivateKey => unreachable!(),
+            #[cfg(feature = "digital-signature")]
+            Error::Pkcs12Parse(msg) => write!(f, "PKCS#12 parse error: {}", msg),
+            #[cfg(not(feature = "digital-signature"))]
+            Error::_Pkcs12Parse => unreachable!(),
+            #[cfg(feature = "digital-signature")]
+            Error::SignatureFailed(msg) => write!(f, "signature failed: {}", msg),
+            #[cfg(not(feature = "digital-signature"))]
+            Error::_SignatureFailed => unreachable!(),
         }
     }
 }
