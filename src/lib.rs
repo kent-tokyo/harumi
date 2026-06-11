@@ -96,6 +96,9 @@ pub mod signature;
 #[cfg(feature = "digital-signature")]
 pub mod signature_create;
 
+#[cfg(feature = "digital-signature")]
+pub(crate) mod cms_builder;
+
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun,
