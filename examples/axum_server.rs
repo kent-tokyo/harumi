@@ -93,7 +93,9 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let state = AppState { font: Arc::new(font) };
+    let state = AppState {
+        font: Arc::new(font),
+    };
 
     let app = Router::new()
         .route("/health", get(health))
@@ -152,11 +154,9 @@ async fn stamp(State(state): State<AppState>, mut multipart: Multipart) -> AppRe
                     .text()
                     .await
                     .map_err(|e| AppError::BadRequest(e.to_string()))?;
-                page_num = Some(
-                    s.trim()
-                        .parse()
-                        .map_err(|_| AppError::BadRequest("'page' must be a positive integer".into()))?,
-                );
+                page_num = Some(s.trim().parse().map_err(|_| {
+                    AppError::BadRequest("'page' must be a positive integer".into())
+                })?);
             }
             _ => {}
         }
@@ -203,10 +203,7 @@ async fn stamp(State(state): State<AppState>, mut multipart: Multipart) -> AppRe
 /// - `text` (required) — Invisible OCR text to embed on every page
 /// - `x`    (optional) — X coordinate in points (default: 72)
 /// - `y`    (optional) — Y coordinate in points (default: 72)
-async fn ocr_layer(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> AppResult<Response> {
+async fn ocr_layer(State(state): State<AppState>, mut multipart: Multipart) -> AppResult<Response> {
     let mut pdf_bytes: Option<Vec<u8>> = None;
     let mut text: Option<String> = None;
     let mut x: f32 = 72.0;

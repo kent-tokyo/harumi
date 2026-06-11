@@ -44,7 +44,11 @@ fn filter_name(stream: &lopdf::Stream) -> Option<Vec<u8>> {
         Object::Name(n) => Some(n.clone()),
         // PDF allows /Filter to be a single-element array: [/FlateDecode]
         Object::Array(arr) => arr.first().and_then(|o| {
-            if let Object::Name(n) = o { Some(n.clone()) } else { None }
+            if let Object::Name(n) = o {
+                Some(n.clone())
+            } else {
+                None
+            }
         }),
         _ => None,
     }
@@ -64,15 +68,23 @@ fn page_image_xobjects(doc: &lopdf::Document, page_id: ObjectId) -> Vec<ObjectId
             xobj_dict
                 .iter()
                 .filter_map(|(_, val)| {
-                    let Object::Reference(id) = val else { return None };
+                    let Object::Reference(id) = val else {
+                        return None;
+                    };
                     let obj = doc.get_object(*id).ok()?;
                     let stream = obj.as_stream().ok()?;
-                    let subtype = stream
-                        .dict
-                        .get(b"Subtype")
-                        .ok()
-                        .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
-                    if subtype == Some(b"Image") { Some(*id) } else { None }
+                    let subtype = stream.dict.get(b"Subtype").ok().and_then(|o| {
+                        if let Object::Name(n) = o {
+                            Some(n.as_slice())
+                        } else {
+                            None
+                        }
+                    });
+                    if subtype == Some(b"Image") {
+                        Some(*id)
+                    } else {
+                        None
+                    }
                 })
                 .collect(),
         )
@@ -135,12 +147,13 @@ fn extract_xobject_image(doc: &lopdf::Document, id: ObjectId) -> Result<PageImag
                 ));
             }
 
-            let channels: u32 = match stream
-                .dict
-                .get(b"ColorSpace")
-                .ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
-            {
+            let channels: u32 = match stream.dict.get(b"ColorSpace").ok().and_then(|o| {
+                if let Object::Name(n) = o {
+                    Some(n.as_slice())
+                } else {
+                    None
+                }
+            }) {
                 Some(b"DeviceGray") => 1,
                 _ => 3, // DeviceRGB or unrecognised → assume RGB
             };
@@ -158,17 +171,21 @@ fn extract_xobject_image(doc: &lopdf::Document, id: ObjectId) -> Result<PageImag
                 let mut encoder = png::Encoder::new(&mut cursor, width, height);
                 encoder.set_color(png::ColorType::Grayscale);
                 encoder.set_depth(png::BitDepth::Eight);
-                let mut writer = encoder.write_header()
+                let mut writer = encoder
+                    .write_header()
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
-                writer.write_image_data(&raw_pixels)
+                writer
+                    .write_image_data(&raw_pixels)
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
             } else {
                 let mut encoder = png::Encoder::new(&mut cursor, width, height);
                 encoder.set_color(png::ColorType::Rgb);
                 encoder.set_depth(png::BitDepth::Eight);
-                let mut writer = encoder.write_header()
+                let mut writer = encoder
+                    .write_header()
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
-                writer.write_image_data(&raw_pixels)
+                writer
+                    .write_image_data(&raw_pixels)
                     .map_err(|e| Error::ImageDecode(e.to_string()))?;
             }
 
@@ -229,9 +246,7 @@ pub(crate) fn extract_all_images_on_page(
 ) -> Result<Vec<PageImage>> {
     let ids = page_image_xobjects(doc, page_id);
     if ids.is_empty() {
-        return Err(Error::InvalidInput(
-            "page contains no Image XObject".into(),
-        ));
+        return Err(Error::InvalidInput("page contains no Image XObject".into()));
     }
     let images: Vec<PageImage> = ids
         .into_iter()

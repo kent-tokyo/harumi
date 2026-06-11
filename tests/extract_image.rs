@@ -7,7 +7,10 @@ const PNG: &[u8] = include_bytes!("fixtures/red_1x1.png");
 
 fn roundtrip(image_bytes: &[u8]) -> PageImage {
     let mut doc = Document::new((10.0, 10.0)).unwrap();
-    doc.page(1).unwrap().add_image(image_bytes, [0.0, 0.0, 10.0, 10.0]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_image(image_bytes, [0.0, 0.0, 10.0, 10.0])
+        .unwrap();
     let pdf_bytes = doc.save_to_bytes().unwrap();
 
     let reloaded = Document::from_bytes(&pdf_bytes).unwrap();
@@ -18,7 +21,10 @@ fn roundtrip(image_bytes: &[u8]) -> PageImage {
 fn extract_jpeg_roundtrip() {
     let img = roundtrip(JPEG);
     assert_eq!(img.format, PageImageFormat::Jpeg);
-    assert!(img.bytes.starts_with(b"\xff\xd8\xff"), "should be JPEG magic bytes");
+    assert!(
+        img.bytes.starts_with(b"\xff\xd8\xff"),
+        "should be JPEG magic bytes"
+    );
     assert_eq!(img.width, 1);
     assert_eq!(img.height, 1);
 }
@@ -42,7 +48,7 @@ fn extract_multiple_xobjects_returns_largest() {
     let mut doc = Document::new((20.0, 10.0)).unwrap();
     let mut page = doc.page(1).unwrap();
     page.add_image(JPEG, [0.0, 0.0, 10.0, 10.0]).unwrap();
-    page.add_image(PNG,  [10.0, 0.0, 10.0, 10.0]).unwrap();
+    page.add_image(PNG, [10.0, 0.0, 10.0, 10.0]).unwrap();
     drop(page);
 
     let pdf_bytes = doc.save_to_bytes().unwrap();
@@ -59,7 +65,10 @@ fn extract_no_image_returns_error() {
     let err = doc.extract_page_image(1).unwrap_err();
     match err {
         harumi::Error::InvalidInput(msg) => {
-            assert!(msg.contains("no Image XObject"), "unexpected message: {msg}");
+            assert!(
+                msg.contains("no Image XObject"),
+                "unexpected message: {msg}"
+            );
         }
         other => panic!("expected InvalidInput, got {other:?}"),
     }
@@ -78,7 +87,7 @@ fn extract_all_images_returns_both() {
     let mut doc = Document::new((20.0, 10.0)).unwrap();
     let mut page = doc.page(1).unwrap();
     page.add_image(JPEG, [0.0, 0.0, 10.0, 10.0]).unwrap();
-    page.add_image(PNG,  [10.0, 0.0, 10.0, 10.0]).unwrap();
+    page.add_image(PNG, [10.0, 0.0, 10.0, 10.0]).unwrap();
     drop(page);
 
     let pdf_bytes = doc.save_to_bytes().unwrap();
@@ -100,7 +109,10 @@ fn extract_all_images_no_image_returns_error() {
     let err = doc.extract_page_images(1).unwrap_err();
     match err {
         harumi::Error::InvalidInput(msg) => {
-            assert!(msg.contains("no Image XObject"), "unexpected message: {msg}");
+            assert!(
+                msg.contains("no Image XObject"),
+                "unexpected message: {msg}"
+            );
         }
         other => panic!("expected InvalidInput, got {other:?}"),
     }

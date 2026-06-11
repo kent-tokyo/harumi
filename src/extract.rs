@@ -123,7 +123,7 @@ pub fn sort_by_reading_order(fragments: &mut [TextFragment]) {
         // so they sort to the end (bottom). Within NaN/Infinity, preserve input order.
         let y_cmp = match (a.y.is_finite(), b.y.is_finite()) {
             (true, true) => b.y.partial_cmp(&a.y).unwrap_or(Ordering::Equal),
-            (true, false) => Ordering::Less,  // finite < infinite
+            (true, false) => Ordering::Less, // finite < infinite
             (false, true) => Ordering::Greater,
             (false, false) => Ordering::Equal, // both infinite/NaN: preserve order
         };
@@ -135,7 +135,7 @@ pub fn sort_by_reading_order(fragments: &mut [TextFragment]) {
 
         match (a.x.is_finite(), b.x.is_finite()) {
             (true, true) => a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal),
-            (true, false) => Ordering::Less,  // finite < infinite
+            (true, false) => Ordering::Less, // finite < infinite
             (false, true) => Ordering::Greater,
             (false, false) => Ordering::Equal,
         }
@@ -180,7 +180,11 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
         Object::Array(arr) => arr
             .iter()
             .filter_map(|o| {
-                if let Object::Reference(id) = o { Some(*id) } else { None }
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
             })
             .collect(),
         _ => return vec![],
@@ -188,8 +192,12 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
 
     let mut result = Vec::new();
     for id in ids {
-        let Ok(stream_obj) = doc.get_object(id) else { continue };
-        let Ok(stream) = stream_obj.as_stream() else { continue };
+        let Ok(stream_obj) = doc.get_object(id) else {
+            continue;
+        };
+        let Ok(stream) = stream_obj.as_stream() else {
+            continue;
+        };
         let has_filter = stream.dict.get(b"Filter").is_ok();
         if has_filter {
             let mut owned = stream.clone();
@@ -207,7 +215,10 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
 // Step 2: font info from /Resources/Font
 // ---------------------------------------------------------------------------
 
-pub(crate) fn resolve_dict<'a>(doc: &'a lopdf::Document, obj: &'a Object) -> Option<&'a Dictionary> {
+pub(crate) fn resolve_dict<'a>(
+    doc: &'a lopdf::Document,
+    obj: &'a Object,
+) -> Option<&'a Dictionary> {
     match obj {
         Object::Dictionary(d) => Some(d),
         Object::Reference(id) => doc.get_object(*id).ok()?.as_dict().ok(),
@@ -215,7 +226,10 @@ pub(crate) fn resolve_dict<'a>(doc: &'a lopdf::Document, obj: &'a Object) -> Opt
     }
 }
 
-pub(crate) fn collect_fonts(doc: &lopdf::Document, page_id: ObjectId) -> HashMap<Vec<u8>, FontInfo> {
+pub(crate) fn collect_fonts(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> HashMap<Vec<u8>, FontInfo> {
     collect_fonts_inner(doc, page_id).unwrap_or_default()
 }
 
@@ -232,23 +246,28 @@ fn collect_fonts_inner(
     let font_dict = resolve_dict(doc, font_obj)?;
 
     for (name, font_ref) in font_dict.iter() {
-        let Object::Reference(font_id) = font_ref else { continue };
-        let Ok(font_obj) = doc.get_object(*font_id) else { continue };
+        let Object::Reference(font_id) = font_ref else {
+            continue;
+        };
+        let Ok(font_obj) = doc.get_object(*font_id) else {
+            continue;
+        };
         let Ok(fd) = font_obj.as_dict() else { continue };
 
-        let subtype = fd
-            .get(b"Subtype")
-            .ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+        let subtype = fd.get(b"Subtype").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        });
 
         let font_info = match subtype {
             Some(b"Type0") => match collect_type0_font(fd, doc) {
                 Some(fi) => fi,
                 None => continue,
             },
-            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") => {
-                collect_simple_font(fd, doc)
-            }
+            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") => collect_simple_font(fd, doc),
             _ => continue,
         };
 
@@ -265,10 +284,18 @@ fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo
     let identity_fallback = to_unicode.is_empty() && is_identity_cmap(fd);
 
     let desc_obj = fd.get(b"DescendantFonts").ok()?;
-    let Object::Array(desc_arr) = desc_obj else { return None };
-    let Some(Object::Reference(cid_id)) = desc_arr.first() else { return None };
-    let Ok(cid_obj) = doc.get_object(*cid_id) else { return None };
-    let Ok(cid_dict) = cid_obj.as_dict() else { return None };
+    let Object::Array(desc_arr) = desc_obj else {
+        return None;
+    };
+    let Some(Object::Reference(cid_id)) = desc_arr.first() else {
+        return None;
+    };
+    let Ok(cid_obj) = doc.get_object(*cid_id) else {
+        return None;
+    };
+    let Ok(cid_dict) = cid_obj.as_dict() else {
+        return None;
+    };
 
     let dw = cid_dict
         .get(b"DW")
@@ -280,11 +307,23 @@ fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo
     let w_runs = cid_dict
         .get(b"W")
         .ok()
-        .and_then(|o| if let Object::Array(a) = o { Some(a.as_slice()) } else { None })
+        .and_then(|o| {
+            if let Object::Array(a) = o {
+                Some(a.as_slice())
+            } else {
+                None
+            }
+        })
         .map(parse_w_array)
         .unwrap_or_default();
 
-    Some(FontInfo { to_unicode, dw, w_runs, bytes_per_char: 2, identity_fallback })
+    Some(FontInfo {
+        to_unicode,
+        dw,
+        w_runs,
+        bytes_per_char: 2,
+        identity_fallback,
+    })
 }
 
 /// Returns true when the Type0 font's /Encoding is Identity-H or Identity-V (character code =
@@ -305,17 +344,26 @@ fn collect_simple_font(fd: &Dictionary, doc: &lopdf::Document) -> FontInfo {
     };
 
     let (w_runs, dw) = collect_simple_font_widths(fd, doc);
-    FontInfo { to_unicode, dw, w_runs, bytes_per_char: 1, identity_fallback: false }
+    FontInfo {
+        to_unicode,
+        dw,
+        w_runs,
+        bytes_per_char: 1,
+        identity_fallback: false,
+    }
 }
 
-fn try_parse_to_unicode(
-    fd: &Dictionary,
-    doc: &lopdf::Document,
-) -> Option<BTreeMap<u16, char>> {
+fn try_parse_to_unicode(fd: &Dictionary, doc: &lopdf::Document) -> Option<BTreeMap<u16, char>> {
     let to_uni_ref = fd.get(b"ToUnicode").ok()?;
-    let Object::Reference(to_uni_id) = to_uni_ref else { return None };
-    let Ok(to_uni_obj) = doc.get_object(*to_uni_id) else { return None };
-    let Ok(stream) = to_uni_obj.as_stream() else { return None };
+    let Object::Reference(to_uni_id) = to_uni_ref else {
+        return None;
+    };
+    let Ok(to_uni_obj) = doc.get_object(*to_uni_id) else {
+        return None;
+    };
+    let Ok(stream) = to_uni_obj.as_stream() else {
+        return None;
+    };
     let cmap_bytes = if stream.dict.get(b"Filter").is_ok() {
         let mut owned = stream.clone();
         owned.decompress().ok()?;
@@ -327,10 +375,7 @@ fn try_parse_to_unicode(
     if map.is_empty() { None } else { Some(map) }
 }
 
-fn collect_simple_font_widths(
-    fd: &Dictionary,
-    doc: &lopdf::Document,
-) -> (Vec<WidthRun>, u32) {
+fn collect_simple_font_widths(fd: &Dictionary, doc: &lopdf::Document) -> (Vec<WidthRun>, u32) {
     let dw = missing_width_from_descriptor(fd, doc);
 
     let first_char = match fd.get(b"FirstChar").ok().and_then(|o| o.as_i64().ok()) {
@@ -348,7 +393,13 @@ fn collect_simple_font_widths(
     if widths.is_empty() {
         return (vec![], dw);
     }
-    (vec![WidthRun { start_gid: first_char, widths }], dw)
+    (
+        vec![WidthRun {
+            start_gid: first_char,
+            widths,
+        }],
+        dw,
+    )
 }
 
 fn missing_width_from_descriptor(fd: &Dictionary, doc: &lopdf::Document) -> u32 {
@@ -385,7 +436,13 @@ fn build_encoding_map(fd: &Dictionary, doc: &lopdf::Document) -> BTreeMap<u16, c
     let base = enc_dict
         .get(b"BaseEncoding")
         .ok()
-        .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
+        .and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        })
         .map(encoding_name_to_btree)
         .unwrap_or_else(|| encoding_table_to_btree(&STANDARD_ENCODING));
 
@@ -409,10 +466,7 @@ fn encoding_table_to_btree(table: &[Option<char>; 256]) -> BTreeMap<u16, char> {
         .collect()
 }
 
-fn apply_differences(
-    enc_dict: &Dictionary,
-    mut map: BTreeMap<u16, char>,
-) -> BTreeMap<u16, char> {
+fn apply_differences(enc_dict: &Dictionary, mut map: BTreeMap<u16, char>) -> BTreeMap<u16, char> {
     let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") else {
         return map;
     };
@@ -699,123 +753,355 @@ fn glyph_name_to_char(name: &[u8]) -> Option<char> {
 /// Sorted by glyph name (required for binary_search_by_key).
 static AGL_TABLE: &[(&str, char)] = &[
     // A
-    ("A", 'A'), ("AE", 'Æ'), ("Aacute", 'Á'), ("Abreve", 'Ă'), ("Acircumflex", 'Â'),
-    ("Adieresis", 'Ä'), ("Agrave", 'À'), ("Amacron", 'Ā'), ("Aogonek", 'Ą'),
-    ("Aring", 'Å'), ("Atilde", 'Ã'),
+    ("A", 'A'),
+    ("AE", 'Æ'),
+    ("Aacute", 'Á'),
+    ("Abreve", 'Ă'),
+    ("Acircumflex", 'Â'),
+    ("Adieresis", 'Ä'),
+    ("Agrave", 'À'),
+    ("Amacron", 'Ā'),
+    ("Aogonek", 'Ą'),
+    ("Aring", 'Å'),
+    ("Atilde", 'Ã'),
     // B–D
-    ("B", 'B'), ("C", 'C'), ("Cacute", 'Ć'), ("Ccaron", 'Č'), ("Ccedilla", 'Ç'),
-    ("D", 'D'), ("Dcaron", 'Ď'), ("Dcroat", 'Đ'), ("Delta", '∆'),
+    ("B", 'B'),
+    ("C", 'C'),
+    ("Cacute", 'Ć'),
+    ("Ccaron", 'Č'),
+    ("Ccedilla", 'Ç'),
+    ("D", 'D'),
+    ("Dcaron", 'Ď'),
+    ("Dcroat", 'Đ'),
+    ("Delta", '∆'),
     // E
-    ("E", 'E'), ("Eacute", 'É'), ("Ecaron", 'Ě'), ("Ecircumflex", 'Ê'), ("Edieresis", 'Ë'),
-    ("Egrave", 'È'), ("Emacron", 'Ē'), ("Eogonek", 'Ę'), ("Eth", 'Ð'), ("Euro", '€'),
+    ("E", 'E'),
+    ("Eacute", 'É'),
+    ("Ecaron", 'Ě'),
+    ("Ecircumflex", 'Ê'),
+    ("Edieresis", 'Ë'),
+    ("Egrave", 'È'),
+    ("Emacron", 'Ē'),
+    ("Eogonek", 'Ę'),
+    ("Eth", 'Ð'),
+    ("Euro", '€'),
     // F–H
-    ("F", 'F'), ("G", 'G'), ("Gbreve", 'Ğ'), ("H", 'H'),
+    ("F", 'F'),
+    ("G", 'G'),
+    ("Gbreve", 'Ğ'),
+    ("H", 'H'),
     // I–K
-    ("I", 'I'), ("Iacute", 'Í'), ("Icircumflex", 'Î'), ("Idieresis", 'Ï'),
-    ("Idotaccent", 'İ'), ("Igrave", 'Ì'), ("Imacron", 'Ī'), ("Iogonek", 'Į'),
-    ("J", 'J'), ("K", 'K'),
+    ("I", 'I'),
+    ("Iacute", 'Í'),
+    ("Icircumflex", 'Î'),
+    ("Idieresis", 'Ï'),
+    ("Idotaccent", 'İ'),
+    ("Igrave", 'Ì'),
+    ("Imacron", 'Ī'),
+    ("Iogonek", 'Į'),
+    ("J", 'J'),
+    ("K", 'K'),
     // L
-    ("L", 'L'), ("Lacute", 'Ĺ'), ("Lcaron", 'Ľ'), ("Lcommaaccent", 'Ļ'), ("Lslash", 'Ł'),
+    ("L", 'L'),
+    ("Lacute", 'Ĺ'),
+    ("Lcaron", 'Ľ'),
+    ("Lcommaaccent", 'Ļ'),
+    ("Lslash", 'Ł'),
     // M–N
-    ("M", 'M'), ("N", 'N'), ("Nacute", 'Ń'), ("Ncaron", 'Ň'), ("Ncommaaccent", 'Ņ'),
+    ("M", 'M'),
+    ("N", 'N'),
+    ("Nacute", 'Ń'),
+    ("Ncaron", 'Ň'),
+    ("Ncommaaccent", 'Ņ'),
     ("Ntilde", 'Ñ'),
     // O
-    ("O", 'O'), ("OE", 'Œ'), ("Oacute", 'Ó'), ("Ocircumflex", 'Ô'), ("Odblacute", 'Ő'),
-    ("Odieresis", 'Ö'), ("Ograve", 'Ò'), ("Omacron", 'Ō'), ("Omega", '\u{2126}'),
-    ("Oslash", 'Ø'), ("Otilde", 'Õ'),
+    ("O", 'O'),
+    ("OE", 'Œ'),
+    ("Oacute", 'Ó'),
+    ("Ocircumflex", 'Ô'),
+    ("Odblacute", 'Ő'),
+    ("Odieresis", 'Ö'),
+    ("Ograve", 'Ò'),
+    ("Omacron", 'Ō'),
+    ("Omega", '\u{2126}'),
+    ("Oslash", 'Ø'),
+    ("Otilde", 'Õ'),
     // P–R
-    ("P", 'P'), ("Q", 'Q'), ("R", 'R'), ("Racute", 'Ŕ'), ("Rcaron", 'Ř'),
+    ("P", 'P'),
+    ("Q", 'Q'),
+    ("R", 'R'),
+    ("Racute", 'Ŕ'),
+    ("Rcaron", 'Ř'),
     ("Rcommaaccent", 'Ŗ'),
     // S
-    ("S", 'S'), ("Sacute", 'Ś'), ("Scaron", 'Š'), ("Scedilla", 'Ş'),
+    ("S", 'S'),
+    ("Sacute", 'Ś'),
+    ("Scaron", 'Š'),
+    ("Scedilla", 'Ş'),
     ("Scommaaccent", 'Ș'),
     // T
-    ("T", 'T'), ("Tcaron", 'Ť'), ("Tcedilla", 'Ţ'), ("Tcommaaccent", 'Ț'), ("Thorn", 'Þ'),
+    ("T", 'T'),
+    ("Tcaron", 'Ť'),
+    ("Tcedilla", 'Ţ'),
+    ("Tcommaaccent", 'Ț'),
+    ("Thorn", 'Þ'),
     // U
-    ("U", 'U'), ("Uacute", 'Ú'), ("Ucircumflex", 'Û'), ("Udblacute", 'Ű'), ("Udieresis", 'Ü'),
-    ("Ugrave", 'Ù'), ("Umacron", 'Ū'), ("Uogonek", 'Ų'), ("Uring", 'Ů'),
-    ("V", 'V'), ("W", 'W'), ("X", 'X'),
+    ("U", 'U'),
+    ("Uacute", 'Ú'),
+    ("Ucircumflex", 'Û'),
+    ("Udblacute", 'Ű'),
+    ("Udieresis", 'Ü'),
+    ("Ugrave", 'Ù'),
+    ("Umacron", 'Ū'),
+    ("Uogonek", 'Ų'),
+    ("Uring", 'Ů'),
+    ("V", 'V'),
+    ("W", 'W'),
+    ("X", 'X'),
     // Y–Z
-    ("Y", 'Y'), ("Yacute", 'Ý'), ("Ydieresis", 'Ÿ'),
-    ("Z", 'Z'), ("Zacute", 'Ź'), ("Zcaron", 'Ž'), ("Zdotaccent", 'Ż'),
+    ("Y", 'Y'),
+    ("Yacute", 'Ý'),
+    ("Ydieresis", 'Ÿ'),
+    ("Z", 'Z'),
+    ("Zacute", 'Ź'),
+    ("Zcaron", 'Ž'),
+    ("Zdotaccent", 'Ż'),
     // a
-    ("a", 'a'), ("aacute", 'á'), ("abreve", 'ă'), ("acircumflex", 'â'), ("adieresis", 'ä'),
-    ("ae", 'æ'), ("agrave", 'à'), ("amacron", 'ā'), ("ampersand", '&'), ("aogonek", 'ą'),
-    ("approxequal", '≈'), ("aring", 'å'), ("asciicircum", '^'), ("asciitilde", '~'),
-    ("asterisk", '*'), ("at", '@'), ("atilde", 'ã'),
+    ("a", 'a'),
+    ("aacute", 'á'),
+    ("abreve", 'ă'),
+    ("acircumflex", 'â'),
+    ("adieresis", 'ä'),
+    ("ae", 'æ'),
+    ("agrave", 'à'),
+    ("amacron", 'ā'),
+    ("ampersand", '&'),
+    ("aogonek", 'ą'),
+    ("approxequal", '≈'),
+    ("aring", 'å'),
+    ("asciicircum", '^'),
+    ("asciitilde", '~'),
+    ("asterisk", '*'),
+    ("at", '@'),
+    ("atilde", 'ã'),
     // b–c
-    ("b", 'b'), ("backslash", '\\'), ("bar", '|'), ("braceleft", '{'),
-    ("braceright", '}'), ("bracketleft", '['), ("bracketright", ']'),
-    ("breve", '˘'), ("brokenbar", '¦'), ("bullet", '•'),
-    ("c", 'c'), ("cacute", 'ć'), ("caron", 'ˇ'), ("ccaron", 'č'), ("ccedilla", 'ç'),
-    ("cedilla", '¸'), ("cent", '¢'), ("circumflex", 'ˆ'), ("colon", ':'), ("comma", ','),
-    ("copyright", '©'), ("currency", '¤'),
+    ("b", 'b'),
+    ("backslash", '\\'),
+    ("bar", '|'),
+    ("braceleft", '{'),
+    ("braceright", '}'),
+    ("bracketleft", '['),
+    ("bracketright", ']'),
+    ("breve", '˘'),
+    ("brokenbar", '¦'),
+    ("bullet", '•'),
+    ("c", 'c'),
+    ("cacute", 'ć'),
+    ("caron", 'ˇ'),
+    ("ccaron", 'č'),
+    ("ccedilla", 'ç'),
+    ("cedilla", '¸'),
+    ("cent", '¢'),
+    ("circumflex", 'ˆ'),
+    ("colon", ':'),
+    ("comma", ','),
+    ("copyright", '©'),
+    ("currency", '¤'),
     // d
-    ("d", 'd'), ("dagger", '†'), ("daggerdbl", '‡'), ("dcaron", 'ď'), ("dcroat", 'đ'),
-    ("degree", '°'), ("dieresis", '¨'), ("divide", '÷'), ("dollar", '$'),
-    ("dotaccent", '˙'), ("dotlessi", 'ı'),
+    ("d", 'd'),
+    ("dagger", '†'),
+    ("daggerdbl", '‡'),
+    ("dcaron", 'ď'),
+    ("dcroat", 'đ'),
+    ("degree", '°'),
+    ("dieresis", '¨'),
+    ("divide", '÷'),
+    ("dollar", '$'),
+    ("dotaccent", '˙'),
+    ("dotlessi", 'ı'),
     // e
-    ("e", 'e'), ("eacute", 'é'), ("ecaron", 'ě'), ("ecircumflex", 'ê'), ("edieresis", 'ë'),
-    ("egrave", 'è'), ("eight", '8'), ("ellipsis", '…'), ("emacron", 'ē'), ("emdash", '—'),
-    ("endash", '–'), ("eogonek", 'ę'), ("equal", '='), ("eth", 'ð'), ("euro", '€'),
-    ("exclam", '!'), ("exclamdown", '¡'),
+    ("e", 'e'),
+    ("eacute", 'é'),
+    ("ecaron", 'ě'),
+    ("ecircumflex", 'ê'),
+    ("edieresis", 'ë'),
+    ("egrave", 'è'),
+    ("eight", '8'),
+    ("ellipsis", '…'),
+    ("emacron", 'ē'),
+    ("emdash", '—'),
+    ("endash", '–'),
+    ("eogonek", 'ę'),
+    ("equal", '='),
+    ("eth", 'ð'),
+    ("euro", '€'),
+    ("exclam", '!'),
+    ("exclamdown", '¡'),
     // f
-    ("f", 'f'), ("ff", '\u{FB00}'), ("ffi", '\u{FB03}'), ("ffl", '\u{FB04}'),
-    ("fi", '\u{FB01}'), ("five", '5'), ("fl", '\u{FB02}'), ("florin", 'ƒ'),
-    ("four", '4'), ("fraction", '⁄'),
+    ("f", 'f'),
+    ("ff", '\u{FB00}'),
+    ("ffi", '\u{FB03}'),
+    ("ffl", '\u{FB04}'),
+    ("fi", '\u{FB01}'),
+    ("five", '5'),
+    ("fl", '\u{FB02}'),
+    ("florin", 'ƒ'),
+    ("four", '4'),
+    ("fraction", '⁄'),
     // g
-    ("g", 'g'), ("gbreve", 'ğ'), ("germandbls", 'ß'), ("grave", '`'), ("greater", '>'),
-    ("greaterequal", '≥'), ("guillemotleft", '«'), ("guillemotright", '»'),
-    ("guilsinglleft", '‹'), ("guilsinglright", '›'),
+    ("g", 'g'),
+    ("gbreve", 'ğ'),
+    ("germandbls", 'ß'),
+    ("grave", '`'),
+    ("greater", '>'),
+    ("greaterequal", '≥'),
+    ("guillemotleft", '«'),
+    ("guillemotright", '»'),
+    ("guilsinglleft", '‹'),
+    ("guilsinglright", '›'),
     // h–i
-    ("h", 'h'), ("hungarumlaut", '˝'), ("hyphen", '-'),
-    ("i", 'i'), ("iacute", 'í'), ("icircumflex", 'î'), ("idieresis", 'ï'),
-    ("idotaccent", 'ı'), ("igrave", 'ì'), ("imacron", 'ī'), ("infinity", '∞'),
-    ("integral", '∫'), ("iogonek", 'į'),
+    ("h", 'h'),
+    ("hungarumlaut", '˝'),
+    ("hyphen", '-'),
+    ("i", 'i'),
+    ("iacute", 'í'),
+    ("icircumflex", 'î'),
+    ("idieresis", 'ï'),
+    ("idotaccent", 'ı'),
+    ("igrave", 'ì'),
+    ("imacron", 'ī'),
+    ("infinity", '∞'),
+    ("integral", '∫'),
+    ("iogonek", 'į'),
     // j–k
-    ("j", 'j'), ("k", 'k'),
+    ("j", 'j'),
+    ("k", 'k'),
     // l
-    ("l", 'l'), ("lacute", 'ĺ'), ("lcaron", 'ľ'), ("lcommaaccent", 'ļ'),
-    ("less", '<'), ("lessequal", '≤'), ("logicalnot", '¬'), ("lozenge", '◊'), ("lslash", 'ł'),
+    ("l", 'l'),
+    ("lacute", 'ĺ'),
+    ("lcaron", 'ľ'),
+    ("lcommaaccent", 'ļ'),
+    ("less", '<'),
+    ("lessequal", '≤'),
+    ("logicalnot", '¬'),
+    ("lozenge", '◊'),
+    ("lslash", 'ł'),
     // m–n
-    ("m", 'm'), ("macron", '¯'), ("mu", 'µ'), ("multiply", '×'),
-    ("n", 'n'), ("nacute", 'ń'), ("ncaron", 'ň'), ("ncommaaccent", 'ņ'), ("nine", '9'),
-    ("notequal", '≠'), ("ntilde", 'ñ'), ("numbersign", '#'),
+    ("m", 'm'),
+    ("macron", '¯'),
+    ("mu", 'µ'),
+    ("multiply", '×'),
+    ("n", 'n'),
+    ("nacute", 'ń'),
+    ("ncaron", 'ň'),
+    ("ncommaaccent", 'ņ'),
+    ("nine", '9'),
+    ("notequal", '≠'),
+    ("ntilde", 'ñ'),
+    ("numbersign", '#'),
     // o
-    ("o", 'o'), ("oacute", 'ó'), ("ocircumflex", 'ô'), ("odblacute", 'ő'), ("odieresis", 'ö'),
-    ("oe", 'œ'), ("ogonek", '˛'), ("ograve", 'ò'), ("omacron", 'ō'), ("one", '1'),
-    ("onehalf", '½'), ("onequarter", '¼'), ("onesuperior", '¹'),
-    ("ordfeminine", 'ª'), ("ordmasculine", 'º'), ("oslash", 'ø'), ("otilde", 'õ'),
+    ("o", 'o'),
+    ("oacute", 'ó'),
+    ("ocircumflex", 'ô'),
+    ("odblacute", 'ő'),
+    ("odieresis", 'ö'),
+    ("oe", 'œ'),
+    ("ogonek", '˛'),
+    ("ograve", 'ò'),
+    ("omacron", 'ō'),
+    ("one", '1'),
+    ("onehalf", '½'),
+    ("onequarter", '¼'),
+    ("onesuperior", '¹'),
+    ("ordfeminine", 'ª'),
+    ("ordmasculine", 'º'),
+    ("oslash", 'ø'),
+    ("otilde", 'õ'),
     // p–q
-    ("p", 'p'), ("paragraph", '¶'), ("parenleft", '('), ("parenright", ')'),
-    ("partialdiff", '∂'), ("percent", '%'), ("period", '.'),
-    ("periodcentered", '·'), ("perthousand", '‰'), ("pi", 'π'),
-    ("plus", '+'), ("plusminus", '±'), ("product", '∏'),
-    ("q", 'q'), ("question", '?'), ("questiondown", '¿'),
-    ("quotedbl", '"'), ("quotedblbase", '„'), ("quotedblleft", '"'),
-    ("quotedblright", '"'), ("quoteleft", '\u{2018}'),
-    ("quoteright", '\u{2019}'), ("quotesinglbase", '‚'), ("quotesingle", '\''),
+    ("p", 'p'),
+    ("paragraph", '¶'),
+    ("parenleft", '('),
+    ("parenright", ')'),
+    ("partialdiff", '∂'),
+    ("percent", '%'),
+    ("period", '.'),
+    ("periodcentered", '·'),
+    ("perthousand", '‰'),
+    ("pi", 'π'),
+    ("plus", '+'),
+    ("plusminus", '±'),
+    ("product", '∏'),
+    ("q", 'q'),
+    ("question", '?'),
+    ("questiondown", '¿'),
+    ("quotedbl", '"'),
+    ("quotedblbase", '„'),
+    ("quotedblleft", '"'),
+    ("quotedblright", '"'),
+    ("quoteleft", '\u{2018}'),
+    ("quoteright", '\u{2019}'),
+    ("quotesinglbase", '‚'),
+    ("quotesingle", '\''),
     // r
-    ("r", 'r'), ("racute", 'ŕ'), ("radical", '√'), ("rcaron", 'ř'), ("rcommaaccent", 'ŗ'),
-    ("registered", '®'), ("ring", '˚'),
+    ("r", 'r'),
+    ("racute", 'ŕ'),
+    ("radical", '√'),
+    ("rcaron", 'ř'),
+    ("rcommaaccent", 'ŗ'),
+    ("registered", '®'),
+    ("ring", '˚'),
     // s
-    ("s", 's'), ("sacute", 'ś'), ("scaron", 'š'), ("scedilla", 'ş'),
-    ("scommaaccent", 'ș'), ("section", '§'), ("semicolon", ';'),
-    ("seven", '7'), ("six", '6'), ("slash", '/'), ("space", ' '),
-    ("sterling", '£'), ("summation", '∑'),
+    ("s", 's'),
+    ("sacute", 'ś'),
+    ("scaron", 'š'),
+    ("scedilla", 'ş'),
+    ("scommaaccent", 'ș'),
+    ("section", '§'),
+    ("semicolon", ';'),
+    ("seven", '7'),
+    ("six", '6'),
+    ("slash", '/'),
+    ("space", ' '),
+    ("sterling", '£'),
+    ("summation", '∑'),
     // t
-    ("t", 't'), ("tcaron", 'ť'), ("tcedilla", 'ţ'), ("tcommaaccent", 'ț'),
-    ("thorn", 'þ'), ("three", '3'), ("threequarters", '¾'),
-    ("threesuperior", '³'), ("tilde", '˜'), ("trademark", '™'),
-    ("two", '2'), ("twosuperior", '²'),
+    ("t", 't'),
+    ("tcaron", 'ť'),
+    ("tcedilla", 'ţ'),
+    ("tcommaaccent", 'ț'),
+    ("thorn", 'þ'),
+    ("three", '3'),
+    ("threequarters", '¾'),
+    ("threesuperior", '³'),
+    ("tilde", '˜'),
+    ("trademark", '™'),
+    ("two", '2'),
+    ("twosuperior", '²'),
     // u
-    ("u", 'u'), ("uacute", 'ú'), ("ucircumflex", 'û'), ("udblacute", 'ű'), ("udieresis", 'ü'),
-    ("ugrave", 'ù'), ("umacron", 'ū'), ("underscore", '_'), ("uogonek", 'ų'), ("uring", 'ů'),
+    ("u", 'u'),
+    ("uacute", 'ú'),
+    ("ucircumflex", 'û'),
+    ("udblacute", 'ű'),
+    ("udieresis", 'ü'),
+    ("ugrave", 'ù'),
+    ("umacron", 'ū'),
+    ("underscore", '_'),
+    ("uogonek", 'ų'),
+    ("uring", 'ů'),
     // v–x
-    ("v", 'v'), ("w", 'w'), ("x", 'x'),
+    ("v", 'v'),
+    ("w", 'w'),
+    ("x", 'x'),
     // y–z
-    ("y", 'y'), ("yacute", 'ý'), ("ydieresis", 'ÿ'), ("yen", '¥'),
-    ("z", 'z'), ("zacute", 'ź'), ("zcaron", 'ž'), ("zdotaccent", 'ż'), ("zero", '0'),
+    ("y", 'y'),
+    ("yacute", 'ý'),
+    ("ydieresis", 'ÿ'),
+    ("yen", '¥'),
+    ("z", 'z'),
+    ("zacute", 'ź'),
+    ("zcaron", 'ž'),
+    ("zdotaccent", 'ż'),
+    ("zero", '0'),
 ];
 
 // ---------------------------------------------------------------------------
@@ -865,13 +1151,21 @@ fn parse_to_unicode_cmap(bytes: &[u8]) -> BTreeMap<u16, char> {
 
 fn parse_bfchar_line(line: &str, map: &mut BTreeMap<u16, char>) {
     let mut parts = line.split_ascii_whitespace();
-    let gid_tok = match parts.next() { Some(s) => s, None => return };
-    let uni_tok = match parts.next() { Some(s) => s, None => return };
+    let gid_tok = match parts.next() {
+        Some(s) => s,
+        None => return,
+    };
+    let uni_tok = match parts.next() {
+        Some(s) => s,
+        None => return,
+    };
 
     let gid_hex = gid_tok.trim_start_matches('<').trim_end_matches('>');
     let uni_hex = uni_tok.trim_start_matches('<').trim_end_matches('>');
 
-    let Ok(gid) = u16::from_str_radix(gid_hex, 16) else { return };
+    let Ok(gid) = u16::from_str_radix(gid_hex, 16) else {
+        return;
+    };
 
     let ch = hex_to_char(uni_hex);
     if let Some(ch) = ch {
@@ -883,32 +1177,48 @@ fn parse_bfrange_line(line: &str, map: &mut BTreeMap<u16, char>) {
     // <lo> <hi> <dst>  or  <lo> <hi> [<u1> <u2> ...]
     // Use split_ascii_whitespace so tabs / multiple spaces between tokens are handled.
     let mut toks = line.split_ascii_whitespace();
-    let lo_tok = match toks.next() { Some(s) => s, None => return };
-    let hi_tok = match toks.next() { Some(s) => s, None => return };
+    let lo_tok = match toks.next() {
+        Some(s) => s,
+        None => return,
+    };
+    let hi_tok = match toks.next() {
+        Some(s) => s,
+        None => return,
+    };
     // Reconstruct rest from the original line starting at the third non-whitespace span.
     let rest = {
         let skip2 = line
             .trim_start()
             .trim_start_matches(|c: char| !c.is_ascii_whitespace()) // skip lo_tok
-            .trim_start_matches(|c: char| c.is_ascii_whitespace())  // skip ws
+            .trim_start_matches(|c: char| c.is_ascii_whitespace()) // skip ws
             .trim_start_matches(|c: char| !c.is_ascii_whitespace()) // skip hi_tok
             .trim_start();
-        if skip2.is_empty() { return }
+        if skip2.is_empty() {
+            return;
+        }
         skip2
     };
 
     let lo_hex = lo_tok.trim_start_matches('<').trim_end_matches('>');
     let hi_hex = hi_tok.trim_start_matches('<').trim_end_matches('>');
-    let Ok(lo) = u16::from_str_radix(lo_hex, 16) else { return };
-    let Ok(hi) = u16::from_str_radix(hi_hex, 16) else { return };
-    if lo > hi { return; }
+    let Ok(lo) = u16::from_str_radix(lo_hex, 16) else {
+        return;
+    };
+    let Ok(hi) = u16::from_str_radix(hi_hex, 16) else {
+        return;
+    };
+    if lo > hi {
+        return;
+    }
 
     if rest.starts_with('[') {
         // Explicit array form: [<u1> <u2> ...]
         let inner = rest.trim_start_matches('[').trim_end_matches(']');
         let mut code = lo;
         for tok in inner.split_whitespace() {
-            if code > hi { break; }
+            if code > hi {
+                break;
+            }
             let hex = tok.trim_start_matches('<').trim_end_matches('>');
             if let Some(ch) = hex_to_char(hex) {
                 map.insert(code, ch);
@@ -918,11 +1228,15 @@ fn parse_bfrange_line(line: &str, map: &mut BTreeMap<u16, char>) {
     } else {
         // Contiguous range: <dst_start>
         let dst_hex = rest.trim_start_matches('<').trim_end_matches('>');
-        let Ok(dst_start) = u32::from_str_radix(dst_hex, 16) else { return };
+        let Ok(dst_start) = u32::from_str_radix(dst_hex, 16) else {
+            return;
+        };
         for i in 0..=(hi as u32).saturating_sub(lo as u32) {
             let code = lo + i as u16;
             // Guard against adversarially crafted CMaps with dst_start near u32::MAX.
-            let Some(cp) = dst_start.checked_add(i) else { break };
+            let Some(cp) = dst_start.checked_add(i) else {
+                break;
+            };
             if let Some(ch) = char::from_u32(cp) {
                 map.insert(code, ch);
             }
@@ -947,9 +1261,7 @@ fn hex_to_char(hex: &str) -> Option<char> {
             let hi = u16::from_str_radix(&hex[0..4], 16).ok()?;
             let lo = u16::from_str_radix(&hex[4..8], 16).ok()?;
             if (0xD800..=0xDBFF).contains(&hi) && (0xDC00..=0xDFFF).contains(&lo) {
-                let cp = 0x10000u32
-                    + ((hi as u32 - 0xD800) << 10)
-                    + (lo as u32 - 0xDC00);
+                let cp = 0x10000u32 + ((hi as u32 - 0xD800) << 10) + (lo as u32 - 0xDC00);
                 char::from_u32(cp)
             } else {
                 // Treat as plain 32-bit codepoint
@@ -972,10 +1284,15 @@ fn parse_w_array(arr: &[Object]) -> Vec<WidthRun> {
     while i < arr.len() {
         let start_gid = match arr[i].as_i64() {
             Ok(n) => n as u16,
-            Err(_) => { i += 1; continue; }
+            Err(_) => {
+                i += 1;
+                continue;
+            }
         };
         i += 1;
-        if i >= arr.len() { break; }
+        if i >= arr.len() {
+            break;
+        }
 
         match &arr[i] {
             Object::Array(widths_arr) => {
@@ -989,19 +1306,32 @@ fn parse_w_array(arr: &[Object]) -> Vec<WidthRun> {
             Object::Integer(_) | Object::Real(_) => {
                 let end_gid = match arr[i].as_i64() {
                     Ok(n) => n as u16,
-                    Err(_) => { i += 1; continue; }
+                    Err(_) => {
+                        i += 1;
+                        continue;
+                    }
                 };
                 i += 1;
-                if i >= arr.len() { break; }
+                if i >= arr.len() {
+                    break;
+                }
                 let w = match arr[i].as_i64() {
                     Ok(n) => n as u32,
-                    Err(_) => { i += 1; continue; }
+                    Err(_) => {
+                        i += 1;
+                        continue;
+                    }
                 };
                 i += 1;
                 let count = (end_gid as usize).saturating_sub(start_gid as usize) + 1;
-                runs.push(WidthRun { start_gid, widths: vec![w; count] });
+                runs.push(WidthRun {
+                    start_gid,
+                    widths: vec![w; count],
+                });
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
     runs
@@ -1028,39 +1358,45 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
     while i < input.len() {
         let b = input[i];
 
-        if is_pdf_whitespace(b) { i += 1; continue; }
+        if is_pdf_whitespace(b) {
+            i += 1;
+            continue;
+        }
         if b == b'%' {
-            while i < input.len() && input[i] != b'\r' && input[i] != b'\n' { i += 1; }
+            while i < input.len() && input[i] != b'\r' && input[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         if b == b'<' {
             if i + 1 < input.len() && input[i + 1] == b'<' {
                 // Dictionary literal — skip until >>
                 i += 2;
-                while i + 1 < input.len()
-                    && !(input[i] == b'>' && input[i + 1] == b'>')
-                {
+                while i + 1 < input.len() && !(input[i] == b'>' && input[i + 1] == b'>') {
                     i += 1;
                 }
-                if i + 1 < input.len() { i += 2; }
+                if i + 1 < input.len() {
+                    i += 2;
+                }
                 continue;
             }
             // Hex string
             i += 1;
             let start = i;
-            while i < input.len() && input[i] != b'>' { i += 1; }
+            while i < input.len() && input[i] != b'>' {
+                i += 1;
+            }
             let hex = &input[start..i];
-            if i < input.len() { i += 1; }
+            if i < input.len() {
+                i += 1;
+            }
             tokens.push(Token::HexStr(decode_hex_bytes(hex)));
             continue;
         }
         if b == b'/' {
             i += 1;
             let start = i;
-            while i < input.len()
-                && !is_pdf_whitespace(input[i])
-                && !is_pdf_delimiter(input[i])
-            {
+            while i < input.len() && !is_pdf_whitespace(input[i]) && !is_pdf_delimiter(input[i]) {
                 i += 1;
             }
             tokens.push(Token::Name(input[start..i].to_vec()));
@@ -1073,7 +1409,10 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
             tokens.push(Token::Array(arr));
             continue;
         }
-        if b == b']' { i += 1; continue; }
+        if b == b']' {
+            i += 1;
+            continue;
+        }
         if b == b'(' {
             let (bytes, end_i) = parse_literal_string(input, i + 1);
             i = end_i;
@@ -1083,14 +1422,14 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
 
         // Number or keyword
         let start = i;
-        while i < input.len()
-            && !is_pdf_whitespace(input[i])
-            && !is_pdf_delimiter(input[i])
-        {
+        while i < input.len() && !is_pdf_whitespace(input[i]) && !is_pdf_delimiter(input[i]) {
             i += 1;
         }
         let word = &input[start..i];
-        if word.is_empty() { i += 1; continue; }
+        if word.is_empty() {
+            i += 1;
+            continue;
+        }
         if let Ok(s) = std::str::from_utf8(word)
             && let Ok(n) = s.parse::<f32>()
             && n.is_finite()
@@ -1110,14 +1449,24 @@ fn parse_array_tokens(input: &[u8]) -> (Vec<Token>, usize) {
 
     while i < input.len() {
         let b = input[i];
-        if is_pdf_whitespace(b) { i += 1; continue; }
-        if b == b']' { i += 1; return (tokens, i); }
+        if is_pdf_whitespace(b) {
+            i += 1;
+            continue;
+        }
+        if b == b']' {
+            i += 1;
+            return (tokens, i);
+        }
         if b == b'<' && (i + 1 >= input.len() || input[i + 1] != b'<') {
             i += 1;
             let start = i;
-            while i < input.len() && input[i] != b'>' { i += 1; }
+            while i < input.len() && input[i] != b'>' {
+                i += 1;
+            }
             let hex = &input[start..i];
-            if i < input.len() { i += 1; }
+            if i < input.len() {
+                i += 1;
+            }
             tokens.push(Token::HexStr(decode_hex_bytes(hex)));
             continue;
         }
@@ -1129,14 +1478,14 @@ fn parse_array_tokens(input: &[u8]) -> (Vec<Token>, usize) {
         }
         // Number or other
         let start = i;
-        while i < input.len()
-            && !is_pdf_whitespace(input[i])
-            && !is_pdf_delimiter(input[i])
-        {
+        while i < input.len() && !is_pdf_whitespace(input[i]) && !is_pdf_delimiter(input[i]) {
             i += 1;
         }
         let word = &input[start..i];
-        if word.is_empty() { i += 1; continue; }
+        if word.is_empty() {
+            i += 1;
+            continue;
+        }
         if let Ok(s) = std::str::from_utf8(word)
             && let Ok(n) = s.parse::<f32>()
         {
@@ -1158,55 +1507,93 @@ pub(crate) fn parse_literal_string(input: &[u8], mut i: usize) -> (Vec<u8>, usiz
         match input[i] {
             b'\\' => {
                 i += 1;
-                if i >= input.len() { break; }
+                if i >= input.len() {
+                    break;
+                }
                 match input[i] {
-                    b'n'  => { out.push(b'\n'); i += 1; }
-                    b'r'  => { out.push(b'\r'); i += 1; }
-                    b't'  => { out.push(b'\t'); i += 1; }
-                    b'\\' => { out.push(b'\\'); i += 1; }
-                    b'('  => { out.push(b'(');  i += 1; }
-                    b')'  => { out.push(b')');  i += 1; }
+                    b'n' => {
+                        out.push(b'\n');
+                        i += 1;
+                    }
+                    b'r' => {
+                        out.push(b'\r');
+                        i += 1;
+                    }
+                    b't' => {
+                        out.push(b'\t');
+                        i += 1;
+                    }
+                    b'\\' => {
+                        out.push(b'\\');
+                        i += 1;
+                    }
+                    b'(' => {
+                        out.push(b'(');
+                        i += 1;
+                    }
+                    b')' => {
+                        out.push(b')');
+                        i += 1;
+                    }
                     b'\r' => {
                         // Line continuation: \<CR> or \<CR><LF>
                         i += 1;
-                        if i < input.len() && input[i] == b'\n' { i += 1; }
+                        if i < input.len() && input[i] == b'\n' {
+                            i += 1;
+                        }
                     }
-                    b'\n' => { i += 1; } // \<LF> line continuation
+                    b'\n' => {
+                        i += 1;
+                    } // \<LF> line continuation
                     d @ b'0'..=b'7' => {
                         // Octal escape: 1–3 digits
                         let mut val = (d - b'0') as u16;
                         i += 1;
                         let mut count = 1;
-                        while count < 3
-                            && i < input.len()
-                            && (b'0'..=b'7').contains(&input[i])
-                        {
+                        while count < 3 && i < input.len() && (b'0'..=b'7').contains(&input[i]) {
                             val = val * 8 + (input[i] - b'0') as u16;
                             i += 1;
                             count += 1;
                         }
                         out.push((val & 0xFF) as u8);
                     }
-                    _ => { out.push(input[i]); i += 1; }
+                    _ => {
+                        out.push(input[i]);
+                        i += 1;
+                    }
                 }
             }
-            b'(' => { depth += 1; out.push(b'('); i += 1; }
-            b')' => {
-                depth -= 1;
-                if depth > 0 { out.push(b')'); }
+            b'(' => {
+                depth += 1;
+                out.push(b'(');
                 i += 1;
             }
-            b => { out.push(b); i += 1; }
+            b')' => {
+                depth -= 1;
+                if depth > 0 {
+                    out.push(b')');
+                }
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
         }
     }
     (out, i)
 }
 
 pub(crate) fn decode_hex_bytes(hex: &[u8]) -> Vec<u8> {
-    let cleaned: Vec<u8> =
-        hex.iter().filter(|&&b| !is_pdf_whitespace(b)).copied().collect();
+    let cleaned: Vec<u8> = hex
+        .iter()
+        .filter(|&&b| !is_pdf_whitespace(b))
+        .copied()
+        .collect();
     let mut padded = cleaned;
-    if !padded.len().is_multiple_of(2) { padded.push(b'0'); }
+    if !padded.len().is_multiple_of(2) {
+        padded.push(b'0');
+    }
     padded
         .chunks(2)
         .filter_map(|chunk| {
@@ -1221,7 +1608,10 @@ pub(crate) fn is_pdf_whitespace(b: u8) -> bool {
 }
 
 pub(crate) fn is_pdf_delimiter(b: u8) -> bool {
-    matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,9 +1649,7 @@ fn parse_content_stream(
                 b"Tf" if in_bt => {
                     let top = stack.pop();
                     let second = stack.pop();
-                    if let (Some(Token::Number(size)), Some(Token::Name(name))) =
-                        (top, second)
-                    {
+                    if let (Some(Token::Number(size)), Some(Token::Name(name))) = (top, second) {
                         font_name = name;
                         font_size = size;
                     }
@@ -1270,9 +1658,7 @@ fn parse_content_stream(
                 b"Td" | b"TD" if in_bt => {
                     let top = stack.pop();
                     let second = stack.pop();
-                    if let (Some(Token::Number(ty)), Some(Token::Number(tx))) =
-                        (top, second)
-                    {
+                    if let (Some(Token::Number(ty)), Some(Token::Number(tx))) = (top, second) {
                         x += tx;
                         y += ty;
                     }
@@ -1281,10 +1667,10 @@ fn parse_content_stream(
                 b"Tm" if in_bt => {
                     let pop_f = stack.pop();
                     let pop_e = stack.pop();
-                    for _ in 0..4 { stack.pop(); }
-                    if let (Some(Token::Number(fy)), Some(Token::Number(ex))) =
-                        (pop_f, pop_e)
-                    {
+                    for _ in 0..4 {
+                        stack.pop();
+                    }
+                    if let (Some(Token::Number(fy)), Some(Token::Number(ex))) = (pop_f, pop_e) {
                         x = ex;
                         y = fy;
                     }
@@ -1324,8 +1710,14 @@ fn parse_content_stream(
                     };
                     if let Some(char_bytes) = bytes_opt
                         && let Some(frag) = decode_chars_to_fragment(
-                            &char_bytes, &font_name, font_size, x, y, fonts,
-                            cur_color, cur_render_mode,
+                            &char_bytes,
+                            &font_name,
+                            font_size,
+                            x,
+                            y,
+                            fonts,
+                            cur_color,
+                            cur_render_mode,
                         )
                     {
                         x += frag.width;
@@ -1340,8 +1732,14 @@ fn parse_content_stream(
                             match item {
                                 Token::HexStr(ref b) | Token::LitStr(ref b) => {
                                     if let Some(frag) = decode_chars_to_fragment(
-                                        b, &font_name, font_size, cur_x, y, fonts,
-                                        cur_color, cur_render_mode,
+                                        b,
+                                        &font_name,
+                                        font_size,
+                                        cur_x,
+                                        y,
+                                        fonts,
+                                        cur_color,
+                                        cur_render_mode,
                                     ) {
                                         cur_x += frag.width;
                                         out.push(frag);
@@ -1357,9 +1755,13 @@ fn parse_content_stream(
                     }
                     stack.clear();
                 }
-                _ => { stack.clear(); }
+                _ => {
+                    stack.clear();
+                }
             },
-            other => { stack.push(other); }
+            other => {
+                stack.push(other);
+            }
         }
     }
 }
@@ -1375,7 +1777,9 @@ fn decode_chars_to_fragment(
     color: [f32; 3],
     render_mode: u8,
 ) -> Option<TextFragment> {
-    if char_bytes.is_empty() { return None; }
+    if char_bytes.is_empty() {
+        return None;
+    }
     let font_info = fonts.get(font_name)?;
 
     let mut text = String::new();
@@ -1383,7 +1787,9 @@ fn decode_chars_to_fragment(
 
     match font_info.bytes_per_char {
         2 => {
-            if !char_bytes.len().is_multiple_of(2) { return None; }
+            if !char_bytes.len().is_multiple_of(2) {
+                return None;
+            }
             for chunk in char_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                 let ch = font_info.to_unicode.get(&gid).copied().or_else(|| {
@@ -1403,7 +1809,9 @@ fn decode_chars_to_fragment(
         _ => {
             for &b in char_bytes {
                 let code = b as u16;
-                let Some(&ch) = font_info.to_unicode.get(&code) else { continue };
+                let Some(&ch) = font_info.to_unicode.get(&code) else {
+                    continue;
+                };
                 text.push(ch);
                 let aw = font_info.advance_width(code);
                 total_width += aw as f32 / 1000.0 * font_size;
@@ -1411,7 +1819,9 @@ fn decode_chars_to_fragment(
         }
     }
 
-    if text.is_empty() { return None; }
+    if text.is_empty() {
+        return None;
+    }
     Some(TextFragment {
         text,
         x,
@@ -1521,7 +1931,13 @@ mod tests {
         let tokens = tokenize(stream);
         let keywords: Vec<&[u8]> = tokens
             .iter()
-            .filter_map(|t| if let Token::Keyword(k) = t { Some(k.as_slice()) } else { None })
+            .filter_map(|t| {
+                if let Token::Keyword(k) = t {
+                    Some(k.as_slice())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(keywords.contains(&b"BT".as_slice()));
         assert!(keywords.contains(&b"Tf".as_slice()));
@@ -1551,7 +1967,10 @@ mod tests {
         let info = FontInfo {
             to_unicode: BTreeMap::new(),
             dw: 1000,
-            w_runs: vec![WidthRun { start_gid: 5, widths: vec![600] }],
+            w_runs: vec![WidthRun {
+                start_gid: 5,
+                widths: vec![600],
+            }],
             bytes_per_char: 2,
             identity_fallback: false,
         };

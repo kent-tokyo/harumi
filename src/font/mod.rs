@@ -38,14 +38,20 @@ mod tests {
 
     #[test]
     fn detect_truetype_magic() {
-        assert_eq!(FontKind::detect(&[0x00, 0x01, 0x00, 0x00, 0x00]), Some(FontKind::TrueType));
+        assert_eq!(
+            FontKind::detect(&[0x00, 0x01, 0x00, 0x00, 0x00]),
+            Some(FontKind::TrueType)
+        );
         assert_eq!(FontKind::detect(b"true\x00"), Some(FontKind::TrueType));
     }
 
     #[test]
     fn detect_ttc_magic() {
         // TTC collections start with 'ttcf'.
-        assert_eq!(FontKind::detect(b"ttcf\x00\x01\x00\x00"), Some(FontKind::TrueType));
+        assert_eq!(
+            FontKind::detect(b"ttcf\x00\x01\x00\x00"),
+            Some(FontKind::TrueType)
+        );
     }
 
     #[test]

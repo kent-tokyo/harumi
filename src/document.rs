@@ -10,9 +10,9 @@ use crate::{
     content::text::text_stream,
     error::{Error, Result},
     font::{
-        embed::{embed_cid_font, EmbedParams},
-        subset::subset_font,
         EmbeddedFont, FontHandle,
+        embed::{EmbedParams, embed_cid_font},
+        subset::subset_font,
     },
 };
 
@@ -242,7 +242,14 @@ impl Document {
     /// Returns [`Error::Io`] if the file cannot be read, or [`Error::Pdf`] if
     /// the file is not a valid PDF.
     fn from_inner(inner: lopdf::Document) -> Self {
-        Self { inner, raw_fonts: Vec::new(), pending: Vec::new(), pending_bookmarks: Vec::new(), finalized: false, pending_encryption: None }
+        Self {
+            inner,
+            raw_fonts: Vec::new(),
+            pending: Vec::new(),
+            pending_bookmarks: Vec::new(),
+            finalized: false,
+            pending_encryption: None,
+        }
     }
 
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
@@ -265,8 +272,8 @@ impl Document {
     /// Returns [`Error::WrongPassword`] if the password is incorrect, or [`Error::Pdf`] /
     /// [`Error::Io`] for other failures.
     pub fn from_file_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
-        let inner = lopdf::Document::load_with_password(path, password)
-            .map_err(map_lopdf_password_err)?;
+        let inner =
+            lopdf::Document::load_with_password(path, password).map_err(map_lopdf_password_err)?;
         Ok(Self::from_inner(inner))
     }
 
@@ -324,7 +331,11 @@ impl Document {
     /// # Errors
     /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
     /// Returns [`Error::InvalidInput`] if the OS RNG is unavailable at save time.
-    pub fn set_encryption_aes256(&mut self, user_password: &str, owner_password: &str) -> Result<()> {
+    pub fn set_encryption_aes256(
+        &mut self,
+        user_password: &str,
+        owner_password: &str,
+    ) -> Result<()> {
         if self.finalized {
             return Err(Error::InvalidInput(
                 "set_encryption_aes256() called after save(); create a new Document".into(),
@@ -361,7 +372,8 @@ impl Document {
         check_finite(&[size.0, size.1], "Document::new")?;
         if size.0 <= 0.0 || size.1 <= 0.0 {
             return Err(Error::InvalidInput(format!(
-                "page size must be positive, got ({}, {})", size.0, size.1
+                "page size must be positive, got ({}, {})",
+                size.0, size.1
             )));
         }
 
@@ -370,27 +382,36 @@ impl Document {
         let pages_id = inner.new_object_id();
         let page_id = inner.new_object_id();
 
-        inner.objects.insert(page_id, Object::Dictionary({
-            let mut d = Dictionary::new();
-            d.set("Type", Object::Name(b"Page".to_vec()));
-            d.set("Parent", Object::Reference(pages_id));
-            d.set("MediaBox", Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(0),
-                Object::Real(size.0),
-                Object::Real(size.1),
-            ]));
-            d.set("Resources", Object::Dictionary(Dictionary::new()));
-            d
-        }));
+        inner.objects.insert(
+            page_id,
+            Object::Dictionary({
+                let mut d = Dictionary::new();
+                d.set("Type", Object::Name(b"Page".to_vec()));
+                d.set("Parent", Object::Reference(pages_id));
+                d.set(
+                    "MediaBox",
+                    Object::Array(vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Real(size.0),
+                        Object::Real(size.1),
+                    ]),
+                );
+                d.set("Resources", Object::Dictionary(Dictionary::new()));
+                d
+            }),
+        );
 
-        inner.objects.insert(pages_id, Object::Dictionary({
-            let mut d = Dictionary::new();
-            d.set("Type", Object::Name(b"Pages".to_vec()));
-            d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
-            d.set("Count", Object::Integer(1));
-            d
-        }));
+        inner.objects.insert(
+            pages_id,
+            Object::Dictionary({
+                let mut d = Dictionary::new();
+                d.set("Type", Object::Name(b"Pages".to_vec()));
+                d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+                d.set("Count", Object::Integer(1));
+                d
+            }),
+        );
 
         let catalog_id = inner.add_object(Object::Dictionary({
             let mut d = Dictionary::new();
@@ -435,13 +456,14 @@ impl Document {
     /// file (`OTTO` magic bytes); those are not yet supported.
     pub fn embed_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle> {
         // Validate the font early so callers get an actionable error at registration time.
-        let face = Face::parse(ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
         let idx = self.raw_fonts.len() as u32;
-        self.raw_fonts.push(RawFont { ttf_bytes: ttf_bytes.to_vec() });
+        self.raw_fonts.push(RawFont {
+            ttf_bytes: ttf_bytes.to_vec(),
+        });
         Ok(FontHandle(idx))
     }
 
@@ -497,7 +519,10 @@ impl Document {
             )));
         }
         let page_ids = self.inner.get_pages();
-        let page_id = page_ids.get(&number).copied().ok_or(Error::PageNotFound(number))?;
+        let page_id = page_ids
+            .get(&number)
+            .copied()
+            .ok_or(Error::PageNotFound(number))?;
         let page_dict = self.inner.get_object_mut(page_id)?.as_dict_mut()?;
         // Accept both Integer and Real /Rotate (some PDF generators emit 270.0).
         let current: i64 = match page_dict.get(b"Rotate").ok() {
@@ -538,12 +563,18 @@ impl Document {
             ));
         }
         let page_ids = self.inner.get_pages();
-        let target_id = page_ids.get(&number).copied().ok_or(Error::PageNotFound(number))?;
+        let target_id = page_ids
+            .get(&number)
+            .copied()
+            .ok_or(Error::PageNotFound(number))?;
         if page_ids.len() <= 1 {
             return Err(Error::InvalidInput("cannot remove the only page".into()));
         }
 
-        let all_ids: Vec<ObjectId> = page_ids.into_values().filter(|&id| id != target_id).collect();
+        let all_ids: Vec<ObjectId> = page_ids
+            .into_values()
+            .filter(|&id| id != target_id)
+            .collect();
 
         // Materialize inherited attributes (MediaBox, CropBox, etc.) from any
         // intermediate /Pages nodes before those nodes leave the ancestry chain.
@@ -602,7 +633,8 @@ impl Document {
         check_finite(&[size.0, size.1], "insert_blank_page")?;
         if size.0 <= 0.0 || size.1 <= 0.0 {
             return Err(Error::InvalidInput(format!(
-                "page size must be positive, got ({}, {})", size.0, size.1
+                "page size must be positive, got ({}, {})",
+                size.0, size.1
             )));
         }
         let count = self.page_count();
@@ -787,8 +819,7 @@ impl Document {
         }
 
         // Rebuild /Kids with self's pages followed by other's pages, update /Count.
-        let combined: Vec<ObjectId> =
-            self_page_ids.into_iter().chain(other_page_ids).collect();
+        let combined: Vec<ObjectId> = self_page_ids.into_iter().chain(other_page_ids).collect();
         let count = combined.len();
         let new_kids: Vec<Object> = combined.into_iter().map(Object::Reference).collect();
         let pages_dict = self.inner.get_object_mut(pages_root)?.as_dict_mut()?;
@@ -882,30 +913,28 @@ impl Document {
     pub fn metadata(&self) -> Result<PdfMetadata> {
         use lopdf::Object;
 
-        let info_dict: Option<lopdf::Dictionary> =
-            match self.inner.trailer.get(b"Info").ok() {
-                Some(Object::Reference(id)) => self
-                    .inner
-                    .get_object(*id)
-                    .ok()
-                    .and_then(|o| {
-                        if let Object::Dictionary(d) = o { Some(d.clone()) } else { None }
-                    }),
-                Some(Object::Dictionary(d)) => Some(d.clone()),
-                _ => None,
-            };
-
-        let field = |d: &lopdf::Dictionary, key: &[u8]| {
-            d.get(key).ok().and_then(lopdf_string_to_rust)
+        let info_dict: Option<lopdf::Dictionary> = match self.inner.trailer.get(b"Info").ok() {
+            Some(Object::Reference(id)) => self.inner.get_object(*id).ok().and_then(|o| {
+                if let Object::Dictionary(d) = o {
+                    Some(d.clone())
+                } else {
+                    None
+                }
+            }),
+            Some(Object::Dictionary(d)) => Some(d.clone()),
+            _ => None,
         };
+
+        let field =
+            |d: &lopdf::Dictionary, key: &[u8]| d.get(key).ok().and_then(lopdf_string_to_rust);
 
         Ok(match info_dict {
             Some(d) => PdfMetadata {
-                title:    field(&d, b"Title"),
-                author:   field(&d, b"Author"),
-                subject:  field(&d, b"Subject"),
+                title: field(&d, b"Title"),
+                author: field(&d, b"Author"),
+                subject: field(&d, b"Subject"),
                 keywords: field(&d, b"Keywords"),
-                creator:  field(&d, b"Creator"),
+                creator: field(&d, b"Creator"),
             },
             None => PdfMetadata::default(),
         })
@@ -929,14 +958,17 @@ impl Document {
         let mut dict = lopdf::Dictionary::new();
         let mut set = |key: &[u8], val: &Option<String>| {
             if let Some(s) = val {
-                dict.set(key, Object::String(s.as_bytes().to_vec(), StringFormat::Literal));
+                dict.set(
+                    key,
+                    Object::String(s.as_bytes().to_vec(), StringFormat::Literal),
+                );
             }
         };
-        set(b"Title",    &meta.title);
-        set(b"Author",   &meta.author);
-        set(b"Subject",  &meta.subject);
+        set(b"Title", &meta.title);
+        set(b"Author", &meta.author);
+        set(b"Subject", &meta.subject);
         set(b"Keywords", &meta.keywords);
-        set(b"Creator",  &meta.creator);
+        set(b"Creator", &meta.creator);
 
         let info_id = self.inner.add_object(Object::Dictionary(dict));
         self.inner.trailer.set("Info", Object::Reference(info_id));
@@ -967,12 +999,10 @@ impl Document {
         };
         let field_refs: Vec<Object> = match fields_obj {
             Object::Array(arr) => arr.clone(),
-            Object::Reference(id) => {
-                match self.inner.get_object(*id)? {
-                    Object::Array(arr) => arr.clone(),
-                    _ => return Ok(Vec::new()),
-                }
-            }
+            Object::Reference(id) => match self.inner.get_object(*id)? {
+                Object::Array(arr) => arr.clone(),
+                _ => return Ok(Vec::new()),
+            },
             _ => return Ok(Vec::new()),
         };
         let mut out = Vec::new();
@@ -1023,7 +1053,7 @@ impl Document {
                                     "true" | "yes" | "on" | "1"
                                 );
                                 let state = if on { b"Yes".as_ref() } else { b"Off".as_ref() };
-                                dict.set("V",  Object::Name(state.to_vec()));
+                                dict.set("V", Object::Name(state.to_vec()));
                                 dict.set("AS", Object::Name(state.to_vec()));
                             }
                             _ => {
@@ -1038,7 +1068,9 @@ impl Document {
         }
 
         // Signal viewers to regenerate appearances.
-        if updated > 0 && let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut() {
+        if updated > 0
+            && let Ok(d) = self.inner.get_object_mut(acroform_id)?.as_dict_mut()
+        {
             d.set("NeedAppearances", Object::Boolean(true));
         }
         Ok(updated)
@@ -1068,7 +1100,9 @@ impl Document {
             ));
         }
 
-        let page_id = *self.inner.get_pages()
+        let page_id = *self
+            .inner
+            .get_pages()
             .get(&page)
             .ok_or(Error::PageNotFound(page))?;
 
@@ -1081,15 +1115,24 @@ impl Document {
         widget_dict.set("Type", Object::Name(b"Annot".to_vec()));
         widget_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
         widget_dict.set("FT", Object::Name(b"Tx".to_vec()));
-        widget_dict.set("T", Object::String(name.as_bytes().to_vec(), StringFormat::Literal));
-        widget_dict.set("Rect", Object::Array(vec![
-            Object::Real(rect[0]),
-            Object::Real(rect[1]),
-            Object::Real(rect[0] + rect[2]),
-            Object::Real(rect[1] + rect[3]),
-        ]));
+        widget_dict.set(
+            "T",
+            Object::String(name.as_bytes().to_vec(), StringFormat::Literal),
+        );
+        widget_dict.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Real(rect[0]),
+                Object::Real(rect[1]),
+                Object::Real(rect[0] + rect[2]),
+                Object::Real(rect[1] + rect[3]),
+            ]),
+        );
         widget_dict.set("P", Object::Reference(page_id));
-        widget_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+        widget_dict.set(
+            "DA",
+            Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal),
+        );
 
         // Set flags
         let mut flags = 0i64;
@@ -1111,8 +1154,7 @@ impl Document {
         let widget_id = self.inner.add_object(Object::Dictionary(widget_dict));
 
         // Add to AcroForm /Fields array
-        let acroform_dict = self.inner.get_object_mut(acroform_id)?
-            .as_dict_mut()?;
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?.as_dict_mut()?;
         let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
             let mut arr = arr.clone();
             arr.push(Object::Reference(widget_id));
@@ -1140,14 +1182,22 @@ impl Document {
     /// # Errors
     /// - [`Error::PageNotFound`] if the page number is invalid.
     /// - [`Error::InvalidInput`] if field creation fails.
-    pub fn add_checkbox(&mut self, page: u32, name: &str, rect: [f32; 4], checked: bool) -> Result<()> {
+    pub fn add_checkbox(
+        &mut self,
+        page: u32,
+        name: &str,
+        rect: [f32; 4],
+        checked: bool,
+    ) -> Result<()> {
         if self.finalized {
             return Err(Error::InvalidInput(
                 "add_checkbox() called after save(); create a new Document".into(),
             ));
         }
 
-        let page_id = *self.inner.get_pages()
+        let page_id = *self
+            .inner
+            .get_pages()
             .get(&page)
             .ok_or(Error::PageNotFound(page))?;
 
@@ -1155,29 +1205,41 @@ impl Document {
 
         let acroform_id = ensure_acroform(&mut self.inner)?;
 
-        let state = if checked { b"Yes".as_ref() } else { b"Off".as_ref() };
+        let state = if checked {
+            b"Yes".as_ref()
+        } else {
+            b"Off".as_ref()
+        };
 
         let mut widget_dict = Dictionary::new();
         widget_dict.set("Type", Object::Name(b"Annot".to_vec()));
         widget_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
         widget_dict.set("FT", Object::Name(b"Btn".to_vec()));
-        widget_dict.set("T", Object::String(name.as_bytes().to_vec(), StringFormat::Literal));
-        widget_dict.set("Rect", Object::Array(vec![
-            Object::Real(rect[0]),
-            Object::Real(rect[1]),
-            Object::Real(rect[0] + rect[2]),
-            Object::Real(rect[1] + rect[3]),
-        ]));
+        widget_dict.set(
+            "T",
+            Object::String(name.as_bytes().to_vec(), StringFormat::Literal),
+        );
+        widget_dict.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Real(rect[0]),
+                Object::Real(rect[1]),
+                Object::Real(rect[0] + rect[2]),
+                Object::Real(rect[1] + rect[3]),
+            ]),
+        );
         widget_dict.set("P", Object::Reference(page_id));
         widget_dict.set("V", Object::Name(state.to_vec()));
         widget_dict.set("AS", Object::Name(state.to_vec()));
-        widget_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+        widget_dict.set(
+            "DA",
+            Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal),
+        );
 
         let widget_id = self.inner.add_object(Object::Dictionary(widget_dict));
 
         // Add to AcroForm /Fields array
-        let acroform_dict = self.inner.get_object_mut(acroform_id)?
-            .as_dict_mut()?;
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?.as_dict_mut()?;
         let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
             let mut arr = arr.clone();
             arr.push(Object::Reference(widget_id));
@@ -1220,10 +1282,14 @@ impl Document {
         }
 
         if buttons.is_empty() {
-            return Err(Error::InvalidInput("radio group must have at least one button".into()));
+            return Err(Error::InvalidInput(
+                "radio group must have at least one button".into(),
+            ));
         }
 
-        let page_id = *self.inner.get_pages()
+        let page_id = *self
+            .inner
+            .get_pages()
             .get(&page)
             .ok_or(Error::PageNotFound(page))?;
 
@@ -1236,32 +1302,47 @@ impl Document {
         let mut parent_dict = Dictionary::new();
         parent_dict.set("FT", Object::Name(b"Btn".to_vec()));
         parent_dict.set("Ff", Object::Integer(1 << 15)); // Radio flag
-        parent_dict.set("T", Object::String(group_name.as_bytes().to_vec(), StringFormat::Literal));
+        parent_dict.set(
+            "T",
+            Object::String(group_name.as_bytes().to_vec(), StringFormat::Literal),
+        );
         parent_dict.set("V", Object::Name(selected_value.as_bytes().to_vec()));
 
-        let parent_id = self.inner.add_object(Object::Dictionary(parent_dict.clone()));
+        let parent_id = self
+            .inner
+            .add_object(Object::Dictionary(parent_dict.clone()));
 
         let mut kids = Vec::new();
         for (value_name, rect) in buttons {
             check_finite(rect, "radio button rect")?;
 
             let is_selected = value_name == &selected_value;
-            let state = if is_selected { b"Yes".as_ref() } else { b"Off".as_ref() };
+            let state = if is_selected {
+                b"Yes".as_ref()
+            } else {
+                b"Off".as_ref()
+            };
 
             let mut button_dict = Dictionary::new();
             button_dict.set("Type", Object::Name(b"Annot".to_vec()));
             button_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
-            button_dict.set("Rect", Object::Array(vec![
-                Object::Real(rect[0]),
-                Object::Real(rect[1]),
-                Object::Real(rect[0] + rect[2]),
-                Object::Real(rect[1] + rect[3]),
-            ]));
+            button_dict.set(
+                "Rect",
+                Object::Array(vec![
+                    Object::Real(rect[0]),
+                    Object::Real(rect[1]),
+                    Object::Real(rect[0] + rect[2]),
+                    Object::Real(rect[1] + rect[3]),
+                ]),
+            );
             button_dict.set("Parent", Object::Reference(parent_id));
             button_dict.set("P", Object::Reference(page_id));
             button_dict.set("AS", Object::Name(state.to_vec()));
             button_dict.set("V", Object::Name(value_name.as_bytes().to_vec()));
-            button_dict.set("DA", Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal));
+            button_dict.set(
+                "DA",
+                Object::String(b"(/Helv 12 Tf 0 g)".to_vec(), StringFormat::Literal),
+            );
 
             let button_id = self.inner.add_object(Object::Dictionary(button_dict));
             kids.push(Object::Reference(button_id));
@@ -1271,13 +1352,11 @@ impl Document {
         }
 
         // Update parent dict with /Kids array
-        let parent_dict_mut = self.inner.get_object_mut(parent_id)?
-            .as_dict_mut()?;
+        let parent_dict_mut = self.inner.get_object_mut(parent_id)?.as_dict_mut()?;
         parent_dict_mut.set("Kids", Object::Array(kids));
 
         // Add to AcroForm /Fields array
-        let acroform_dict = self.inner.get_object_mut(acroform_id)?
-            .as_dict_mut()?;
+        let acroform_dict = self.inner.get_object_mut(acroform_id)?.as_dict_mut()?;
         let fields_arr = if let Ok(Object::Array(arr)) = acroform_dict.get(b"Fields") {
             let mut arr = arr.clone();
             arr.push(Object::Reference(parent_id));
@@ -1334,7 +1413,12 @@ impl Document {
         if page == 0 || page > count {
             return Err(Error::PageNotFound(page));
         }
-        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y, level: 0 });
+        self.pending_bookmarks.push(PendingBookmark {
+            title: title.to_owned(),
+            page,
+            y,
+            level: 0,
+        });
         Ok(())
     }
 
@@ -1358,7 +1442,12 @@ impl Document {
             return Err(Error::PageNotFound(page));
         }
         let level = level.clamp(1, 6);
-        self.pending_bookmarks.push(PendingBookmark { title: title.to_owned(), page, y, level });
+        self.pending_bookmarks.push(PendingBookmark {
+            title: title.to_owned(),
+            page,
+            y,
+            level,
+        });
         Ok(())
     }
 
@@ -1375,7 +1464,10 @@ impl Document {
     /// Returns [`Error::PageNotFound`] if `page` is out of range.
     pub fn extract_text_runs(&self, page: u32) -> Result<Vec<crate::extract::TextFragment>> {
         let all_pages = self.inner.get_pages();
-        let page_id = all_pages.get(&page).copied().ok_or(Error::PageNotFound(page))?;
+        let page_id = all_pages
+            .get(&page)
+            .copied()
+            .ok_or(Error::PageNotFound(page))?;
         crate::extract::extract_text_runs_from_page(&self.inner, page_id)
     }
 
@@ -1409,7 +1501,10 @@ impl Document {
     #[cfg(feature = "image")]
     pub fn extract_page_image(&self, page_number: u32) -> Result<crate::extract_image::PageImage> {
         let page_ids = self.inner.get_pages();
-        let page_id = page_ids.get(&page_number).copied().ok_or(Error::PageNotFound(page_number))?;
+        let page_id = page_ids
+            .get(&page_number)
+            .copied()
+            .ok_or(Error::PageNotFound(page_number))?;
         crate::extract_image::extract_largest_image_on_page(&self.inner, page_id)
     }
 
@@ -1443,9 +1538,15 @@ impl Document {
     /// - [`Error::InvalidInput`] if the page contains no Image XObject or all images
     ///   fail extraction (due to unsupported filters like `CCITTFaxDecode`).
     #[cfg(feature = "image")]
-    pub fn extract_page_images(&self, page_number: u32) -> Result<Vec<crate::extract_image::PageImage>> {
+    pub fn extract_page_images(
+        &self,
+        page_number: u32,
+    ) -> Result<Vec<crate::extract_image::PageImage>> {
         let page_ids = self.inner.get_pages();
-        let page_id = page_ids.get(&page_number).copied().ok_or(Error::PageNotFound(page_number))?;
+        let page_id = page_ids
+            .get(&page_number)
+            .copied()
+            .ok_or(Error::PageNotFound(page_number))?;
         crate::extract_image::extract_all_images_on_page(&self.inner, page_id)
     }
 
@@ -1522,10 +1623,13 @@ impl Document {
         // it anyway for PDF spec compliance.
         if self.inner.trailer.get(b"ID").is_err() {
             let id = generate_file_id();
-            self.inner.trailer.set("ID", Object::Array(vec![
-                Object::String(id.to_vec(), StringFormat::Hexadecimal),
-                Object::String(id.to_vec(), StringFormat::Hexadecimal),
-            ]));
+            self.inner.trailer.set(
+                "ID",
+                Object::Array(vec![
+                    Object::String(id.to_vec(), StringFormat::Hexadecimal),
+                    Object::String(id.to_vec(), StringFormat::Hexadecimal),
+                ]),
+            );
         }
 
         match algorithm {
@@ -1550,8 +1654,9 @@ impl Document {
                 // getrandom::fill() uses the OS RNG (e.g. getrandom(2) / SecRandomCopyBytes).
                 // Failure is propagated — we never fall back to a weaker source.
                 let mut file_key = [0u8; 32];
-                getrandom::fill(&mut file_key)
-                    .map_err(|e| Error::InvalidInput(format!("AES-256 key generation failed: {e}")))?;
+                getrandom::fill(&mut file_key).map_err(|e| {
+                    Error::InvalidInput(format!("AES-256 key generation failed: {e}"))
+                })?;
 
                 let crypt_filter: Arc<dyn lopdf::encryption::crypt_filters::CryptFilter> =
                     Arc::new(Aes256CryptFilter);
@@ -1578,7 +1683,8 @@ impl Document {
     fn finalize(&mut self) -> Result<()> {
         if self.finalized && !self.pending.is_empty() {
             return Err(Error::InvalidInput(
-                "save() called again after content was already written; create a new Document".into(),
+                "save() called again after content was already written; create a new Document"
+                    .into(),
             ));
         }
         if self.pending.is_empty() && self.pending_bookmarks.is_empty() {
@@ -1620,18 +1726,21 @@ impl Document {
         let mut embedded: HashMap<u32, EmbedState> = HashMap::new();
 
         for (&font_idx, chars) in &font_chars {
-            let raw = self.raw_fonts.get(font_idx as usize)
+            let raw = self
+                .raw_fonts
+                .get(font_idx as usize)
                 .ok_or(Error::InvalidFont(font_idx))?;
 
             let subset = subset_font(&raw.ttf_bytes, chars)?;
 
-            let char_to_gid: BTreeMap<char, u16> = subset.gid_to_char
+            let char_to_gid: BTreeMap<char, u16> = subset
+                .gid_to_char
                 .iter()
                 .map(|(&gid, &ch)| (ch, gid))
                 .collect();
 
-            let face = Face::parse(&raw.ttf_bytes, 0)
-                .map_err(|e| Error::FontParse(e.to_string()))?;
+            let face =
+                Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
             let bb = face.global_bounding_box();
             let upm = face.units_per_em() as f64;
             let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
@@ -1639,6 +1748,7 @@ impl Document {
             let font_name = format!("HARUMI+HR{}", font_idx);
             let pdf_name = format!("HR{}", font_idx).into_bytes();
 
+            let saved_gid_to_char = subset.gid_to_char.clone();
             let saved_gid_to_advance = subset.gid_to_advance.clone();
             let params = EmbedParams {
                 font_name: &font_name,
@@ -1647,8 +1757,10 @@ impl Document {
                 gid_to_advance: subset.gid_to_advance,
                 units_per_em: subset.units_per_em,
                 font_bbox: [
-                    scale(bb.x_min), scale(bb.y_min),
-                    scale(bb.x_max), scale(bb.y_max),
+                    scale(bb.x_min),
+                    scale(bb.y_min),
+                    scale(bb.x_max),
+                    scale(bb.y_max),
                 ],
                 ascent: scale(face.ascender()),
                 descent: scale(face.descender()),
@@ -1659,18 +1771,21 @@ impl Document {
             let type0_id = embed_cid_font(&mut self.inner, params)?;
             let upm = face.units_per_em();
 
-            embedded.insert(font_idx, EmbedState {
-                ef: EmbeddedFont {
-                    type0_id,
-                    pdf_name,
-                    gid_to_char: BTreeMap::new(),
-                    gid_to_advance: BTreeMap::new(),
+            embedded.insert(
+                font_idx,
+                EmbedState {
+                    ef: EmbeddedFont {
+                        type0_id,
+                        pdf_name,
+                        gid_to_char: saved_gid_to_char,
+                        gid_to_advance: saved_gid_to_advance.clone(),
+                        units_per_em: upm,
+                    },
+                    char_to_gid,
+                    gid_to_advance: saved_gid_to_advance,
                     units_per_em: upm,
                 },
-                char_to_gid,
-                gid_to_advance: saved_gid_to_advance,
-                units_per_em: upm,
-            });
+            );
         }
 
         // Replace pass: rewrite existing content streams for pages with Replace ops.
@@ -1680,9 +1795,13 @@ impl Document {
                 page_id: ObjectId,
                 ops: Vec<(String, String, u32)>, // (old_text, new_text, font_idx)
             }
-            let work: Vec<ReplaceWork> = self.pending.iter()
+            let work: Vec<ReplaceWork> = self
+                .pending
+                .iter()
                 .filter_map(|page| {
-                    let ops: Vec<_> = page.ops.iter()
+                    let ops: Vec<_> = page
+                        .ops
+                        .iter()
                         .filter_map(|op| {
                             if let PendingOp::Replace(r) = op {
                                 Some((r.old_text.clone(), r.new_text.clone(), r.font.0))
@@ -1691,7 +1810,14 @@ impl Document {
                             }
                         })
                         .collect();
-                    if ops.is_empty() { None } else { Some(ReplaceWork { page_id: page.page_id, ops }) }
+                    if ops.is_empty() {
+                        None
+                    } else {
+                        Some(ReplaceWork {
+                            page_id: page.page_id,
+                            ops,
+                        })
+                    }
                 })
                 .collect();
 
@@ -1699,7 +1825,9 @@ impl Document {
                 // Build resolved replacements from embedded font info.
                 let mut resolved: Vec<crate::replace::ResolvedReplacement> = Vec::new();
                 for (old_text, new_text, font_idx) in &item.ops {
-                    let state = embedded.get(font_idx).ok_or(Error::InvalidFont(*font_idx))?;
+                    let state = embedded
+                        .get(font_idx)
+                        .ok_or(Error::InvalidFont(*font_idx))?;
                     resolved.push(crate::replace::ResolvedReplacement {
                         old_text: old_text.clone(),
                         new_text: new_text.clone(),
@@ -1713,9 +1841,9 @@ impl Document {
                 // Rewrite streams and replace /Contents.
                 let (new_content, fonts_used) =
                     crate::replace::rewrite_page_streams(&self.inner, item.page_id, &resolved);
-                let new_stream_id = self.inner.add_object(Object::Stream(
-                    Stream::new(Dictionary::new(), new_content),
-                ));
+                let new_stream_id = self
+                    .inner
+                    .add_object(Object::Stream(Stream::new(Dictionary::new(), new_content)));
                 self.inner
                     .get_object_mut(item.page_id)?
                     .as_dict_mut()?
@@ -1726,7 +1854,9 @@ impl Document {
                 let mut registered: std::collections::HashSet<Vec<u8>> =
                     std::collections::HashSet::new();
                 for (_, _, font_idx) in &item.ops {
-                    let state = embedded.get(font_idx).ok_or(Error::InvalidFont(*font_idx))?;
+                    let state = embedded
+                        .get(font_idx)
+                        .ok_or(Error::InvalidFont(*font_idx))?;
                     if fonts_used.contains(&state.ef.pdf_name)
                         && registered.insert(state.ef.pdf_name.clone())
                     {
@@ -1743,59 +1873,62 @@ impl Document {
 
         // ReplaceResubset pass: expand font subset and re-encode before replacement.
         {
-            use crate::resubset::{find_fonts_for_text, ResubsetWork};
+            use crate::resubset::{ResubsetWork, find_fonts_for_text};
             use std::collections::HashMap as HM;
 
             // Collect (page_id, op) pairs.
-            let resubset_items: Vec<(ObjectId, crate::replace::TextReplaceResubsetOp)> =
-                self.pending.iter()
-                    .flat_map(|page| {
-                        page.ops.iter().filter_map(|op| {
-                            if let PendingOp::ReplaceResubset(r) = op {
-                                Some((page.page_id, crate::replace::TextReplaceResubsetOp {
+            let resubset_items: Vec<(ObjectId, crate::replace::TextReplaceResubsetOp)> = self
+                .pending
+                .iter()
+                .flat_map(|page| {
+                    page.ops.iter().filter_map(|op| {
+                        if let PendingOp::ReplaceResubset(r) = op {
+                            Some((
+                                page.page_id,
+                                crate::replace::TextReplaceResubsetOp {
                                     old_text: r.old_text.clone(),
                                     new_text: r.new_text.clone(),
                                     font_bytes: r.font_bytes.clone(),
-                                }))
-                            } else {
-                                None
-                            }
-                        })
+                                    wrap: r.wrap.clone(),
+                                },
+                            ))
+                        } else {
+                            None
+                        }
                     })
-                    .collect();
+                })
+                .collect();
 
             if !resubset_items.is_empty() {
                 // All page IDs in the document (to re-encode pages that use the font).
-                let all_page_ids: Vec<ObjectId> =
-                    self.inner.page_iter().collect();
+                let all_page_ids: Vec<ObjectId> = self.inner.page_iter().collect();
 
                 // Group by font_name → ResubsetWork.
                 let mut by_font: HM<Vec<u8>, ResubsetWork> = HM::new();
                 for (page_id, op) in resubset_items {
-                    let font_names =
-                        find_fonts_for_text(&self.inner, page_id, &op.old_text);
+                    let font_names = find_fonts_for_text(&self.inner, page_id, &op.old_text);
                     for font_name in font_names {
-                        let work = by_font.entry(font_name.clone()).or_insert_with(|| {
-                            ResubsetWork {
-                                font_name: font_name.clone(),
-                                font_bytes: op.font_bytes.clone(),
-                                replacements: Vec::new(),
-                            }
-                        });
-                        work.replacements.push((
-                            page_id,
-                            op.old_text.clone(),
-                            op.new_text.clone(),
-                        ));
+                        let work =
+                            by_font
+                                .entry(font_name.clone())
+                                .or_insert_with(|| ResubsetWork {
+                                    font_name: font_name.clone(),
+                                    font_bytes: op.font_bytes.clone(),
+                                    replacements: Vec::new(),
+                                    wrap_params_by_old_text: HM::new(),
+                                });
+                        work.replacements
+                            .push((page_id, op.old_text.clone(), op.new_text.clone()));
+                        // Add wrap params if present.
+                        if let Some(wp) = &op.wrap {
+                            work.wrap_params_by_old_text
+                                .insert(op.old_text.clone(), wp.clone());
+                        }
                     }
                 }
 
                 for (_, work) in by_font {
-                    crate::resubset::resubset_and_replace(
-                        &mut self.inner,
-                        &work,
-                        &all_page_ids,
-                    )?;
+                    crate::resubset::resubset_and_replace(&mut self.inner, &work, &all_page_ids)?;
                 }
             }
         }
@@ -1806,9 +1939,13 @@ impl Document {
                 page_id: ObjectId,
                 ops: Vec<(String, String)>,
             }
-            let work: Vec<PreserveWork> = self.pending.iter()
+            let work: Vec<PreserveWork> = self
+                .pending
+                .iter()
                 .filter_map(|page| {
-                    let ops: Vec<_> = page.ops.iter()
+                    let ops: Vec<_> = page
+                        .ops
+                        .iter()
                         .filter_map(|op| {
                             if let PendingOp::ReplacePreserve(r) = op {
                                 Some((r.old_text.clone(), r.new_text.clone()))
@@ -1817,24 +1954,37 @@ impl Document {
                             }
                         })
                         .collect();
-                    if ops.is_empty() { None } else { Some(PreserveWork { page_id: page.page_id, ops }) }
+                    if ops.is_empty() {
+                        None
+                    } else {
+                        Some(PreserveWork {
+                            page_id: page.page_id,
+                            ops,
+                        })
+                    }
                 })
                 .collect();
 
             for item in work {
-                let preserve_ops: Vec<crate::replace::TextReplacePreserveOp> = item.ops
+                let preserve_ops: Vec<crate::replace::TextReplacePreserveOp> = item
+                    .ops
                     .into_iter()
-                    .map(|(old_text, new_text)| crate::replace::TextReplacePreserveOp {
-                        old_text,
-                        new_text,
-                    })
+                    .map(
+                        |(old_text, new_text)| crate::replace::TextReplacePreserveOp {
+                            old_text,
+                            new_text,
+                        },
+                    )
                     .collect();
                 let new_content = crate::replace::rewrite_page_streams_preserve_font(
-                    &self.inner, item.page_id, &preserve_ops,
+                    &self.inner,
+                    item.page_id,
+                    &preserve_ops,
+                    None,
                 )?;
-                let new_stream_id = self.inner.add_object(Object::Stream(
-                    Stream::new(Dictionary::new(), new_content),
-                ));
+                let new_stream_id = self
+                    .inner
+                    .add_object(Object::Stream(Stream::new(Dictionary::new(), new_content)));
                 self.inner
                     .get_object_mut(item.page_id)?
                     .as_dict_mut()?
@@ -1859,11 +2009,13 @@ impl Document {
 
             for op in &page.ops {
                 match op {
-                    PendingOp::Replace(_) => {} // handled in replace pass above
+                    PendingOp::Replace(_) => {}         // handled in replace pass above
                     PendingOp::ReplacePreserve(_) => {} // handled in ReplacePreserve pass above
                     PendingOp::ReplaceResubset(_) => {} // handled in resubset pass above
                     PendingOp::Text(t) => {
-                        let state = embedded.get(&t.font.0).ok_or(Error::InvalidFont(t.font.0))?;
+                        let state = embedded
+                            .get(&t.font.0)
+                            .ok_or(Error::InvalidFont(t.font.0))?;
                         let chars: Vec<char> = t.text.chars().collect();
                         #[cfg(feature = "draw")]
                         let gs_opt = if t.opacity < 1.0 {
@@ -1896,42 +2048,114 @@ impl Document {
                     PendingOp::Draw(draw_op) => {
                         use crate::draw::{DrawOp, shapes};
                         match draw_op {
-                            DrawOp::Rect { rect, color, opacity } => {
+                            DrawOp::Rect {
+                                rect,
+                                color,
+                                opacity,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
                                 page_stream.extend(shapes::rect_stream(rect, *color, &gs));
                             }
-                            DrawOp::RectStroke { rect, color, line_width, opacity } => {
+                            DrawOp::RectStroke {
+                                rect,
+                                color,
+                                line_width,
+                                opacity,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::rect_stroke_stream(rect, *color, *line_width, &gs));
+                                page_stream.extend(shapes::rect_stroke_stream(
+                                    rect,
+                                    *color,
+                                    *line_width,
+                                    &gs,
+                                ));
                             }
-                            DrawOp::Line { from, to, color, width, opacity } => {
+                            DrawOp::Line {
+                                from,
+                                to,
+                                color,
+                                width,
+                                opacity,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::line_stream(from, to, *color, *width, &gs));
+                                page_stream
+                                    .extend(shapes::line_stream(from, to, *color, *width, &gs));
                             }
-                            DrawOp::Polygon { points, color, opacity, filled, stroke_width } => {
+                            DrawOp::Polygon {
+                                points,
+                                color,
+                                opacity,
+                                filled,
+                                stroke_width,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polygon_stream(points, *color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::polygon_stream(
+                                    points,
+                                    *color,
+                                    &gs,
+                                    *filled,
+                                    *stroke_width,
+                                ));
                             }
-                            DrawOp::Polyline { points, color, width, opacity } => {
+                            DrawOp::Polyline {
+                                points,
+                                color,
+                                width,
+                                opacity,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polyline_stream(points, *color, *width, &gs));
+                                page_stream
+                                    .extend(shapes::polyline_stream(points, *color, *width, &gs));
                             }
-                            DrawOp::Ellipse { rect, color, opacity, filled, stroke_width } => {
+                            DrawOp::Ellipse {
+                                rect,
+                                color,
+                                opacity,
+                                filled,
+                                stroke_width,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::ellipse_stream(rect, *color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::ellipse_stream(
+                                    rect,
+                                    *color,
+                                    &gs,
+                                    *filled,
+                                    *stroke_width,
+                                ));
                             }
-                            DrawOp::Path { points, closed, color, opacity, filled, stroke_width } => {
+                            DrawOp::Path {
+                                points,
+                                closed,
+                                color,
+                                opacity,
+                                filled,
+                                stroke_width,
+                            } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::path_stream(points, *closed, *color, &gs, *filled, *stroke_width));
+                                page_stream.extend(shapes::path_stream(
+                                    points,
+                                    *closed,
+                                    *color,
+                                    &gs,
+                                    *filled,
+                                    *stroke_width,
+                                ));
                             }
                             #[cfg(feature = "image")]
-                            DrawOp::Image { bytes, rect, opacity } => {
+                            DrawOp::Image {
+                                bytes,
+                                rect,
+                                opacity,
+                            } => {
                                 let img = crate::draw::image::prepare(bytes)?;
-                                let xobj_id = crate::draw::image::embed_xobject(&mut self.inner, img)?;
+                                let xobj_id =
+                                    crate::draw::image::embed_xobject(&mut self.inner, img)?;
                                 let xobj_name = format!("Im{}", xobj_counter);
                                 xobj_counter += 1;
                                 let gs = gs_registry.register(*opacity);
-                                page_stream.extend(crate::draw::image::image_stream(&xobj_name, rect, &gs));
+                                page_stream.extend(crate::draw::image::image_stream(
+                                    &xobj_name, rect, &gs,
+                                ));
                                 xobj_entries.push((xobj_name, xobj_id));
                             }
                         }
@@ -1939,13 +2163,15 @@ impl Document {
                 }
             }
 
-            let new_stream_id = self.inner.add_object(Object::Stream(
-                Stream::new(Dictionary::new(), page_stream),
-            ));
+            let new_stream_id = self
+                .inner
+                .add_object(Object::Stream(Stream::new(Dictionary::new(), page_stream)));
             append_to_contents(&mut self.inner, page_id, new_stream_id)?;
 
             for font_idx in registered_fonts {
-                let state = embedded.get(&font_idx).ok_or(Error::InvalidFont(font_idx))?;
+                let state = embedded
+                    .get(&font_idx)
+                    .ok_or(Error::InvalidFont(font_idx))?;
                 add_font_to_resources(
                     &mut self.inner,
                     page_id,
@@ -2001,7 +2227,8 @@ impl Document {
 
         // Get or create root outline object.
         let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
-        let existing_outline_id: Option<ObjectId> = self.inner
+        let existing_outline_id: Option<ObjectId> = self
+            .inner
             .get_object(root_ref)?
             .as_dict()?
             .get(b"Outlines")
@@ -2011,7 +2238,8 @@ impl Document {
 
         // Build outline item objects with parent/sibling links.
         // Stack: (level, item_idx, first_child_idx, last_child_idx, child_count)
-        let mut stack: Vec<(u8, usize, Option<usize>, Option<usize>, u32)> = vec![(0, usize::MAX, None, None, 0)];
+        let mut stack: Vec<(u8, usize, Option<usize>, Option<usize>, u32)> =
+            vec![(0, usize::MAX, None, None, 0)];
 
         for i in 0..n {
             let curr_level = levels[i];
@@ -2020,7 +2248,10 @@ impl Document {
             while stack.len() > 1 && stack.last().unwrap().0 >= curr_level {
                 let (_, popped_idx, first_child, last_child, child_count) = stack.pop().unwrap();
                 if popped_idx != usize::MAX && child_count > 0 {
-                    let popped_dict = self.inner.get_object_mut(item_ids[popped_idx])?.as_dict_mut()?;
+                    let popped_dict = self
+                        .inner
+                        .get_object_mut(item_ids[popped_idx])?
+                        .as_dict_mut()?;
                     if let Some(first) = first_child {
                         popped_dict.set("First", Object::Reference(item_ids[first]));
                     }
@@ -2038,17 +2269,20 @@ impl Document {
 
             let mut d = Dictionary::new();
             d.set("Title", pdf_text_string(&bookmarks[i].title));
-            d.set("Dest", Object::Array(vec![
-                Object::Reference(page_id),
-                Object::Name(b"XYZ".to_vec()),
-                Object::Null,
-                Object::Real(bookmarks[i].y),
-                Object::Null,
-            ]));
+            d.set(
+                "Dest",
+                Object::Array(vec![
+                    Object::Reference(page_id),
+                    Object::Name(b"XYZ".to_vec()),
+                    Object::Null,
+                    Object::Real(bookmarks[i].y),
+                    Object::Null,
+                ]),
+            );
 
             // Determine parent: the top of the stack.
             let parent_idx = if stack.last().unwrap().0 == 0 {
-                outline_root_id  // Root outline object.
+                outline_root_id // Root outline object.
             } else {
                 item_ids[stack.last().unwrap().1]
             };
@@ -2057,11 +2291,15 @@ impl Document {
             // Sibling links: link to previous item at same level.
             if i > 0 && levels[i - 1] == curr_level {
                 d.set("Prev", Object::Reference(item_ids[i - 1]));
-                self.inner.get_object_mut(item_ids[i - 1])?.as_dict_mut()?
+                self.inner
+                    .get_object_mut(item_ids[i - 1])?
+                    .as_dict_mut()?
                     .set("Next", Object::Reference(item_ids[i]));
             }
 
-            self.inner.objects.insert(item_ids[i], Object::Dictionary(d));
+            self.inner
+                .objects
+                .insert(item_ids[i], Object::Dictionary(d));
 
             // Update parent on the stack: record this as a child.
             let top = stack.last_mut().unwrap();
@@ -2079,7 +2317,10 @@ impl Document {
         while stack.len() > 1 {
             let (_, popped_idx, first_child, last_child, child_count) = stack.pop().unwrap();
             if popped_idx != usize::MAX && child_count > 0 {
-                let popped_dict = self.inner.get_object_mut(item_ids[popped_idx])?.as_dict_mut()?;
+                let popped_dict = self
+                    .inner
+                    .get_object_mut(item_ids[popped_idx])?
+                    .as_dict_mut()?;
                 if let Some(first) = first_child {
                     popped_dict.set("First", Object::Reference(item_ids[first]));
                 }
@@ -2112,7 +2353,9 @@ impl Document {
                 root_dict.set("First", Object::Reference(item_ids[first_top]));
                 root_dict.set("Last", Object::Reference(item_ids[last_top]));
                 root_dict.set("Count", Object::Integer(new_count));
-                self.inner.objects.insert(outline_root_id, Object::Dictionary(root_dict));
+                self.inner
+                    .objects
+                    .insert(outline_root_id, Object::Dictionary(root_dict));
 
                 let catalog = self.inner.get_object_mut(root_ref)?.as_dict_mut()?;
                 catalog.set("Outlines", Object::Reference(outline_root_id));
@@ -2123,11 +2366,17 @@ impl Document {
     }
 
     /// Build a flat outline tree (backward compatibility when all levels == 0).
-    fn build_outlines_flat(&mut self, page_ids: std::collections::BTreeMap<u32, ObjectId>, bookmarks: Vec<PendingBookmark>, n: usize) -> Result<()> {
+    fn build_outlines_flat(
+        &mut self,
+        page_ids: std::collections::BTreeMap<u32, ObjectId>,
+        bookmarks: Vec<PendingBookmark>,
+        n: usize,
+    ) -> Result<()> {
         let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
 
         let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
-        let existing_outline_id: Option<ObjectId> = self.inner
+        let existing_outline_id: Option<ObjectId> = self
+            .inner
             .get_object(root_ref)?
             .as_dict()?
             .get(b"Outlines")
@@ -2138,7 +2387,7 @@ impl Document {
             Some(oid) => {
                 let root_d = self.inner.get_object(oid)?.as_dict()?;
                 let last_id = root_d.get(b"Last")?.as_reference().ok();
-                let count   = root_d.get(b"Count").and_then(|o| o.as_i64()).unwrap_or(0);
+                let count = root_d.get(b"Count").and_then(|o| o.as_i64()).unwrap_or(0);
                 (oid, last_id, count)
             }
             None => (self.inner.new_object_id(), None, 0),
@@ -2152,42 +2401,55 @@ impl Document {
 
             let mut d = Dictionary::new();
             d.set("Title", pdf_text_string(&bm.title));
-            d.set("Dest", Object::Array(vec![
-                Object::Reference(page_id),
-                Object::Name(b"XYZ".to_vec()),
-                Object::Null,
-                Object::Real(bm.y),
-                Object::Null,
-            ]));
+            d.set(
+                "Dest",
+                Object::Array(vec![
+                    Object::Reference(page_id),
+                    Object::Name(b"XYZ".to_vec()),
+                    Object::Null,
+                    Object::Real(bm.y),
+                    Object::Null,
+                ]),
+            );
             d.set("Parent", Object::Reference(outline_root_id));
 
-            let prev_id = if i == 0 { prev_last_opt } else { Some(item_ids[i - 1]) };
+            let prev_id = if i == 0 {
+                prev_last_opt
+            } else {
+                Some(item_ids[i - 1])
+            };
             if let Some(pid) = prev_id {
                 d.set("Prev", Object::Reference(pid));
             }
             if i + 1 < n {
                 d.set("Next", Object::Reference(item_ids[i + 1]));
             }
-            self.inner.objects.insert(item_ids[i], Object::Dictionary(d));
+            self.inner
+                .objects
+                .insert(item_ids[i], Object::Dictionary(d));
         }
 
         let new_total = existing_count + n as i64;
 
         if let Some(oid) = existing_outline_id {
             if let Some(old_last) = prev_last_opt {
-                self.inner.get_object_mut(old_last)?.as_dict_mut()?
+                self.inner
+                    .get_object_mut(old_last)?
+                    .as_dict_mut()?
                     .set("Next", Object::Reference(item_ids[0]));
             }
             let root_d = self.inner.get_object_mut(oid)?.as_dict_mut()?;
-            root_d.set("Last",  Object::Reference(item_ids[n - 1]));
+            root_d.set("Last", Object::Reference(item_ids[n - 1]));
             root_d.set("Count", Object::Integer(new_total));
         } else {
             let mut root_dict = Dictionary::new();
-            root_dict.set("Type",  Object::Name(b"Outlines".to_vec()));
+            root_dict.set("Type", Object::Name(b"Outlines".to_vec()));
             root_dict.set("First", Object::Reference(item_ids[0]));
-            root_dict.set("Last",  Object::Reference(item_ids[n - 1]));
+            root_dict.set("Last", Object::Reference(item_ids[n - 1]));
             root_dict.set("Count", Object::Integer(new_total));
-            self.inner.objects.insert(outline_root_id, Object::Dictionary(root_dict));
+            self.inner
+                .objects
+                .insert(outline_root_id, Object::Dictionary(root_dict));
 
             let catalog = self.inner.get_object_mut(root_ref)?.as_dict_mut()?;
             catalog.set("Outlines", Object::Reference(outline_root_id));
@@ -2392,9 +2654,8 @@ impl<'doc> PageHandle<'doc> {
         if self.doc.raw_fonts.get(font.0 as usize).is_none() {
             return Err(Error::InvalidFont(font.0));
         }
-        let count = crate::replace::count_matches_in_page(
-            &self.doc.inner, self.page_id, old_text, None,
-        )?;
+        let count =
+            crate::replace::count_matches_in_page(&self.doc.inner, self.page_id, old_text, None)?;
         if count > 0 {
             self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
                 font,
@@ -2422,13 +2683,18 @@ impl<'doc> PageHandle<'doc> {
     /// character in `new_text` is not present in the font's ToUnicode mapping.
     pub fn replace_text_preserve_font(&mut self, old_text: &str, new_text: &str) -> Result<usize> {
         let count = crate::replace::count_matches_in_page(
-            &self.doc.inner, self.page_id, old_text, Some(new_text),
+            &self.doc.inner,
+            self.page_id,
+            old_text,
+            Some(new_text),
         )?;
         if count > 0 {
-            self.push_op(PendingOp::ReplacePreserve(crate::replace::TextReplacePreserveOp {
-                old_text: old_text.to_owned(),
-                new_text: new_text.to_owned(),
-            }));
+            self.push_op(PendingOp::ReplacePreserve(
+                crate::replace::TextReplacePreserveOp {
+                    old_text: old_text.to_owned(),
+                    new_text: new_text.to_owned(),
+                },
+            ));
         }
         Ok(count)
     }
@@ -2469,24 +2735,105 @@ impl<'doc> PageHandle<'doc> {
             ));
         }
         // Validate font bytes eagerly.
-        let face = ttf_parser::Face::parse(font_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face =
+            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
-        let count = crate::replace::count_matches_in_page(
-            &self.doc.inner, self.page_id, old_text, None,
-        )?;
+        let count =
+            crate::replace::count_matches_in_page(&self.doc.inner, self.page_id, old_text, None)?;
         if count > 0 {
             self.push_op(PendingOp::ReplaceResubset(
                 crate::replace::TextReplaceResubsetOp {
                     old_text: old_text.to_owned(),
                     new_text: new_text.to_owned(),
                     font_bytes: font_bytes.to_vec(),
+                    wrap: None,
                 },
             ));
         }
         Ok(count)
+    }
+
+    /// Like [`replace_text_resubset`], but wraps `new_text` to multiple lines if it exceeds the line width.
+    ///
+    /// # Parameters
+    /// - `old_text`: Text to find
+    /// - `new_text`: Replacement text (will be wrapped if too long)
+    /// - `font_bytes`: TTF font bytes for subsetting and width calculation
+    /// - `line_height`: Vertical spacing between wrapped lines (e.g., font_size * 1.2).
+    ///   If 0.0, defaults to font_size * 1.2.
+    ///
+    /// # Limitations
+    /// - Single-font replacements only (no font switching within wrapped text)
+    /// - Estimates page width as ~450pt (A4 with standard margins); PDFs with custom widths may wrap differently
+    /// - Does not handle multi-column layouts
+    pub fn replace_text_resubset_with_wrap(
+        &mut self,
+        old_text: &str,
+        new_text: &str,
+        font_bytes: &[u8],
+        line_height: f32,
+    ) -> Result<usize> {
+        if self.doc.finalized {
+            return Err(Error::InvalidInput(
+                "replace_text_resubset_with_wrap called after save()".into(),
+            ));
+        }
+
+        // Validate line_height: must be finite and non-negative.
+        if !line_height.is_finite() || line_height < 0.0 {
+            return Err(Error::InvalidInput(format!(
+                "line_height must be finite and non-negative, got {}",
+                line_height
+            )));
+        }
+
+        let face =
+            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        if face.units_per_em() == 0 {
+            return Err(Error::FontParse("font units_per_em is 0".into()));
+        }
+
+        let count =
+            crate::replace::count_matches_in_page(&self.doc.inner, self.page_id, old_text, None)?;
+
+        if count > 0 {
+            let max_width = self.page_width_for_wrap();
+            // Ensure max_width is positive (safety check on MediaBox calculation).
+            if max_width <= 0.0 {
+                return Err(Error::InvalidInput(format!(
+                    "page width for wrapping is non-positive ({}pt); cannot wrap",
+                    max_width
+                )));
+            }
+            let effective_lh = if line_height > 0.0 { line_height } else { 14.4 };
+
+            self.push_op(PendingOp::ReplaceResubset(
+                crate::replace::TextReplaceResubsetOp {
+                    old_text: old_text.to_owned(),
+                    new_text: new_text.to_owned(),
+                    font_bytes: font_bytes.to_vec(),
+                    wrap: Some(crate::replace::WrapParams {
+                        font_bytes: font_bytes.to_vec(),
+                        line_height: effective_lh,
+                        max_width,
+                    }),
+                },
+            ));
+        }
+
+        Ok(count)
+    }
+
+    /// Estimate page width for text wrapping from MediaBox.
+    ///
+    /// Returns MediaBox width minus 144pt (72pt margins × 2).
+    /// Falls back to A4 default (451pt) if page dimensions are unavailable.
+    fn page_width_for_wrap(&self) -> f32 {
+        self.media_box()
+            .map(|b| (b[2] - b[0]) - 144.0)
+            .unwrap_or(451.0)
     }
 
     /// Scans the page for `old_text` and validates that all characters in `new_text`
@@ -2505,7 +2852,10 @@ impl<'doc> PageHandle<'doc> {
     /// character in `new_text` is absent from the font's ToUnicode mapping.
     pub fn can_replace_text(&self, old_text: &str, new_text: &str) -> Result<usize> {
         crate::replace::count_matches_in_page(
-            &self.doc.inner, self.page_id, old_text, Some(new_text),
+            &self.doc.inner,
+            self.page_id,
+            old_text,
+            Some(new_text),
         )
     }
 
@@ -2544,7 +2894,10 @@ impl<'doc> PageHandle<'doc> {
         let mut action = Dictionary::new();
         action.set("Type", Object::Name(b"Action".to_vec()));
         action.set("S", Object::Name(b"URI".to_vec()));
-        action.set("URI", Object::String(url.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+        action.set(
+            "URI",
+            Object::String(url.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+        );
 
         let mut d = build_link_annot_base(rect);
         d.set("A", Object::Dictionary(action));
@@ -2576,7 +2929,10 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_link_internal(&mut self, rect: [f32; 4], target_page: u32) -> Result<()> {
         check_finite(&[rect[0], rect[1], rect[2], rect[3]], "add_link_internal")?;
         let page_ids = self.doc.inner.get_pages();
-        let target_id = page_ids.get(&target_page).copied().ok_or(Error::PageNotFound(target_page))?;
+        let target_id = page_ids
+            .get(&target_page)
+            .copied()
+            .ok_or(Error::PageNotFound(target_page))?;
 
         let dest = Object::Array(vec![
             Object::Reference(target_id),
@@ -2681,12 +3037,15 @@ impl<'doc> PageHandle<'doc> {
         let mut ap_dict = Dictionary::new();
         ap_dict.set("Type", Object::Name(b"XObject".to_vec()));
         ap_dict.set("Subtype", Object::Name(b"Form".to_vec()));
-        ap_dict.set("BBox", Object::Array(vec![
-            Object::Real(0.0),
-            Object::Real(0.0),
-            Object::Real(w),
-            Object::Real(h),
-        ]));
+        ap_dict.set(
+            "BBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(w),
+                Object::Real(h),
+            ]),
+        );
         ap_dict.set("Resources", Object::Dictionary(Dictionary::new()));
 
         // Create the appearance stream object.
@@ -2697,28 +3056,37 @@ impl<'doc> PageHandle<'doc> {
         let mut d = Dictionary::new();
         d.set("Type", Object::Name(b"Annot".to_vec()));
         d.set("Subtype", Object::Name(b"Redact".to_vec()));
-        d.set("Rect", Object::Array(vec![
-            Object::Real(x1),
-            Object::Real(y1),
-            Object::Real(x2),
-            Object::Real(y2),
-        ]));
+        d.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Real(x1),
+                Object::Real(y1),
+                Object::Real(x2),
+                Object::Real(y2),
+            ]),
+        );
         // Interior color: solid black (0, 0, 0 in RGB).
-        d.set("IC", Object::Array(vec![
-            Object::Real(0.0),
-            Object::Real(0.0),
-            Object::Real(0.0),
-        ]));
+        d.set(
+            "IC",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+            ]),
+        );
         // Appearance stream.
         let mut ap = Dictionary::new();
         ap.set("N", Object::Reference(ap_id));
         d.set("AP", Object::Dictionary(ap));
         // No visible border.
-        d.set("Border", Object::Array(vec![
-            Object::Integer(0),
-            Object::Integer(0),
-            Object::Integer(0),
-        ]));
+        d.set(
+            "Border",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(0),
+            ]),
+        );
         // Print flag.
         d.set("F", Object::Integer(4));
 
@@ -2737,16 +3105,19 @@ impl<'doc> PageHandle<'doc> {
     pub fn add_sticky_note(&mut self, point: [f32; 2], contents: &str) -> Result<()> {
         check_finite(&[point[0], point[1]], "add_sticky_note")?;
         let mut d = Dictionary::new();
-        d.set("Type",     Object::Name(b"Annot".to_vec()));
-        d.set("Subtype",  Object::Name(b"Text".to_vec()));
-        d.set("Rect", Object::Array(vec![
-            Object::Real(point[0]),
-            Object::Real(point[1]),
-            Object::Real(point[0] + 20.0),
-            Object::Real(point[1] + 20.0),
-        ]));
+        d.set("Type", Object::Name(b"Annot".to_vec()));
+        d.set("Subtype", Object::Name(b"Text".to_vec()));
+        d.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Real(point[0]),
+                Object::Real(point[1]),
+                Object::Real(point[0] + 20.0),
+                Object::Real(point[1] + 20.0),
+            ]),
+        );
         d.set("Contents", pdf_text_string(contents));
-        d.set("Open",     Object::Boolean(false));
+        d.set("Open", Object::Boolean(false));
         let annot_id = self.doc.inner.add_object(Object::Dictionary(d));
         append_annotation_to_page(&mut self.doc.inner, self.page_id, annot_id)
     }
@@ -2795,7 +3166,15 @@ impl<'doc> PageHandle<'doc> {
         line_height: f32,
     ) -> Result<()> {
         let color = color.into();
-        self.add_text_box_aligned(text, font, rect, font_size, color, line_height, VerticalAlign::Top)
+        self.add_text_box_aligned(
+            text,
+            font,
+            rect,
+            font_size,
+            color,
+            line_height,
+            VerticalAlign::Top,
+        )
     }
 
     /// Overlays multi-line visible text within a bounding box with explicit vertical alignment.
@@ -2841,18 +3220,27 @@ impl<'doc> PageHandle<'doc> {
         align: VerticalAlign,
     ) -> Result<()> {
         let color = color.into();
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], font_size, line_height], "add_text_box_aligned")?;
+        check_finite(
+            &[rect[0], rect[1], rect[2], rect[3], font_size, line_height],
+            "add_text_box_aligned",
+        )?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
             return Ok(());
         }
 
-        let raw = self.doc.raw_fonts.get(font.0 as usize)
+        let raw = self
+            .doc
+            .raw_fonts
+            .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
         let box_width = rect[2];
-        let effective_lh = if line_height <= 0.0 { font_size * 1.2 } else { line_height };
+        let effective_lh = if line_height <= 0.0 {
+            font_size * 1.2
+        } else {
+            line_height
+        };
 
         let mut all_lines: Vec<String> = Vec::new();
         for paragraph in text.split('\n') {
@@ -2861,9 +3249,11 @@ impl<'doc> PageHandle<'doc> {
 
         let n = all_lines.len() as f32;
         let start_y = match align {
-            VerticalAlign::Top    => rect[1] + rect[3] - font_size,
+            VerticalAlign::Top => rect[1] + rect[3] - font_size,
             VerticalAlign::Bottom => rect[1] + (n - 1.0) * effective_lh,
-            VerticalAlign::Center => rect[1] + rect[3] / 2.0 + ((n - 1.0) * effective_lh - font_size) / 2.0,
+            VerticalAlign::Center => {
+                rect[1] + rect[3] / 2.0 + ((n - 1.0) * effective_lh - font_size) / 2.0
+            }
         };
         let top = rect[1] + rect[3];
         let bottom = rect[1];
@@ -2969,7 +3359,10 @@ impl<'doc> PageHandle<'doc> {
         for _ in 0..32 {
             let (mb_opt, parent_opt) = {
                 let dict = self.doc.inner.get_object(current_id)?.as_dict()?;
-                (dict.get(b"MediaBox").ok().cloned(), dict.get(b"Parent").ok().cloned())
+                (
+                    dict.get(b"MediaBox").ok().cloned(),
+                    dict.get(b"Parent").ok().cloned(),
+                )
             };
             if let Some(mb) = mb_opt {
                 return parse_box_array(&mb);
@@ -3027,7 +3420,10 @@ impl<'doc> PageHandle<'doc> {
         let page_id = self.page_id;
         match self.doc.pending.iter_mut().find(|p| p.page_id == page_id) {
             Some(p) => p.ops.push(op),
-            None => self.doc.pending.push(PendingPage { page_id, ops: vec![op] }),
+            None => self.doc.pending.push(PendingPage {
+                page_id,
+                ops: vec![op],
+            }),
         }
     }
 
@@ -3057,10 +3453,19 @@ impl<'doc> PageHandle<'doc> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_rect(&mut self, rect: [f32; 4], color: impl Into<Color>, opacity: f32) -> Result<()> {
+    pub fn add_rect(
+        &mut self,
+        rect: [f32; 4],
+        color: impl Into<Color>,
+        opacity: f32,
+    ) -> Result<()> {
         let color = color.into();
         check_finite(&[rect[0], rect[1], rect[2], rect[3], opacity], "add_rect")?;
-        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Rect { rect, color, opacity }));
+        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Rect {
+            rect,
+            color,
+            opacity,
+        }));
         Ok(())
     }
 
@@ -3078,7 +3483,10 @@ impl<'doc> PageHandle<'doc> {
         opacity: f32,
     ) -> Result<()> {
         let color = color.into();
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], line_width, opacity], "add_rect_stroke")?;
+        check_finite(
+            &[rect[0], rect[1], rect[2], rect[3], line_width, opacity],
+            "add_rect_stroke",
+        )?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::RectStroke {
             rect,
             color,
@@ -3146,7 +3554,10 @@ impl<'doc> PageHandle<'doc> {
         opacity: f32,
     ) -> Result<()> {
         let color = color.into();
-        check_finite(&[from[0], from[1], to[0], to[1], line_width, opacity], "add_line")?;
+        check_finite(
+            &[from[0], from[1], to[0], to[1], line_width, opacity],
+            "add_line",
+        )?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Line {
             from,
             to,
@@ -3212,7 +3623,9 @@ impl<'doc> PageHandle<'doc> {
             "add_ellipse",
         )?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
-            return Err(Error::InvalidInput("add_ellipse: width and height must be positive".into()));
+            return Err(Error::InvalidInput(
+                "add_ellipse: width and height must be positive".into(),
+            ));
         }
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Ellipse {
             rect,
@@ -3316,7 +3729,13 @@ impl<'doc> PageHandle<'doc> {
     ) -> Result<()> {
         let color = color.into();
         check_finite(
-            &[position[0], position[1], font_size, opacity, rotation_degrees],
+            &[
+                position[0],
+                position[1],
+                font_size,
+                opacity,
+                rotation_degrees,
+            ],
             "add_text_with_rotation",
         )?;
         self.push_text(PendingText {
@@ -3352,21 +3771,34 @@ impl<'doc> PageHandle<'doc> {
     ) -> Result<()> {
         let color = color.into();
         check_finite(
-            &[rect[0], rect[1], rect[2], rect[3], font_size,
-              line_height, opacity],
+            &[
+                rect[0],
+                rect[1],
+                rect[2],
+                rect[3],
+                font_size,
+                line_height,
+                opacity,
+            ],
             "add_text_box_with_opacity",
         )?;
         if rect[2] <= 0.0 || rect[3] <= 0.0 {
             return Ok(());
         }
 
-        let raw = self.doc.raw_fonts.get(font.0 as usize)
+        let raw = self
+            .doc
+            .raw_fonts
+            .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
         let box_width = rect[2];
-        let effective_lh = if line_height <= 0.0 { font_size * 1.2 } else { line_height };
+        let effective_lh = if line_height <= 0.0 {
+            font_size * 1.2
+        } else {
+            line_height
+        };
 
         let mut all_lines: Vec<String> = Vec::new();
         for paragraph in text.split('\n') {
@@ -3425,7 +3857,10 @@ impl<'doc> PageHandle<'doc> {
         rect: [f32; 4],
         opacity: f32,
     ) -> Result<()> {
-        check_finite(&[rect[0], rect[1], rect[2], rect[3], opacity], "add_image_with_opacity")?;
+        check_finite(
+            &[rect[0], rect[1], rect[2], rect[3], opacity],
+            "add_image_with_opacity",
+        )?;
         self.push_op(PendingOp::Draw(crate::draw::DrawOp::Image {
             bytes: image_bytes.to_vec(),
             rect,
@@ -3474,13 +3909,14 @@ fn ensure_acroform(doc: &mut lopdf::Document) -> Result<ObjectId> {
     let acroform_id = doc.add_object(Object::Dictionary(acroform_dict));
 
     // Get the catalog and add the /AcroForm reference
-    let root_ref = doc.trailer.get(b"Root")
+    let root_ref = doc
+        .trailer
+        .get(b"Root")
         .ok()
         .and_then(|o| o.as_reference().ok())
         .ok_or(Error::InvalidInput("catalog not found".into()))?;
 
-    let catalog = doc.get_object_mut(root_ref)?
-        .as_dict_mut()?;
+    let catalog = doc.get_object_mut(root_ref)?.as_dict_mut()?;
     catalog.set("AcroForm", Object::Reference(acroform_id));
 
     Ok(acroform_id)
@@ -3498,18 +3934,27 @@ fn collect_fields_recursive(
             Object::Reference(id) => *id,
             _ => continue,
         };
-        let Ok(field_obj) = doc.get_object(id) else { continue };
-        let Ok(fd) = field_obj.as_dict() else { continue };
+        let Ok(field_obj) = doc.get_object(id) else {
+            continue;
+        };
+        let Ok(fd) = field_obj.as_dict() else {
+            continue;
+        };
 
-        let partial = fd.get(b"T").ok()
+        let partial = fd
+            .get(b"T")
+            .ok()
             .and_then(|o| match o {
                 Object::String(b, _) => String::from_utf8(b.clone()).ok().or_else(|| {
                     if b.starts_with(&[0xFE, 0xFF]) {
-                        let units: Vec<u16> = b[2..].chunks(2)
+                        let units: Vec<u16> = b[2..]
+                            .chunks(2)
                             .map(|c| u16::from_be_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
                             .collect();
                         String::from_utf16(&units).ok()
-                    } else { None }
+                    } else {
+                        None
+                    }
                 }),
                 _ => None,
             })
@@ -3527,11 +3972,17 @@ fn collect_fields_recursive(
         if let Ok(kids_obj) = fd.get(b"Kids") {
             let kids: Vec<Object> = match kids_obj {
                 Object::Array(arr) => arr.clone(),
-                Object::Reference(kid_id) => {
-                    doc.get_object(*kid_id).ok()
-                        .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
-                        .unwrap_or_default()
-                }
+                Object::Reference(kid_id) => doc
+                    .get_object(*kid_id)
+                    .ok()
+                    .and_then(|o| {
+                        if let Object::Array(a) = o {
+                            Some(a.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default(),
                 _ => vec![],
             };
             collect_fields_recursive(doc, &kids, &full_name, out);
@@ -3539,27 +3990,41 @@ fn collect_fields_recursive(
         }
 
         // Leaf field.
-        let ft = fd.get(b"FT").ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+        let ft = fd.get(b"FT").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        });
 
         let field_type = match ft {
             Some(b"Tx") => FieldType::Text,
             Some(b"Btn") => {
-                let flags = fd.get(b"Ff").ok()
+                let flags = fd
+                    .get(b"Ff")
+                    .ok()
                     .and_then(|o| o.as_i64().ok())
                     .unwrap_or(0);
-                if flags & (1 << 15) != 0 { FieldType::Radio } else { FieldType::Checkbox }
+                if flags & (1 << 15) != 0 {
+                    FieldType::Radio
+                } else {
+                    FieldType::Checkbox
+                }
             }
             Some(b"Ch") => FieldType::Choice,
             Some(b"Sig") => FieldType::Signature,
             _ => FieldType::Unknown,
         };
 
-        let value = fd.get(b"V").ok()
+        let value = fd
+            .get(b"V")
+            .ok()
             .map(|v| match v {
                 Object::String(b, _) => {
                     if b.starts_with(&[0xFE, 0xFF]) {
-                        let units: Vec<u16> = b[2..].chunks(2)
+                        let units: Vec<u16> = b[2..]
+                            .chunks(2)
                             .map(|c| u16::from_be_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
                             .collect();
                         String::from_utf16(&units).unwrap_or_default()
@@ -3573,23 +4038,36 @@ fn collect_fields_recursive(
             .unwrap_or_default();
 
         if !full_name.is_empty() {
-            out.push(FormField { name: full_name, field_type, value });
+            out.push(FormField {
+                name: full_name,
+                field_type,
+                value,
+            });
         }
     }
 }
 
 /// Collects (ObjectId, FieldType, full_name) for all leaf fields under /AcroForm.
-fn collect_field_ids(doc: &lopdf::Document, acroform_id: ObjectId) -> Vec<(ObjectId, FieldType, String)> {
+fn collect_field_ids(
+    doc: &lopdf::Document,
+    acroform_id: ObjectId,
+) -> Vec<(ObjectId, FieldType, String)> {
     let Ok(acroform) = doc.get_object(acroform_id).and_then(|o| o.as_dict()) else {
         return vec![];
     };
     let field_refs: Vec<Object> = match acroform.get(b"Fields") {
         Ok(Object::Array(arr)) => arr.clone(),
-        Ok(Object::Reference(id)) => {
-            doc.get_object(*id).ok()
-                .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
-                .unwrap_or_default()
-        }
+        Ok(Object::Reference(id)) => doc
+            .get_object(*id)
+            .ok()
+            .and_then(|o| {
+                if let Object::Array(a) = o {
+                    Some(a.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default(),
         _ => return vec![],
     };
 
@@ -3605,11 +4083,20 @@ fn collect_field_ids_recursive(
     out: &mut Vec<(ObjectId, FieldType, String)>,
 ) {
     for obj in field_refs {
-        let id = match obj { Object::Reference(id) => *id, _ => continue };
-        let Ok(field_obj) = doc.get_object(id) else { continue };
-        let Ok(fd) = field_obj.as_dict() else { continue };
+        let id = match obj {
+            Object::Reference(id) => *id,
+            _ => continue,
+        };
+        let Ok(field_obj) = doc.get_object(id) else {
+            continue;
+        };
+        let Ok(fd) = field_obj.as_dict() else {
+            continue;
+        };
 
-        let partial = fd.get(b"T").ok()
+        let partial = fd
+            .get(b"T")
+            .ok()
             .and_then(lopdf_string_to_rust)
             .unwrap_or_default();
 
@@ -3624,24 +4111,43 @@ fn collect_field_ids_recursive(
         if let Ok(kids_obj) = fd.get(b"Kids") {
             let kids: Vec<Object> = match kids_obj {
                 Object::Array(arr) => arr.clone(),
-                Object::Reference(kid_id) => {
-                    doc.get_object(*kid_id).ok()
-                        .and_then(|o| if let Object::Array(a) = o { Some(a.clone()) } else { None })
-                        .unwrap_or_default()
-                }
+                Object::Reference(kid_id) => doc
+                    .get_object(*kid_id)
+                    .ok()
+                    .and_then(|o| {
+                        if let Object::Array(a) = o {
+                            Some(a.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default(),
                 _ => vec![],
             };
             collect_field_ids_recursive(doc, &kids, &full_name, out);
             continue;
         }
 
-        let ft = fd.get(b"FT").ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None });
+        let ft = fd.get(b"FT").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        });
         let field_type = match ft {
             Some(b"Tx") => FieldType::Text,
             Some(b"Btn") => {
-                let flags = fd.get(b"Ff").ok().and_then(|o| o.as_i64().ok()).unwrap_or(0);
-                if flags & (1 << 15) != 0 { FieldType::Radio } else { FieldType::Checkbox }
+                let flags = fd
+                    .get(b"Ff")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok())
+                    .unwrap_or(0);
+                if flags & (1 << 15) != 0 {
+                    FieldType::Radio
+                } else {
+                    FieldType::Checkbox
+                }
             }
             Some(b"Ch") => FieldType::Choice,
             Some(b"Sig") => FieldType::Signature,
@@ -3659,27 +4165,49 @@ fn build_markup_annot(subtype: &[u8], rect: [f32; 4], color: Color) -> Dictionar
     let x2 = rect[0] + rect[2];
     let y2 = rect[1] + rect[3];
     let mut d = Dictionary::new();
-    d.set("Type",    Object::Name(b"Annot".to_vec()));
+    d.set("Type", Object::Name(b"Annot".to_vec()));
     d.set("Subtype", Object::Name(subtype.to_vec()));
-    d.set("Rect", Object::Array(vec![
-        Object::Real(rect[0]), Object::Real(rect[1]),
-        Object::Real(x2),      Object::Real(y2),
-    ]));
+    d.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]),
+    );
     // QuadPoints: upper-left, upper-right, lower-left, lower-right (Acrobat convention)
-    d.set("QuadPoints", Object::Array(vec![
-        Object::Real(rect[0]), Object::Real(y2),
-        Object::Real(x2),      Object::Real(y2),
-        Object::Real(rect[0]), Object::Real(rect[1]),
-        Object::Real(x2),      Object::Real(rect[1]),
-    ]));
+    d.set(
+        "QuadPoints",
+        Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(y2),
+            Object::Real(x2),
+            Object::Real(y2),
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(x2),
+            Object::Real(rect[1]),
+        ]),
+    );
     let color_array = match color {
         Color::Rgb(c) => vec![Object::Real(c[0]), Object::Real(c[1]), Object::Real(c[2])],
-        Color::Cmyk(c) => vec![Object::Real(c[0]), Object::Real(c[1]), Object::Real(c[2]), Object::Real(c[3])],
+        Color::Cmyk(c) => vec![
+            Object::Real(c[0]),
+            Object::Real(c[1]),
+            Object::Real(c[2]),
+            Object::Real(c[3]),
+        ],
     };
     d.set("C", Object::Array(color_array));
-    d.set("Border", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0), Object::Integer(0),
-    ]));
+    d.set(
+        "Border",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(0),
+        ]),
+    );
     d
 }
 
@@ -3688,16 +4216,24 @@ fn build_link_annot_base(rect: [f32; 4]) -> Dictionary {
     let mut d = Dictionary::new();
     d.set("Type", Object::Name(b"Annot".to_vec()));
     d.set("Subtype", Object::Name(b"Link".to_vec()));
-    d.set("Rect", Object::Array(vec![
-        Object::Real(rect[0]),
-        Object::Real(rect[1]),
-        Object::Real(rect[0] + rect[2]),
-        Object::Real(rect[1] + rect[3]),
-    ]));
+    d.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(rect[0] + rect[2]),
+            Object::Real(rect[1] + rect[3]),
+        ]),
+    );
     // No visible border ([0 0 0] = no border)
-    d.set("Border", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0), Object::Integer(0),
-    ]));
+    d.set(
+        "Border",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(0),
+        ]),
+    );
     d
 }
 
@@ -3713,12 +4249,19 @@ fn append_annotation_to_page(
     let new_ref = Object::Reference(annot_id);
 
     // Read the current /Annots value without borrowing `doc` mutably.
-    let annots_val = doc.get_object(page_id)?.as_dict()?.get(b"Annots").ok().cloned();
+    let annots_val = doc
+        .get_object(page_id)?
+        .as_dict()?
+        .get(b"Annots")
+        .ok()
+        .cloned();
 
     match annots_val {
         Some(Object::Array(mut arr)) => {
             arr.push(new_ref);
-            doc.get_object_mut(page_id)?.as_dict_mut()?.set("Annots", Object::Array(arr));
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Annots", Object::Array(arr));
         }
         Some(Object::Reference(arr_id)) => {
             // /Annots points to an indirect array object.
@@ -3751,9 +4294,7 @@ fn append_annotation_to_page(
 fn read_page_box(doc: &lopdf::Document, page_id: ObjectId, key: &[u8]) -> Result<Option<[f32; 4]>> {
     let dict = doc.get_object(page_id)?.as_dict()?;
     match dict.get(key).ok().cloned() {
-        Some(Object::Reference(ref_id)) => {
-            parse_box_array(doc.get_object(ref_id)?).map(Some)
-        }
+        Some(Object::Reference(ref_id)) => parse_box_array(doc.get_object(ref_id)?).map(Some),
         Some(obj) => parse_box_array(&obj).map(Some),
         None => Ok(None),
     }
@@ -3762,7 +4303,9 @@ fn read_page_box(doc: &lopdf::Document, page_id: ObjectId, key: &[u8]) -> Result
 fn parse_box_array(obj: &Object) -> Result<[f32; 4]> {
     let arr = obj.as_array()?;
     if arr.len() < 4 {
-        return Err(Error::Pdf(lopdf::Error::DictKey("box array too short".to_string())));
+        return Err(Error::Pdf(lopdf::Error::DictKey(
+            "box array too short".to_string(),
+        )));
     }
     let get = |i: usize| -> f32 {
         match &arr[i] {
@@ -3777,14 +4320,21 @@ fn parse_box_array(obj: &Object) -> Result<[f32; 4]> {
 
 /// Writes a named page box (e.g. CropBox) to the page dict.
 /// Accepts `[x, y, w, h]` and stores as `[x1 y1 x2 y2]`.
-fn set_page_box(doc: &mut lopdf::Document, page_id: ObjectId, key: &[u8], rect: [f32; 4]) -> Result<()> {
+fn set_page_box(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    key: &[u8],
+    rect: [f32; 4],
+) -> Result<()> {
     let box_arr = Object::Array(vec![
         Object::Real(rect[0]),
         Object::Real(rect[1]),
         Object::Real(rect[0] + rect[2]),
         Object::Real(rect[1] + rect[3]),
     ]);
-    doc.get_object_mut(page_id)?.as_dict_mut()?.set(key, box_arr);
+    doc.get_object_mut(page_id)?
+        .as_dict_mut()?
+        .set(key, box_arr);
     Ok(())
 }
 
@@ -3819,7 +4369,9 @@ fn map_lopdf_password_err(e: lopdf::Error) -> Error {
 
 fn check_finite(values: &[f32], label: &str) -> Result<()> {
     if values.iter().any(|v| !v.is_finite()) {
-        return Err(Error::InvalidInput(format!("{label} contains NaN or Infinity")));
+        return Err(Error::InvalidInput(format!(
+            "{label} contains NaN or Infinity"
+        )));
     }
     Ok(())
 }
@@ -3849,16 +4401,39 @@ pub(crate) fn is_cjk(ch: char) -> bool {
 }
 
 /// Width of one character in PDF points given the font face and font size.
-pub(crate) fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> f32 {
+/// Returns None if the character is not present in the font (no glyph mapping).
+pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
     let upem = face.units_per_em() as f32;
     face.glyph_index(ch)
         .and_then(|g| face.glyph_hor_advance(g))
         .map(|adv| adv as f32 * font_size / upem)
-        .unwrap_or(font_size * 0.5)
+}
+
+/// Calculate the total width of a text string in PDF points from raw TTF bytes.
+///
+/// This helper is useful for checking text overflow without needing access to Font objects.
+/// Returns None if the font bytes are invalid or if any character is missing from the font.
+pub fn calculate_text_width(text: &str, font_bytes: &[u8], font_size: f32) -> Option<f32> {
+    let face = ttf_parser::Face::parse(font_bytes, 0).ok()?;
+    let mut width = 0.0;
+    for ch in text.chars() {
+        width += glyph_advance_pt(&face, ch, font_size)?;
+    }
+    Some(width)
 }
 
 /// Greedy line-breaking for a single paragraph (no embedded newlines).
-pub(crate) fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f32) -> Vec<String> {
+pub fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f32) -> Vec<String> {
+    // Validate inputs.
+    // If font_size or box_width is invalid, return the paragraph as a single line.
+    if !font_size.is_finite() || font_size <= 0.0 || !box_width.is_finite() || box_width <= 0.0 {
+        return if paragraph.is_empty() {
+            Vec::new()
+        } else {
+            vec![paragraph.to_owned()]
+        };
+    }
+
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut current_w: f32 = 0.0;
@@ -3867,7 +4442,7 @@ pub(crate) fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_w
     let mut width_at_word_start: f32 = 0.0;
 
     for ch in paragraph.chars() {
-        let ch_w = glyph_advance_pt(face, ch, font_size);
+        let ch_w = glyph_advance_pt(face, ch, font_size).unwrap_or(font_size * 0.5);
 
         if current_w + ch_w > box_width && !current.is_empty() {
             if is_cjk(ch) || last_space_byte.is_none() {
@@ -3920,8 +4495,13 @@ fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {
 /// Closest ancestor wins: the first ancestor to provide a value for a given key
 /// is used; outer ancestors' values for the same key are ignored.
 fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) -> Result<()> {
-    const INHERITABLE: &[&[u8]] =
-        &[b"MediaBox", b"CropBox", b"Rotate", b"Resources", b"UserUnit"];
+    const INHERITABLE: &[&[u8]] = &[
+        b"MediaBox",
+        b"CropBox",
+        b"Rotate",
+        b"Resources",
+        b"UserUnit",
+    ];
 
     // Walk up the parent chain and collect attrs missing from the page itself.
     let mut to_apply: Vec<(Vec<u8>, Object)> = Vec::new();
@@ -3935,12 +4515,18 @@ fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) ->
         depth += 1;
 
         // Get cursor's /Parent reference.
-        let parent_id = match doc.get_object(cursor)
+        let parent_id = match doc
+            .get_object(cursor)
             .ok()
             .and_then(|o| o.as_dict().ok())
             .and_then(|d| d.get(b"Parent").ok())
-            .and_then(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
-        {
+            .and_then(|o| {
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
+            }) {
             Some(id) => id,
             None => break,
         };
@@ -3951,7 +4537,13 @@ fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) ->
             .ok()
             .and_then(|o| o.as_dict().ok())
             .and_then(|d| d.get(b"Type").ok())
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice() == b"Pages") } else { None })
+            .and_then(|o| {
+                if let Object::Name(n) = o {
+                    Some(n.as_slice() == b"Pages")
+                } else {
+                    None
+                }
+            })
             .unwrap_or(false);
 
         if !parent_is_pages {
@@ -3959,7 +4551,11 @@ fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) ->
         }
 
         // Clone the parent dict so we can check its keys without holding a borrow.
-        let parent_dict = match doc.get_object(parent_id).ok().and_then(|o| o.as_dict().ok()) {
+        let parent_dict = match doc
+            .get_object(parent_id)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+        {
             Some(d) => d.clone(),
             None => break,
         };
@@ -4016,7 +4612,8 @@ fn append_to_contents(
         Some(Object::Reference(r)) => {
             // Check whether the reference points to an Array (indirect Contents array,
             // common in InDesign-generated PDFs) or a single content stream.
-            let is_array = doc.get_object(r)
+            let is_array = doc
+                .get_object(r)
                 .ok()
                 .map(|o| matches!(o, Object::Array(_)))
                 .unwrap_or(false);
@@ -4025,15 +4622,21 @@ fn append_to_contents(
                 arr_obj.push(new_ref);
             } else {
                 let arr = Object::Array(vec![Object::Reference(r), new_ref]);
-                doc.get_object_mut(page_id)?.as_dict_mut()?.set("Contents", arr);
+                doc.get_object_mut(page_id)?
+                    .as_dict_mut()?
+                    .set("Contents", arr);
             }
         }
         Some(Object::Array(mut arr)) => {
             arr.push(new_ref);
-            doc.get_object_mut(page_id)?.as_dict_mut()?.set("Contents", Object::Array(arr));
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Contents", Object::Array(arr));
         }
         None => {
-            doc.get_object_mut(page_id)?.as_dict_mut()?.set("Contents", new_ref);
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Contents", new_ref);
         }
         _ => {}
     }
@@ -4131,18 +4734,16 @@ fn add_ext_gstate_to_resources(
     registry: crate::draw::ExtGStateRegistry,
 ) -> Result<()> {
     let ext_g_dict = registry.to_lopdf_dict();
-    with_resources_dict_mut(doc, page_id, |res| {
-        match res.get_mut(b"ExtGState") {
-            Ok(obj) => {
-                if let Ok(existing) = obj.as_dict_mut() {
-                    for (k, v) in ext_g_dict.iter() {
-                        existing.set(k.as_slice(), v.clone());
-                    }
+    with_resources_dict_mut(doc, page_id, |res| match res.get_mut(b"ExtGState") {
+        Ok(obj) => {
+            if let Ok(existing) = obj.as_dict_mut() {
+                for (k, v) in ext_g_dict.iter() {
+                    existing.set(k.as_slice(), v.clone());
                 }
             }
-            Err(_) => {
-                res.set("ExtGState", Object::Dictionary(ext_g_dict.clone()));
-            }
+        }
+        Err(_) => {
+            res.set("ExtGState", Object::Dictionary(ext_g_dict.clone()));
         }
     })
 }
@@ -4155,18 +4756,16 @@ fn add_xobject_to_resources(
     xobj_id: ObjectId,
 ) -> Result<()> {
     let xobj_ref = Object::Reference(xobj_id);
-    with_resources_dict_mut(doc, page_id, |res| {
-        match res.get_mut(b"XObject") {
-            Ok(obj) => {
-                if let Ok(d) = obj.as_dict_mut() {
-                    d.set(name, xobj_ref.clone());
-                }
+    with_resources_dict_mut(doc, page_id, |res| match res.get_mut(b"XObject") {
+        Ok(obj) => {
+            if let Ok(d) = obj.as_dict_mut() {
+                d.set(name, xobj_ref.clone());
             }
-            Err(_) => {
-                let mut xobj_dict = Dictionary::new();
-                xobj_dict.set(name, xobj_ref.clone());
-                res.set("XObject", Object::Dictionary(xobj_dict));
-            }
+        }
+        Err(_) => {
+            let mut xobj_dict = Dictionary::new();
+            xobj_dict.set(name, xobj_ref.clone());
+            res.set("XObject", Object::Dictionary(xobj_dict));
         }
     })
 }

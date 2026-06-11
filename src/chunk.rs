@@ -77,10 +77,7 @@ impl Document {
 
         // Sort by reading order and filter out invisible fragments.
         crate::sort_by_reading_order(&mut fragments);
-        let fragments: Vec<_> = fragments
-            .into_iter()
-            .filter(|f| !f.invisible)
-            .collect();
+        let fragments: Vec<_> = fragments.into_iter().filter(|f| !f.invisible).collect();
 
         if fragments.is_empty() {
             return Ok(Vec::new());
@@ -96,7 +93,8 @@ impl Document {
         let classified = lines
             .into_iter()
             .map(|line| {
-                let avg_font_size = line.iter().map(|f| f.font_size).sum::<f32>() / line.len() as f32;
+                let avg_font_size =
+                    line.iter().map(|f| f.font_size).sum::<f32>() / line.len() as f32;
                 let ratio = avg_font_size / baseline_font_size;
                 let chunk_type = classify_by_ratio(ratio);
                 (line, avg_font_size, chunk_type)
@@ -174,7 +172,9 @@ fn group_into_lines(fragments: &[TextFragment]) -> Vec<Vec<TextFragment>> {
 
         for line in &mut lines {
             // Check if this fragment is within tolerance of the line's y.
-            if let Some(first) = line.first() && (frag.y - first.y).abs() <= tol {
+            if let Some(first) = line.first()
+                && (frag.y - first.y).abs() <= tol
+            {
                 line.push(frag.clone());
                 placed = true;
                 break;
@@ -244,7 +244,11 @@ fn merge_consecutive_chunks(
     let mut result: Vec<TextChunk> = Vec::new();
 
     for (line, avg_font_size, chunk_type) in classified {
-        let text = line.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+        let text = line
+            .iter()
+            .map(|f| f.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
 
         // Compute bbox for this line.
         let min_x = line.iter().map(|f| f.x).fold(f32::INFINITY, f32::min);
@@ -258,7 +262,12 @@ fn merge_consecutive_chunks(
             .map(|f| f.y + f.height)
             .fold(f32::NEG_INFINITY, f32::max);
 
-        let bbox = [min_x, min_y, (max_x - min_x).max(0.0), (max_y - min_y).max(0.0)];
+        let bbox = [
+            min_x,
+            min_y,
+            (max_x - min_x).max(0.0),
+            (max_y - min_y).max(0.0),
+        ];
 
         // Try to merge with the last chunk if it has the same type.
         let merged = if let Some(last) = result.last_mut() {
@@ -284,7 +293,8 @@ fn merge_consecutive_chunks(
                 let new_count = text.split_whitespace().count() as f32;
                 let total = old_count + new_count;
                 if total > 0.0 {
-                    last.avg_font_size = (last.avg_font_size * old_count + avg_font_size * new_count) / total;
+                    last.avg_font_size =
+                        (last.avg_font_size * old_count + avg_font_size * new_count) / total;
                 }
                 true
             } else {

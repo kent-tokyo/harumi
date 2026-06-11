@@ -43,18 +43,25 @@ fn smoke_add_rect_registers_extgstate() {
         .expect("ExtGState should be in Resources")
         .as_dict()
         .expect("ExtGState should be a dict");
-    assert!(!ext_g.is_empty(), "ExtGState dict should have at least one entry");
+    assert!(
+        !ext_g.is_empty(),
+        "ExtGState dict should have at least one entry"
+    );
 
     // Verify opacity value is present in one of the GS dicts.
     let all_gs: Vec<_> = ext_g.iter().collect();
     let found_opacity = all_gs.iter().any(|(_, v)| {
-        v.as_dict().ok()
+        v.as_dict()
+            .ok()
             .and_then(|d| d.get(b"ca").ok())
             .and_then(|ca| ca.as_float().ok())
             .map(|f| (f - 0.5).abs() < 0.01)
             .unwrap_or(false)
     });
-    assert!(found_opacity, "ExtGState should contain ca=0.5 for the given opacity");
+    assert!(
+        found_opacity,
+        "ExtGState should contain ca=0.5 for the given opacity"
+    );
 }
 
 #[cfg(feature = "draw")]
@@ -72,7 +79,10 @@ fn smoke_add_rect_content_stream() {
     let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
     let s = String::from_utf8_lossy(&content);
 
-    assert!(s.contains("re\nf"), "content should contain filled rectangle operator");
+    assert!(
+        s.contains("re\nf"),
+        "content should contain filled rectangle operator"
+    );
     assert!(s.contains("rg"), "content should set fill color");
 }
 
@@ -118,14 +128,19 @@ fn smoke_rect_and_text_same_page() {
     let mut page = doc.page(1).unwrap();
 
     // yellow highlight rect first, then text on top
-    page.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4).unwrap();
-    page.add_invisible_text("highlighted text", font, [72.0, 695.0], 12.0).unwrap();
+    page.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)
+        .unwrap();
+    page.add_invisible_text("highlighted text", font, [72.0, 695.0], 12.0)
+        .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
     // Should reload without error and have both font and ExtGState resources.
     let res = reload_page_resources(&out);
     assert!(res.get(b"Font").is_ok(), "should have Font resource");
-    assert!(res.get(b"ExtGState").is_ok(), "should have ExtGState resource");
+    assert!(
+        res.get(b"ExtGState").is_ok(),
+        "should have ExtGState resource"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +166,16 @@ fn smoke_add_jpeg_image() {
         .expect("XObject should be in Resources")
         .as_dict()
         .expect("XObject should be a dict");
-    assert!(!xobj.is_empty(), "XObject dict should have at least one entry");
+    assert!(
+        !xobj.is_empty(),
+        "XObject dict should have at least one entry"
+    );
 
     // Verify the XObject is an Image.
     let (_, xobj_ref) = xobj.iter().next().unwrap();
-    let xobj_id = xobj_ref.as_reference().expect("XObject entry should be a reference");
+    let xobj_id = xobj_ref
+        .as_reference()
+        .expect("XObject entry should be a reference");
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     let xobj_stream = reloaded.get_object(xobj_id).unwrap().as_stream().unwrap();
     let subtype = xobj_stream.dict.get(b"Subtype").unwrap().as_name().unwrap();
@@ -182,7 +202,11 @@ fn smoke_add_png_image() {
 
     let out = doc.save_to_bytes().unwrap();
     let res = reload_page_resources(&out);
-    let xobj = res.get(b"XObject").expect("XObject in Resources").as_dict().unwrap();
+    let xobj = res
+        .get(b"XObject")
+        .expect("XObject in Resources")
+        .as_dict()
+        .unwrap();
     assert!(!xobj.is_empty());
 
     let (_, xobj_ref) = xobj.iter().next().unwrap();
@@ -207,25 +231,42 @@ fn smoke_png_alpha_creates_smask() {
     let png_bytes = include_bytes!("fixtures/red_semitransparent_1x1.png");
 
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
-    doc.page(1).unwrap().add_image(png_bytes, [100.0, 400.0, 50.0, 50.0]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_image(png_bytes, [100.0, 400.0, 50.0, 50.0])
+        .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
     let res = reload_page_resources(&out);
-    let xobj = res.get(b"XObject").expect("XObject in Resources").as_dict().unwrap();
+    let xobj = res
+        .get(b"XObject")
+        .expect("XObject in Resources")
+        .as_dict()
+        .unwrap();
     let (_, xobj_ref) = xobj.iter().next().unwrap();
     let xobj_id = xobj_ref.as_reference().unwrap();
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     let xobj_stream = reloaded.get_object(xobj_id).unwrap().as_stream().unwrap();
 
     // Main image must have an /SMask entry pointing to a sub-object.
-    let smask = xobj_stream.dict.get(b"SMask")
+    let smask = xobj_stream
+        .dict
+        .get(b"SMask")
         .expect("transparent PNG should produce an SMask entry");
-    assert!(smask.as_reference().is_ok(), "SMask must be an indirect reference");
+    assert!(
+        smask.as_reference().is_ok(),
+        "SMask must be an indirect reference"
+    );
 
     // The SMask sub-object must be a DeviceGray image.
     let smask_id = smask.as_reference().unwrap();
     let smask_stream = reloaded.get_object(smask_id).unwrap().as_stream().unwrap();
-    let cs = smask_stream.dict.get(b"ColorSpace").unwrap().as_name().unwrap();
+    let cs = smask_stream
+        .dict
+        .get(b"ColorSpace")
+        .unwrap()
+        .as_name()
+        .unwrap();
     assert_eq!(cs, b"DeviceGray", "SMask must be DeviceGray");
 }
 
@@ -235,17 +276,27 @@ fn smoke_png_opaque_has_no_smask() {
     let png_bytes = include_bytes!("fixtures/red_1x1.png");
 
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
-    doc.page(1).unwrap().add_image(png_bytes, [100.0, 400.0, 50.0, 50.0]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_image(png_bytes, [100.0, 400.0, 50.0, 50.0])
+        .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
     let res = reload_page_resources(&out);
-    let xobj = res.get(b"XObject").expect("XObject in Resources").as_dict().unwrap();
+    let xobj = res
+        .get(b"XObject")
+        .expect("XObject in Resources")
+        .as_dict()
+        .unwrap();
     let (_, xobj_ref) = xobj.iter().next().unwrap();
     let xobj_id = xobj_ref.as_reference().unwrap();
     let reloaded = lopdf::Document::load_from(out.as_slice()).unwrap();
     let xobj_stream = reloaded.get_object(xobj_id).unwrap().as_stream().unwrap();
 
-    assert!(xobj_stream.dict.get(b"SMask").is_err(), "opaque PNG must not have SMask");
+    assert!(
+        xobj_stream.dict.get(b"SMask").is_err(),
+        "opaque PNG must not have SMask"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -265,8 +316,15 @@ fn smoke_add_image_with_opacity() {
 
     let out = doc.save_to_bytes().unwrap();
     let res = reload_page_resources(&out);
-    let ext_g = res.get(b"ExtGState").expect("ExtGState for opacity").as_dict().unwrap();
-    assert!(!ext_g.is_empty(), "ExtGState should exist for image with opacity");
+    let ext_g = res
+        .get(b"ExtGState")
+        .expect("ExtGState for opacity")
+        .as_dict()
+        .unwrap();
+    assert!(
+        !ext_g.is_empty(),
+        "ExtGState should exist for image with opacity"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -280,13 +338,21 @@ fn smoke_mixed_rect_and_image() {
 
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
     let mut page = doc.page(1).unwrap();
-    page.add_rect([50.0, 50.0, 100.0, 100.0], [0.0, 1.0, 0.0], 0.3).unwrap();
-    page.add_image_with_opacity(jpeg_bytes, [200.0, 200.0, 50.0, 50.0], 0.8).unwrap();
+    page.add_rect([50.0, 50.0, 100.0, 100.0], [0.0, 1.0, 0.0], 0.3)
+        .unwrap();
+    page.add_image_with_opacity(jpeg_bytes, [200.0, 200.0, 50.0, 50.0], 0.8)
+        .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
     let res = reload_page_resources(&out);
-    assert!(res.get(b"ExtGState").is_ok(), "ExtGState should cover both rect and image opacity");
-    assert!(res.get(b"XObject").is_ok(), "XObject should be registered for image");
+    assert!(
+        res.get(b"ExtGState").is_ok(),
+        "ExtGState should cover both rect and image opacity"
+    );
+    assert!(
+        res.get(b"XObject").is_ok(),
+        "XObject should be registered for image"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -308,10 +374,16 @@ fn smoke_add_rect_stroke_content_stream() {
     let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
     let s = String::from_utf8_lossy(&content);
 
-    assert!(s.contains("re\nS"), "content should contain stroked rectangle operator");
+    assert!(
+        s.contains("re\nS"),
+        "content should contain stroked rectangle operator"
+    );
     assert!(s.contains("RG"), "content should set stroke color");
     assert!(s.contains("2.0000 w"), "content should set line width");
-    assert!(!s.contains("re\nf"), "content should NOT fill the rectangle");
+    assert!(
+        !s.contains("re\nf"),
+        "content should NOT fill the rectangle"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +397,13 @@ fn smoke_add_polygon_filled() {
     // Triangle: three vertices
     doc.page(1)
         .unwrap()
-        .add_polygon(&[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]], [1.0, 0.5, 0.0], 1.0, true, 0.0)
+        .add_polygon(
+            &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+            [1.0, 0.5, 0.0],
+            1.0,
+            true,
+            0.0,
+        )
         .unwrap();
 
     let out = doc.save_to_bytes().unwrap();
@@ -373,7 +451,11 @@ fn smoke_add_text_box_wraps() {
     let s = String::from_utf8_lossy(&content);
 
     let bt_count = s.matches("BT\n").count();
-    assert!(bt_count >= 2, "expected multiple BT/ET blocks for wrapped text, got {}", bt_count);
+    assert!(
+        bt_count >= 2,
+        "expected multiple BT/ET blocks for wrapped text, got {}",
+        bt_count
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +471,8 @@ fn smoke_text_with_opacity() {
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
 
-    doc.page(1).unwrap()
+    doc.page(1)
+        .unwrap()
         .add_text_with_opacity("DRAFT", font, [100.0, 400.0], 48.0, [0.5, 0.5, 0.5], 0.3)
         .unwrap();
 
@@ -411,7 +494,8 @@ fn smoke_text_box_center_align() {
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
 
-    doc.page(1).unwrap()
+    doc.page(1)
+        .unwrap()
         .add_text_box_aligned(
             "Line one\nLine two\nLine three",
             font,
@@ -430,7 +514,11 @@ fn smoke_text_box_center_align() {
     let s = String::from_utf8_lossy(&content);
 
     let bt_count = s.matches("BT\n").count();
-    assert!(bt_count >= 3, "Center align: expected 3 BT blocks, got {}", bt_count);
+    assert!(
+        bt_count >= 3,
+        "Center align: expected 3 BT blocks, got {}",
+        bt_count
+    );
 }
 
 #[cfg(feature = "draw")]
@@ -438,7 +526,8 @@ fn smoke_text_box_center_align() {
 fn smoke_polyline_three_segments() {
     let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
 
-    doc.page(1).unwrap()
+    doc.page(1)
+        .unwrap()
         .add_polyline(
             &[[10.0, 10.0], [100.0, 10.0], [100.0, 100.0]],
             [0.0, 0.0, 1.0],
@@ -456,7 +545,10 @@ fn smoke_polyline_three_segments() {
     let l_count = s.matches(" l\n").count();
     assert_eq!(l_count, 2, "3 points → 2 lineto operators");
     assert!(s.contains("\nS\n"), "should stroke without close");
-    assert!(!s.contains("\nh\n"), "must NOT close path (polyline != polygon)");
+    assert!(
+        !s.contains("\nh\n"),
+        "must NOT close path (polyline != polygon)"
+    );
 }
 
 #[cfg(feature = "draw")]
@@ -476,11 +568,20 @@ fn smoke_add_ellipse_filled() {
 
     // 4 cubic Bézier curves (4 'c' operators)
     let c_count = s.matches(" c\n").count();
-    assert_eq!(c_count, 4, "ellipse should have 4 Bézier curve operators, got {c_count}");
+    assert_eq!(
+        c_count, 4,
+        "ellipse should have 4 Bézier curve operators, got {c_count}"
+    );
     // should close path and fill
     assert!(s.contains("h\n"), "should close path");
-    assert!(s.contains("\nf\n"), "filled ellipse should use 'f' operator");
-    assert!(!s.contains("\nS\n"), "filled ellipse should not use stroke 'S'");
+    assert!(
+        s.contains("\nf\n"),
+        "filled ellipse should use 'f' operator"
+    );
+    assert!(
+        !s.contains("\nS\n"),
+        "filled ellipse should not use stroke 'S'"
+    );
     // fill color (rg)
     assert!(s.contains(" rg\n"), "filled ellipse should set rg color");
     // moveto
@@ -502,7 +603,13 @@ fn smoke_add_ellipse_stroked() {
     let content = lpdf.get_page_content(pages[&1]).unwrap();
     let s = String::from_utf8_lossy(&content);
 
-    assert!(s.contains("\nS\n"), "stroked ellipse should use 'S' operator");
-    assert!(!s.contains("\nf\n"), "stroked ellipse should not use fill 'f'");
+    assert!(
+        s.contains("\nS\n"),
+        "stroked ellipse should use 'S' operator"
+    );
+    assert!(
+        !s.contains("\nf\n"),
+        "stroked ellipse should not use fill 'f'"
+    );
     assert!(s.contains(" RG\n"), "stroked ellipse should set RG color");
 }

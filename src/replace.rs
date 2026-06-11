@@ -26,10 +26,29 @@ pub(crate) struct TextReplacePreserveOp {
     pub new_text: String,
 }
 
+/// Parameters for text wrapping during resubset text replacement.
+///
+/// When populated, configures automatic line wrapping for replacement text
+/// that exceeds the specified maximum width. Reserved for future use;
+/// currently all wrap operations fall back to non-wrapped resubset.
+#[allow(dead_code)] // Used in future wrap implementation
+#[derive(Clone)]
+pub(crate) struct WrapParams {
+    pub font_bytes: Vec<u8>,
+    pub line_height: f32,
+    pub max_width: f32,
+}
+
+/// Text replacement operation using font subsetting with optional line wrapping.
+///
+/// Replaces `old_text` with `new_text`, expanding the PDF's embedded font
+/// subset to include new characters. The `wrap` field reserves space for
+/// future multi-line text wrapping support.
 pub(crate) struct TextReplaceResubsetOp {
     pub old_text: String,
     pub new_text: String,
     pub font_bytes: Vec<u8>,
+    pub wrap: Option<WrapParams>,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,18 +98,28 @@ fn validate_chars_in_font(
     font_name: &[u8],
     existing_fonts: &std::collections::HashMap<Vec<u8>, FontInfo>,
 ) -> crate::Result<()> {
-    let Some(fi) = existing_fonts.get(font_name) else { return Ok(()) };
+    let Some(fi) = existing_fonts.get(font_name) else {
+        return Ok(());
+    };
     let char_to_gid: std::collections::HashMap<char, u16> =
         fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
     let font_name_str = String::from_utf8_lossy(font_name).into_owned();
     for ch in text.chars() {
         let gid = match char_to_gid.get(&ch) {
             Some(&g) => g,
-            None => return Err(crate::Error::FontCharNotMapped { ch, font_name: font_name_str }),
+            None => {
+                return Err(crate::Error::FontCharNotMapped {
+                    ch,
+                    font_name: font_name_str,
+                });
+            }
         };
         // Simple fonts use 1-byte encoding; gid must fit in u8
         if fi.bytes_per_char == 1 && gid > 255 {
-            return Err(crate::Error::FontCharNotMapped { ch, font_name: font_name_str });
+            return Err(crate::Error::FontCharNotMapped {
+                ch,
+                font_name: font_name_str,
+            });
         }
     }
     Ok(())
@@ -122,16 +151,35 @@ pub(crate) fn rewrite_page_streams(
 /// Rewrite all content streams for a page using the font already embedded in the PDF.
 /// Returns the rewritten bytes, or `Err` if a character in any `new_text` is absent from
 /// the font's ToUnicode mapping.
+/// Emit a single Tj operator with optional width compensation via Td.
+///
+/// Helper to reduce duplication in Tj/Td emission patterns.
+/// Emits: `<hex_str> Tj` followed by `delta 0 Td` if delta is significant.
+fn emit_tj_with_width_delta(out: &mut Vec<u8>, text_hex: &[u8], width_delta: f32) {
+    out.extend_from_slice(&encode_str_hex(text_hex));
+    out.extend_from_slice(b" Tj\n");
+    if width_delta.abs() > 0.01 {
+        push_number(out, width_delta);
+        out.extend_from_slice(b" 0 Td\n");
+    }
+}
+
 pub(crate) fn rewrite_page_streams_preserve_font(
     doc: &lopdf::Document,
     page_id: lopdf::ObjectId,
     replacements: &[TextReplacePreserveOp],
+    wrap_params_by_old_text: Option<&HashMap<String, crate::replace::WrapParams>>,
 ) -> crate::Result<Vec<u8>> {
     let existing_fonts = collect_fonts(doc, page_id);
     let streams = page_content_streams(doc, page_id);
     let mut out = Vec::new();
     for bytes in &streams {
-        let rewritten = rewrite_stream_preserve_font(bytes, replacements, &existing_fonts)?;
+        let rewritten = rewrite_stream_preserve_font(
+            bytes,
+            replacements,
+            &existing_fonts,
+            wrap_params_by_old_text,
+        )?;
         out.extend_from_slice(&rewritten);
         if !out.ends_with(b"\n") {
             out.push(b'\n');
@@ -144,6 +192,7 @@ fn rewrite_stream_preserve_font(
     bytes: &[u8],
     replacements: &[TextReplacePreserveOp],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
+    wrap_params_by_old_text: Option<&HashMap<String, crate::replace::WrapParams>>,
 ) -> crate::Result<Vec<u8>> {
     if replacements.is_empty() {
         return Ok(bytes.to_vec());
@@ -192,7 +241,10 @@ fn rewrite_stream_preserve_font(
                     let r = &replacements[co.replacement_idx];
                     let fi = match existing_fonts.get(&co.font_name) {
                         Some(fi) => fi,
-                        None => { last_copied = op.end; continue; }
+                        None => {
+                            last_copied = op.end;
+                            continue;
+                        }
                     };
                     let char_to_gid: HashMap<char, u16> =
                         fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
@@ -203,7 +255,8 @@ fn rewrite_stream_preserve_font(
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let new_bytes = encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
+                            let new_bytes =
+                                encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
                             out.extend_from_slice(&encode_str_hex(&new_bytes));
                             out.extend_from_slice(b" Tj\n");
                         }
@@ -213,9 +266,11 @@ fn rewrite_stream_preserve_font(
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let new_bytes = encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
+                            let new_bytes =
+                                encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
                             let orig_w = co.orig_width * co.font_size;
-                            let new_w = orig_width(&new_bytes, &co.font_name, co.font_size, existing_fonts);
+                            let new_w =
+                                orig_width(&new_bytes, &co.font_name, co.font_size, existing_fonts);
                             let delta = orig_w - new_w;
                             if delta.abs() > 0.01 {
                                 push_number(&mut out, delta);
@@ -248,20 +303,79 @@ fn rewrite_stream_preserve_font(
                             });
                         }
                     }
-                    let new_bytes =
-                        encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
-                    let orig_w = orig_width(&str_bytes, &cur_font, cur_size, existing_fonts);
-                    let new_w = orig_width(&new_bytes, &cur_font, cur_size, existing_fonts);
-                    let delta = orig_w - new_w;
-                    let mut fragment = Vec::new();
-                    fragment.extend_from_slice(&encode_str_hex(&new_bytes));
-                    fragment.extend_from_slice(b" Tj\n");
-                    if delta.abs() > 0.01 {
-                        push_number(&mut fragment, delta);
-                        fragment.extend_from_slice(b" 0 Td\n");
-                    }
                     out.extend_from_slice(&bytes[last_copied..op.start]);
-                    out.extend_from_slice(&fragment);
+
+                    // Check if wrapping is requested for this replacement.
+                    if let Some(wp) = wrap_params_by_old_text.and_then(|m| m.get(&r.old_text)) {
+                        // Parse TTF font and wrap the replacement text.
+                        let face = match ttf_parser::Face::parse(&wp.font_bytes, 0) {
+                            Ok(f) => f,
+                            Err(_) => {
+                                // If font parsing fails, fall back to single-line replacement.
+                                let new_bytes = encode_chars_as_bytes(
+                                    &r.new_text,
+                                    &char_to_gid,
+                                    fi.bytes_per_char,
+                                );
+                                let orig_w =
+                                    orig_width(&str_bytes, &cur_font, cur_size, existing_fonts);
+                                let new_w =
+                                    orig_width(&new_bytes, &cur_font, cur_size, existing_fonts);
+                                let delta = orig_w - new_w;
+                                emit_tj_with_width_delta(&mut out, &new_bytes, delta);
+                                last_copied = op.end;
+                                continue;
+                            }
+                        };
+
+                        let lines =
+                            crate::wrap_paragraph(&r.new_text, &face, cur_size, wp.max_width);
+                        let orig_w = orig_width(&str_bytes, &cur_font, cur_size, existing_fonts);
+
+                        // Emit each line as a separate Tj operator with Td between them.
+                        for (i, line) in lines.iter().enumerate() {
+                            let line_bytes =
+                                encode_chars_as_bytes(line, &char_to_gid, fi.bytes_per_char);
+                            out.extend_from_slice(&encode_str_hex(&line_bytes));
+                            out.extend_from_slice(b" Tj\n");
+
+                            // Move down after each line except the last.
+                            if i < lines.len() - 1 {
+                                out.extend_from_slice(b"0 ");
+                                push_number(&mut out, -wp.line_height);
+                                out.extend_from_slice(b" Td\n");
+                            }
+                        }
+
+                        // Apply width compensation only to the final line.
+                        // DESIGN: The horizontal space consumed by wrapped text is determined by the
+                        // last line's width (lines prior to the last are on separate rows and don't
+                        // affect the text cursor position for content following this replacement).
+                        // We compare the original (unwrapped) text width against the final line width
+                        // and emit a Td offset to adjust horizontal position after the replacement.
+                        // This ensures that text following the replacement is positioned correctly
+                        // relative to where the original single-line text would have ended.
+                        if let Some(last_line) = lines.last() {
+                            let last_bytes =
+                                encode_chars_as_bytes(last_line, &char_to_gid, fi.bytes_per_char);
+                            let last_w =
+                                orig_width(&last_bytes, &cur_font, cur_size, existing_fonts);
+                            let delta = orig_w - last_w;
+                            if delta.abs() > 0.01 {
+                                push_number(&mut out, delta);
+                                out.extend_from_slice(b" 0 Td\n");
+                            }
+                        }
+                    } else {
+                        // Single-line replacement (no wrapping).
+                        let new_bytes =
+                            encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
+                        let orig_w = orig_width(&str_bytes, &cur_font, cur_size, existing_fonts);
+                        let new_w = orig_width(&new_bytes, &cur_font, cur_size, existing_fonts);
+                        let delta = orig_w - new_w;
+                        emit_tj_with_width_delta(&mut out, &new_bytes, delta);
+                    }
+
                     last_copied = op.end;
                 }
             }
@@ -271,7 +385,10 @@ fn rewrite_stream_preserve_font(
                     let r = &replacements[co.replacement_idx];
                     let fi = match existing_fonts.get(&co.font_name) {
                         Some(fi) => fi,
-                        None => { last_copied = op.end; continue; }
+                        None => {
+                            last_copied = op.end;
+                            continue;
+                        }
                     };
                     let char_to_gid: HashMap<char, u16> =
                         fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
@@ -282,7 +399,8 @@ fn rewrite_stream_preserve_font(
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let new_bytes = encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
+                            let new_bytes =
+                                encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
                             out.extend_from_slice(&encode_str_hex(&new_bytes));
                             out.extend_from_slice(b" Tj\n");
                         }
@@ -292,9 +410,11 @@ fn rewrite_stream_preserve_font(
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let new_bytes = encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
+                            let new_bytes =
+                                encode_chars_as_bytes(&r.new_text, &char_to_gid, fi.bytes_per_char);
                             let orig_w = co.orig_width * co.font_size;
-                            let new_w = orig_width(&new_bytes, &co.font_name, co.font_size, existing_fonts);
+                            let new_w =
+                                orig_width(&new_bytes, &co.font_name, co.font_size, existing_fonts);
                             let delta = orig_w - new_w;
                             if delta.abs() > 0.01 {
                                 push_number(&mut out, delta);
@@ -329,9 +449,7 @@ fn rewrite_stream_preserve_font(
                     for elem in &arr {
                         if let ArrElem::Str(b) = elem {
                             let decoded = decode_str(b, &cur_font, existing_fonts);
-                            if let Some(r) =
-                                replacements.iter().find(|r| r.old_text == decoded)
-                            {
+                            if let Some(r) = replacements.iter().find(|r| r.old_text == decoded) {
                                 for ch in r.new_text.chars() {
                                     if !char_to_gid.contains_key(&ch) {
                                         return Err(crate::Error::FontCharNotMapped {
@@ -517,8 +635,13 @@ pub(crate) fn rewrite_content_stream(
                     }
                 });
                 if any_match {
-                    let (fragment, used) =
-                        emit_tj_array(&arr.clone(), replacements, &cur_font, cur_size, existing_fonts);
+                    let (fragment, used) = emit_tj_array(
+                        &arr.clone(),
+                        replacements,
+                        &cur_font,
+                        cur_size,
+                        existing_fonts,
+                    );
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     out.extend_from_slice(&fragment);
                     last_copied = op.end;
@@ -662,7 +785,9 @@ fn orig_width(
     font_size: f32,
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
 ) -> f32 {
-    let Some(fi) = existing_fonts.get(font_name) else { return 0.0 };
+    let Some(fi) = existing_fonts.get(font_name) else {
+        return 0.0;
+    };
     let mut total = 0.0f32;
     if fi.bytes_per_char == 2 && bytes.len().is_multiple_of(2) {
         for chunk in bytes.chunks(2) {
@@ -697,7 +822,9 @@ fn decode_str(
     font_name: &[u8],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
 ) -> String {
-    let Some(fi) = existing_fonts.get(font_name) else { return String::new() };
+    let Some(fi) = existing_fonts.get(font_name) else {
+        return String::new();
+    };
     let mut text = String::new();
     if fi.bytes_per_char == 2 {
         if bytes.len().is_multiple_of(2) {
@@ -829,7 +956,11 @@ pub(crate) fn push_number(out: &mut Vec<u8>, v: f32) {
     } else {
         let s = format!("{:.4}", v);
         let s = s.trim_end_matches('0');
-        let s = if s.ends_with('.') { format!("{}0", s) } else { s.to_string() };
+        let s = if s.ends_with('.') {
+            format!("{}0", s)
+        } else {
+            s.to_string()
+        };
         out.extend_from_slice(s.as_bytes());
     }
 }
@@ -886,14 +1017,22 @@ fn push_chars_from_bytes(
             for chunk in str_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                 if let Some(&ch) = fi.to_unicode.get(&gid) {
-                    char_buf.push(CharEntry { ch, op_idx, raw_bytes: chunk.to_vec() });
+                    char_buf.push(CharEntry {
+                        ch,
+                        op_idx,
+                        raw_bytes: chunk.to_vec(),
+                    });
                 }
             }
         }
     } else {
         for &b in str_bytes {
             if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
-                char_buf.push(CharEntry { ch, op_idx, raw_bytes: vec![b] });
+                char_buf.push(CharEntry {
+                    ch,
+                    op_idx,
+                    raw_bytes: vec![b],
+                });
             }
         }
     }
@@ -945,14 +1084,26 @@ pub(crate) fn collect_char_segments(
             }
             b"Tj" if in_bt => {
                 if let Some(Operand::Str(str_bytes)) = op.operands.first() {
-                    push_chars_from_bytes(&mut cur_chars, str_bytes, op_idx, &cur_font, existing_fonts);
+                    push_chars_from_bytes(
+                        &mut cur_chars,
+                        str_bytes,
+                        op_idx,
+                        &cur_font,
+                        existing_fonts,
+                    );
                 }
             }
             b"TJ" if in_bt => {
                 if let Some(Operand::Array(arr)) = op.operands.first() {
                     for elem in arr {
                         if let ArrElem::Str(b) = elem {
-                            push_chars_from_bytes(&mut cur_chars, b, op_idx, &cur_font, existing_fonts);
+                            push_chars_from_bytes(
+                                &mut cur_chars,
+                                b,
+                                op_idx,
+                                &cur_font,
+                                existing_fonts,
+                            );
                         }
                     }
                 }
@@ -985,14 +1136,16 @@ fn find_cross_op_matches_inner(
         for (r_idx, &old_text) in old_texts.iter().enumerate() {
             let pattern_chars: Vec<char> = old_text.chars().collect();
             let plen = pattern_chars.len();
-            if plen == 0 { continue; }
+            if plen == 0 {
+                continue;
+            }
 
             let mut pos = 0usize;
             while pos + plen <= text_chars.len() {
                 if text_chars[pos..pos + plen] == pattern_chars[..] {
                     let char_end = pos + plen;
                     let first_op = seg.chars[pos].op_idx;
-                    let last_op  = seg.chars[char_end - 1].op_idx;
+                    let last_op = seg.chars[char_end - 1].op_idx;
 
                     if first_op != last_op {
                         // Only accept cross-op matches where all intermediate ops are Tj/TJ.
@@ -1014,14 +1167,19 @@ fn find_cross_op_matches_inner(
                                 .flat_map(|e| e.raw_bytes.iter().copied())
                                 .collect();
 
-                            let orig_width: f32 = seg.chars[pos..char_end].iter().map(|e| {
-                                let gid = if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
-                                    u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
-                                } else if !e.raw_bytes.is_empty() {
-                                    e.raw_bytes[0] as u16
-                                } else { 0 };
-                                fi.advance_width(gid) as f32 / 1000.0
-                            }).sum();
+                            let orig_width: f32 = seg.chars[pos..char_end]
+                                .iter()
+                                .map(|e| {
+                                    let gid = if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
+                                        u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
+                                    } else if !e.raw_bytes.is_empty() {
+                                        e.raw_bytes[0] as u16
+                                    } else {
+                                        0
+                                    };
+                                    fi.advance_width(gid) as f32 / 1000.0
+                                })
+                                .sum();
 
                             result.push(CrossOpMatch {
                                 replacement_idx: r_idx,
@@ -1148,9 +1306,7 @@ pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
             b'/' => {
                 i += 1;
                 let start = i;
-                while i < bytes.len()
-                    && !is_pdf_whitespace(bytes[i])
-                    && !is_pdf_delimiter(bytes[i])
+                while i < bytes.len() && !is_pdf_whitespace(bytes[i]) && !is_pdf_delimiter(bytes[i])
                 {
                     i += 1;
                 }
@@ -1172,9 +1328,7 @@ pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
             }
             _ => {
                 let start = i;
-                while i < bytes.len()
-                    && !is_pdf_whitespace(bytes[i])
-                    && !is_pdf_delimiter(bytes[i])
+                while i < bytes.len() && !is_pdf_whitespace(bytes[i]) && !is_pdf_delimiter(bytes[i])
                 {
                     i += 1;
                 }
@@ -1238,9 +1392,7 @@ fn parse_tj_array(bytes: &[u8]) -> (Vec<ArrElem>, usize) {
             }
             _ => {
                 let start = i;
-                while i < bytes.len()
-                    && !is_pdf_whitespace(bytes[i])
-                    && !is_pdf_delimiter(bytes[i])
+                while i < bytes.len() && !is_pdf_whitespace(bytes[i]) && !is_pdf_delimiter(bytes[i])
                 {
                     i += 1;
                 }

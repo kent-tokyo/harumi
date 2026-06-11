@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use crate::Color;
+use std::collections::BTreeMap;
 
 /// Builds a PDF content stream fragment that renders `chars` at `(x, y)`.
 ///
@@ -35,7 +35,11 @@ pub fn text_stream(
 
     // Bold uses render mode 2 (fill+stroke) with a thin proportional stroke.
     // Invisible text (mode 3) is unaffected by bold/italic.
-    let effective_mode = if bold && render_mode == 0 { 2u8 } else { render_mode };
+    let effective_mode = if bold && render_mode == 0 {
+        2u8
+    } else {
+        render_mode
+    };
 
     let mut s = String::new();
     s.push_str("q\n");
@@ -82,9 +86,7 @@ pub fn text_stream(
             let b = sin_t;
             let c = -sin_t + cos_t * SHEAR;
             let d = cos_t;
-            s.push_str(&format!(
-                "{a:.6} {b:.6} {c:.6} {d:.6} {x:.4} {y:.4} Tm\n"
-            ));
+            s.push_str(&format!("{a:.6} {b:.6} {c:.6} {d:.6} {x:.4} {y:.4} Tm\n"));
         }
     } else if rotation_degrees == 0.0 {
         s.push_str(&format!("{x:.4} {y:.4} Td\n"));
@@ -114,7 +116,20 @@ pub fn invisible_text_stream(
     chars: &[char],
     char_to_gid: &BTreeMap<char, u16>,
 ) -> Vec<u8> {
-    text_stream(font_name, font_size, x, y, 0.0, chars, char_to_gid, 3, Color::Rgb([0.0; 3]), None, false, false)
+    text_stream(
+        font_name,
+        font_size,
+        x,
+        y,
+        0.0,
+        chars,
+        char_to_gid,
+        3,
+        Color::Rgb([0.0; 3]),
+        None,
+        false,
+        false,
+    )
 }
 
 /// Converts chars to a hex string of 2-byte GID values for Identity-H encoding.
@@ -156,19 +171,51 @@ mod tests {
     fn stream_visible_mode_has_color() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 0.0, &['A'], &map, 0, Color::Rgb([1.0, 0.0, 0.0]), None, false, false);
+        let bytes = text_stream(
+            b"F0",
+            12.0,
+            50.0,
+            100.0,
+            0.0,
+            &['A'],
+            &map,
+            0,
+            Color::Rgb([1.0, 0.0, 0.0]),
+            None,
+            false,
+            false,
+        );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("0 Tr"), "visible mode should use Tr 0");
-        assert!(s.contains("1.0000 0.0000 0.0000 rg"), "should emit RGB color");
+        assert!(
+            s.contains("1.0000 0.0000 0.0000 rg"),
+            "should emit RGB color"
+        );
     }
 
     #[test]
     fn rotation_zero_uses_td() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 10.0, 20.0, 0.0, &['A'], &map, 0, Color::Rgb([0.0; 3]), None, false, false);
+        let bytes = text_stream(
+            b"F0",
+            12.0,
+            10.0,
+            20.0,
+            0.0,
+            &['A'],
+            &map,
+            0,
+            Color::Rgb([0.0; 3]),
+            None,
+            false,
+            false,
+        );
         let s = String::from_utf8(bytes).unwrap();
-        assert!(s.contains("10.0000 20.0000 Td"), "zero rotation should use Td");
+        assert!(
+            s.contains("10.0000 20.0000 Td"),
+            "zero rotation should use Td"
+        );
         assert!(!s.contains("Tm"), "zero rotation must not emit Tm");
     }
 
@@ -176,7 +223,20 @@ mod tests {
     fn rotation_nonzero_uses_tm() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 50.0, 100.0, 45.0, &['A'], &map, 0, Color::Rgb([0.0; 3]), None, false, false);
+        let bytes = text_stream(
+            b"F0",
+            12.0,
+            50.0,
+            100.0,
+            45.0,
+            &['A'],
+            &map,
+            0,
+            Color::Rgb([0.0; 3]),
+            None,
+            false,
+            false,
+        );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("Tm"), "non-zero rotation should use Tm");
         assert!(!s.contains("Td"), "non-zero rotation must not emit Td");
@@ -188,9 +248,25 @@ mod tests {
     fn text_stream_with_gs_emits_gs_op() {
         let mut map = BTreeMap::new();
         map.insert('A', 1u16);
-        let bytes = text_stream(b"F0", 12.0, 0.0, 0.0, 0.0, &['A'], &map, 0, Color::Rgb([0.0; 3]), Some("GS0"), false, false);
+        let bytes = text_stream(
+            b"F0",
+            12.0,
+            0.0,
+            0.0,
+            0.0,
+            &['A'],
+            &map,
+            0,
+            Color::Rgb([0.0; 3]),
+            Some("GS0"),
+            false,
+            false,
+        );
         let s = String::from_utf8(bytes).unwrap();
-        assert!(s.contains("/GS0 gs"), "should emit gs operator when gs_name is Some");
+        assert!(
+            s.contains("/GS0 gs"),
+            "should emit gs operator when gs_name is Some"
+        );
         // Must appear after q and before BT
         let q_pos = s.find("q\n").unwrap();
         let gs_pos = s.find("/GS0 gs").unwrap();

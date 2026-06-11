@@ -21,19 +21,26 @@ fn smoke_single_page() {
 fn auto_pagination() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
     for i in 0..80 {
-        doc.push_paragraph(&format!("Paragraph {} with some content to fill the page.", i))
-            .unwrap();
+        doc.push_paragraph(&format!(
+            "Paragraph {} with some content to fill the page.",
+            i
+        ))
+        .unwrap();
     }
     let bytes = doc.render().unwrap();
     let reloaded = Document::from_bytes(&bytes).unwrap();
-    assert!(reloaded.page_count() >= 2, "should have paginated to at least 2 pages");
+    assert!(
+        reloaded.page_count() >= 2,
+        "should have paginated to at least 2 pages"
+    );
 }
 
 #[test]
 fn heading_levels() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
     for level in 1..=6 {
-        doc.push_heading(&format!("Heading {}", level), level).unwrap();
+        doc.push_heading(&format!("Heading {}", level), level)
+            .unwrap();
         doc.push_paragraph("Supporting text.").unwrap();
     }
     let bytes = doc.render().unwrap();
@@ -43,7 +50,8 @@ fn heading_levels() {
 #[test]
 fn key_value_table_smoke() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
-    doc.push_key_value_table(&[("Name", "Alice"), ("Age", "30"), ("City", "Tokyo")]).unwrap();
+    doc.push_key_value_table(&[("Name", "Alice"), ("Age", "30"), ("City", "Tokyo")])
+        .unwrap();
     let bytes = doc.render().unwrap();
     assert!(bytes.starts_with(b"%PDF"));
 }
@@ -85,7 +93,8 @@ fn custom_margins() {
     };
     let mut doc = FlowDocument::new(NOTO, opts).unwrap();
     doc.push_heading("Narrow Margins", 1).unwrap();
-    doc.push_paragraph("Content with custom 36pt margins.").unwrap();
+    doc.push_paragraph("Content with custom 36pt margins.")
+        .unwrap();
     let bytes = doc.render().unwrap();
     assert!(bytes.starts_with(b"%PDF"));
 }
@@ -112,13 +121,17 @@ fn cjk_paragraph_e2e() {
 
 #[test]
 fn max_pages_limit_returns_error() {
-    let opts = harumi::FlowOptions { max_pages: 2, ..harumi::FlowOptions::default() };
+    let opts = harumi::FlowOptions {
+        max_pages: 2,
+        ..harumi::FlowOptions::default()
+    };
     let mut doc = FlowDocument::new(NOTO, opts).unwrap();
     // Fill until we hit the limit.
-    let result = (0..500).try_for_each(|i| {
-        doc.push_paragraph(&format!("Paragraph {}", i))
-    });
-    assert!(result.is_err(), "should return error when max_pages exceeded");
+    let result = (0..500).try_for_each(|i| doc.push_paragraph(&format!("Paragraph {}", i)));
+    assert!(
+        result.is_err(),
+        "should return error when max_pages exceeded"
+    );
 }
 
 #[test]
@@ -132,7 +145,10 @@ fn many_table_rows_paginate() {
     doc.push_key_value_table(&rows_ref).unwrap();
     let bytes = doc.render().unwrap();
     let reloaded = Document::from_bytes(&bytes).unwrap();
-    assert!(reloaded.page_count() >= 2, "50 rows should span at least 2 pages");
+    assert!(
+        reloaded.page_count() >= 2,
+        "50 rows should span at least 2 pages"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,16 +158,22 @@ fn many_table_rows_paginate() {
 #[test]
 fn inline_spans_plain() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
-    doc.push_paragraph_styled(&[
-        InlineSpan::plain("Hello "),
-        InlineSpan::plain("world"),
-    ]).unwrap();
+    doc.push_paragraph_styled(&[InlineSpan::plain("Hello "), InlineSpan::plain("world")])
+        .unwrap();
     let bytes = doc.render().unwrap();
     let reloaded = Document::from_bytes(&bytes).unwrap();
     assert_eq!(reloaded.page_count(), 1);
-    let text: String = reloaded.extract_text_runs(1).unwrap()
-        .iter().map(|f| f.text.as_str()).collect();
-    assert!(text.contains("Hello") && text.contains("world"), "text: {:?}", text);
+    let text: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect();
+    assert!(
+        text.contains("Hello") && text.contains("world"),
+        "text: {:?}",
+        text
+    );
 }
 
 #[test]
@@ -161,7 +183,8 @@ fn inline_spans_bold_italic_color() {
         InlineSpan::bold("Bold "),
         InlineSpan::italic("Italic "),
         InlineSpan::colored("Red", [1.0, 0.0, 0.0]),
-    ]).unwrap();
+    ])
+    .unwrap();
     let bytes = doc.render().unwrap();
     // Just verify it produces a valid PDF without panic.
     let reloaded = Document::from_bytes(&bytes).unwrap();
@@ -171,14 +194,16 @@ fn inline_spans_bold_italic_color() {
 #[test]
 fn inline_spans_cjk_mixed_style() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
-    doc.push_paragraph_styled(&[
-        InlineSpan::plain("日本語 "),
-        InlineSpan::bold("太字"),
-    ]).unwrap();
+    doc.push_paragraph_styled(&[InlineSpan::plain("日本語 "), InlineSpan::bold("太字")])
+        .unwrap();
     let bytes = doc.render().unwrap();
     let reloaded = Document::from_bytes(&bytes).unwrap();
     assert_eq!(reloaded.page_count(), 1);
-    let text: String = reloaded.extract_text_runs(1).unwrap()
-        .iter().map(|f| f.text.as_str()).collect();
+    let text: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect();
     assert!(text.contains("日本語"), "text: {:?}", text);
 }

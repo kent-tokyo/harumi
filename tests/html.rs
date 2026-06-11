@@ -3,12 +3,15 @@
 
 #![cfg(feature = "html")]
 
-use harumi::{render_html_to_pdf, Document, HtmlRenderOptions};
+use harumi::{Document, HtmlRenderOptions, render_html_to_pdf};
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
 fn opts() -> HtmlRenderOptions {
-    HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..HtmlRenderOptions::default() }
+    HtmlRenderOptions {
+        font_bytes: NOTO.to_vec(),
+        ..HtmlRenderOptions::default()
+    }
 }
 
 #[test]
@@ -37,7 +40,10 @@ fn page_break_style_attribute() {
     let html = r#"<h1>Page One</h1><div style="page-break-after: always"></div><h1>Page Two</h1>"#;
     let bytes = render_html_to_pdf(html, opts()).unwrap();
     let doc = Document::from_bytes(&bytes).unwrap();
-    assert!(doc.page_count() >= 2, "page-break-after should create a new page");
+    assert!(
+        doc.page_count() >= 2,
+        "page-break-after should create a new page"
+    );
 }
 
 #[test]
@@ -163,7 +169,9 @@ fn max_pages_limit_respected() {
         ..HtmlRenderOptions::default()
     };
     // 200 non-empty paragraphs → ~6 pages on A4, should hit max_pages=3 limit.
-    let html: String = (0..200).map(|i| format!("<p>Paragraph {}</p>", i)).collect();
+    let html: String = (0..200)
+        .map(|i| format!("<p>Paragraph {}</p>", i))
+        .collect();
     let result = render_html_to_pdf(&html, opts);
     assert!(result.is_err(), "should hit max_pages limit");
 }
@@ -176,11 +184,19 @@ fn max_pages_limit_respected() {
 fn bold_and_italic_rendered() {
     let bytes = render_html_to_pdf(
         "<p>Normal <strong>Bold</strong> and <em>Italic</em> text.</p>",
-        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
-    ).unwrap();
+        HtmlRenderOptions {
+            font_bytes: NOTO.to_vec(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let doc = Document::from_bytes(&bytes).unwrap();
-    let text: String = doc.extract_text_runs(1).unwrap()
-        .iter().map(|f| f.text.as_str()).collect();
+    let text: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect();
     // All words should appear in the output.
     assert!(text.contains("Normal"), "text: {:?}", text);
     assert!(text.contains("Bold"), "text: {:?}", text);
@@ -191,8 +207,12 @@ fn bold_and_italic_rendered() {
 fn span_color_attribute() {
     let bytes = render_html_to_pdf(
         r#"<p>Normal <span style="color: #ff0000">Red</span> text.</p>"#,
-        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
-    ).unwrap();
+        HtmlRenderOptions {
+            font_bytes: NOTO.to_vec(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     // Just verify valid PDF output.
     let doc = Document::from_bytes(&bytes).unwrap();
     assert_eq!(doc.page_count(), 1);
@@ -202,10 +222,18 @@ fn span_color_attribute() {
 fn link_rendered_as_blue() {
     let bytes = render_html_to_pdf(
         r#"<p>Visit <a href="https://example.com">example.com</a> for more.</p>"#,
-        HtmlRenderOptions { font_bytes: NOTO.to_vec(), ..Default::default() },
-    ).unwrap();
+        HtmlRenderOptions {
+            font_bytes: NOTO.to_vec(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let doc = Document::from_bytes(&bytes).unwrap();
-    let text: String = doc.extract_text_runs(1).unwrap()
-        .iter().map(|f| f.text.as_str()).collect();
+    let text: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect();
     assert!(text.contains("example.com"), "text: {:?}", text);
 }

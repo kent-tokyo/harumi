@@ -31,9 +31,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    In a real pipeline, coordinates and text come from Tesseract / hOCR output.
     //    Use `harumi::ocr::hocr_y_to_pdf()` to convert pixel coords if needed.
     doc.page(1)?.add_invisible_text_runs(&[
-        TextRun { text: "晴海ライブラリ".into(), font, x: 72.0,  y: 750.0, font_size: 14.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "日本語のPDF検索".into(), font, x: 72.0, y: 720.0, font_size: 12.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "純Rust製・CJK対応".into(), font, x: 72.0, y: 690.0, font_size: 12.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
+        TextRun {
+            text: "晴海ライブラリ".into(),
+            font,
+            x: 72.0,
+            y: 750.0,
+            font_size: 14.0,
+            render_mode: 3,
+            color: harumi::Color::Rgb([0.0; 3]),
+        },
+        TextRun {
+            text: "日本語のPDF検索".into(),
+            font,
+            x: 72.0,
+            y: 720.0,
+            font_size: 12.0,
+            render_mode: 3,
+            color: harumi::Color::Rgb([0.0; 3]),
+        },
+        TextRun {
+            text: "純Rust製・CJK対応".into(),
+            font,
+            x: 72.0,
+            y: 690.0,
+            font_size: 12.0,
+            render_mode: 3,
+            color: harumi::Color::Rgb([0.0; 3]),
+        },
     ])?;
 
     // 4. Save — the original PDF structure is preserved.

@@ -19,7 +19,10 @@
 
 use crate::{Error, Result};
 
-use super::{html_tokenizer::{parse_html, HtmlNode}, FlowDocument, FlowOptions, InlineSpan, Margins};
+use super::{
+    FlowDocument, FlowOptions, InlineSpan, Margins,
+    html_tokenizer::{HtmlNode, parse_html},
+};
 
 /// Options for [`render_html_to_pdf`].
 pub struct HtmlRenderOptions {
@@ -345,8 +348,7 @@ fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
         return Ok(());
     }
 
-    let rows_ref: Vec<(&str, &str)> =
-        rows.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let rows_ref: Vec<(&str, &str)> = rows.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     flow.push_key_value_table(&rows_ref)
 }
 

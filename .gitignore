@@ -10,3 +10,4 @@ AGENTS.md
 # wasm-pack output (generated build artifact)
 wasm-demo/www/pkg/
 wasm-demo/target/
+test_documents/

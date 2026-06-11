@@ -52,23 +52,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 4. Invisible text on every page ---
     for i in 1..=n {
         let text = format!("harumi smoke test — page {}", i);
-        doc.page(i)?.add_invisible_text(&text, font, [72.0, 60.0], 10.0)?;
+        doc.page(i)?
+            .add_invisible_text(&text, font, [72.0, 60.0], 10.0)?;
     }
 
     // --- 5. Visible stamp on page 1 ---
     let stamp_text = "TESTED";
     if let Ok((w, h)) = doc.page(1)?.size() {
-        doc.page(1)?.add_text(stamp_text, font, [w / 2.0 - 30.0, h / 2.0], 28.0, [0.0, 0.5, 0.0])?;
-        println!("\nStamp '{}' placed at ({:.0}, {:.0})", stamp_text, w / 2.0 - 30.0, h / 2.0);
+        doc.page(1)?.add_text(
+            stamp_text,
+            font,
+            [w / 2.0 - 30.0, h / 2.0],
+            28.0,
+            [0.0, 0.5, 0.0],
+        )?;
+        println!(
+            "\nStamp '{}' placed at ({:.0}, {:.0})",
+            stamp_text,
+            w / 2.0 - 30.0,
+            h / 2.0
+        );
     } else {
-        doc.page(1)?.add_text(stamp_text, font, [200.0, 400.0], 28.0, [0.0, 0.5, 0.0])?;
-        println!("\nStamp '{}' placed at (200, 400) — size() unavailable", stamp_text);
+        doc.page(1)?
+            .add_text(stamp_text, font, [200.0, 400.0], 28.0, [0.0, 0.5, 0.0])?;
+        println!(
+            "\nStamp '{}' placed at (200, 400) — size() unavailable",
+            stamp_text
+        );
     }
 
     // --- 6. Batch run on page 1 ---
     doc.page(1)?.add_invisible_text_runs(&[
-        TextRun { text: "バッチテスト行1".into(), font, x: 72.0, y: 40.0, font_size: 10.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
-        TextRun { text: "batch test line 2".into(), font, x: 72.0, y: 26.0, font_size: 10.0, render_mode: 3, color: harumi::Color::Rgb([0.0; 3]) },
+        TextRun {
+            text: "バッチテスト行1".into(),
+            font,
+            x: 72.0,
+            y: 40.0,
+            font_size: 10.0,
+            render_mode: 3,
+            color: harumi::Color::Rgb([0.0; 3]),
+        },
+        TextRun {
+            text: "batch test line 2".into(),
+            font,
+            x: 72.0,
+            y: 26.0,
+            font_size: 10.0,
+            render_mode: 3,
+            color: harumi::Color::Rgb([0.0; 3]),
+        },
     ])?;
 
     // --- 7. Save ---

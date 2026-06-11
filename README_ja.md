@@ -22,11 +22,18 @@ cargo build -p harumi-mcp
 
 # IDE設定で以下のツールを利用可能に：
 # - pdf_extract_text: テキスト位置付き抽出
+# - pdf_extract_all_pages: 全ページのテキスト位置付き抽出
+# - pdf_replace_text: レイアウトを保ったテキスト置換・翻訳
 # - pdf_add_invisible_text: OCR検索レイヤー追加
 # - pdf_html_to_pdf: HTML→PDF変換
 # - pdf_merge: PDF結合
 # - pdf_page_info: ページ情報取得
 ```
+
+PDF翻訳では `pdf_extract_all_pages` で全ページの断片を抽出し、翻訳後に
+`pdf_replace_text` で既存レイアウトを保ったまま置換します。非Identity
+`CIDToGIDMap` のため再サブセット化できないPDFでは、Unicode TTFを指定して
+`mode: "new_font"` を使います。
 
 [smithery.ai](https://smithery.ai) または [mcp.so](https://mcp.so) に登録予定。
 
@@ -187,6 +194,29 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 [dependencies]
 harumi = "1.1"
 ```
+
+### CJK フォント入手方法
+
+日本語・中国語・韓国語の PDF 処理には、**NotoSansCJK フォント**（Google Fonts、OFL ライセンス、無料）をダウンロードしてください：
+
+```bash
+# 日本語
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKjp-Regular.ttf
+
+# 簡体字中国語
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKsc-Regular.ttf
+
+# 繁体字中国語
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKtc-Regular.ttf
+
+# 韓国語
+wget https://github.com/notofonts/cjk/releases/download/Sans-v2.004/NotoSansCJKkr-Regular.ttf
+```
+
+**その他の入手元:**
+- **Google Fonts ウェブサイト**: https://fonts.google.com（検索: "Noto Sans CJK"）
+- **Adobe Fonts**: https://fonts.adobe.com（サブスクリプション版）
+- **システムフォント**: `fc-list | grep -i noto` で既にインストール済みか確認
 
 ### 不可視のOCRテキストレイヤー
 
@@ -374,6 +404,8 @@ doc.save("output.pdf")?;
 
 > **注意**: PDFに埋め込まれたサブセットではなく、元の未サブセットフォントファイルが必要です。
 > CIDToGIDMap=Identity のCIDFontType2フォント（harumi が埋め込むもの）のみ対応。
+> 他ツール生成のPDFでは非Identity `CIDToGIDMap` が使われることがあります。その場合は新規埋め込みフォントで
+> `replace_text` を使うか、MCP `pdf_replace_text` の `mode: "new_font"` を使ってください。
 
 ### PDFメタデータの読み書き
 
@@ -852,7 +884,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v0.5** | `add_link_url`・`add_link_internal` — クリッカブルな PDF リンクアノテーション；`add_bookmark` — CJK UTF-16BE タイトル対応のドキュメントアウトライン；`HeaderFooter` + `{{page}}`/`{{total}}` の `FlowDocument` 対応；見出しからの `auto_bookmarks`；セキュリティ修正 |
 | **v0.6** | 暗号化 PDF 読み込み（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；マークアップ注釈（ハイライト・下線・取り消し線・付箋）；AcroForm `form_fields()` / `fill_form()`；AGL テーブル +116 エントリ（中欧文字・合字・euro）；Identity-H テキスト抽出フォールバック |
 | **v0.7** *(current)* | `set_encryption` — パスワード保護付き PDF の書き出し；`add_squiggly` — 波線下線注釈；ページボックス全種対応（`crop_box`・`trim_box`・`bleed_box`・`media_box` 読み書き） |
-| **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
+| **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；MCP `pdf_replace_text` のレイアウト保持翻訳ワークフローと非Identity `CIDToGIDMap` 診断；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
 | **Next** | AES-256 書き込み暗号化 |
 
 ---

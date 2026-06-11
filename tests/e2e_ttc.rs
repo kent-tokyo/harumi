@@ -55,7 +55,8 @@ fn make_ttc(ttf: &[u8]) -> Vec<u8> {
 fn ttc_embed_font_succeeds() {
     let ttc = make_ttc(NOTO_TTF);
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    doc.embed_font(&ttc).expect("embed_font should accept TTC bytes");
+    doc.embed_font(&ttc)
+        .expect("embed_font should accept TTC bytes");
 }
 
 #[test]

@@ -64,7 +64,9 @@ fn embed_font_and_invisible_text_ascii() {
 
     // Find the Type0 font object.
     let (_, font_ref) = font_dict.iter().next().unwrap();
-    let font_id = font_ref.as_reference().expect("font entry should be a reference");
+    let font_id = font_ref
+        .as_reference()
+        .expect("font entry should be a reference");
     let font_obj = reloaded.get_object(font_id).unwrap().as_dict().unwrap();
 
     let subtype = font_obj.get(b"Subtype").unwrap().as_name().unwrap();
@@ -85,7 +87,10 @@ fn embed_font_and_invisible_text_ascii() {
         .as_stream()
         .unwrap();
     let cmap_text = String::from_utf8(to_unicode_stream.content.clone()).unwrap();
-    assert!(cmap_text.contains("begincmap"), "ToUnicode should contain begincmap");
+    assert!(
+        cmap_text.contains("begincmap"),
+        "ToUnicode should contain begincmap"
+    );
 }
 
 /// CJK test using NotoSansJP variable font (TrueType, magic 0x00010000).
@@ -127,7 +132,11 @@ fn embed_font_and_invisible_text_japanese() {
     let font_id = font_ref.as_reference().unwrap();
     let font_obj = reloaded.get_object(font_id).unwrap().as_dict().unwrap();
     let to_unicode_id = font_obj.get(b"ToUnicode").unwrap().as_reference().unwrap();
-    let stream = reloaded.get_object(to_unicode_id).unwrap().as_stream().unwrap();
+    let stream = reloaded
+        .get_object(to_unicode_id)
+        .unwrap()
+        .as_stream()
+        .unwrap();
     let cmap = String::from_utf8(stream.content.clone()).unwrap();
 
     // '日' U+65E5, '本' U+672C, '語' U+8A9E should appear in ToUnicode.
@@ -165,8 +174,14 @@ fn add_text_visible_with_color() {
     let content_str = String::from_utf8_lossy(&content);
 
     assert!(content_str.contains("0 Tr"), "visible mode should use Tr 0");
-    assert!(content_str.contains("rg"), "should contain RGB color operator");
-    assert!(!content_str.contains("3 Tr"), "should not use invisible mode");
+    assert!(
+        content_str.contains("rg"),
+        "should contain RGB color operator"
+    );
+    assert!(
+        !content_str.contains("3 Tr"),
+        "should not use invisible mode"
+    );
 }
 
 /// page.size() returns correct (width, height) for the A4 minimal fixture.
@@ -190,7 +205,10 @@ fn save_to_bytes_roundtrip() {
     let pdf_bytes = helpers::minimal_pdf_bytes();
     let mut doc = harumi::Document::from_bytes(&pdf_bytes).expect("load");
     let font = doc.embed_font(&font_bytes).expect("embed_font");
-    doc.page(1).unwrap().add_invisible_text("hello", font, [72.0, 500.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("hello", font, [72.0, 500.0], 12.0)
+        .unwrap();
 
     let out = doc.save_to_bytes().expect("save_to_bytes");
     assert!(!out.is_empty());
@@ -233,7 +251,9 @@ fn otf_no_longer_rejected_at_embed() {
     let mut doc = harumi::Document::from_bytes(&pdf_bytes).expect("load");
 
     // embed_font() must NOT return UnsupportedFontKind for an OTF file.
-    let font = doc.embed_font(&font_bytes).expect("embed_font must accept OTF");
+    let font = doc
+        .embed_font(&font_bytes)
+        .expect("embed_font must accept OTF");
 
     doc.page(1)
         .unwrap()

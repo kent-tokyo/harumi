@@ -8,7 +8,7 @@ use harumi::{Document, Error, TextRun, sort_by_reading_order};
 // ---------------------------------------------------------------------------
 
 fn minimal_winansi_pdf(content_stream: &[u8]) -> Vec<u8> {
-    use harumi::lopdf::{dictionary, Document as LDoc, Object, Stream};
+    use harumi::lopdf::{Document as LDoc, Object, Stream, dictionary};
 
     let mut doc = LDoc::with_version("1.4");
     let pages_id = doc.new_object_id();
@@ -106,7 +106,12 @@ fn roundtrip_invisible_text() {
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let fragments = doc2.extract_text_runs(1).unwrap();
 
-    assert_eq!(fragments.len(), 1, "expected 1 fragment, got {}", fragments.len());
+    assert_eq!(
+        fragments.len(),
+        1,
+        "expected 1 fragment, got {}",
+        fragments.len()
+    );
     assert_eq!(fragments[0].text, "Hello");
     assert!(
         (fragments[0].x - 72.0).abs() < 1.0,
@@ -176,7 +181,12 @@ fn roundtrip_multiple_runs() {
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let fragments = doc2.extract_text_runs(1).unwrap();
 
-    assert_eq!(fragments.len(), 2, "expected 2 fragments, got {}", fragments.len());
+    assert_eq!(
+        fragments.len(),
+        2,
+        "expected 2 fragments, got {}",
+        fragments.len()
+    );
     assert_eq!(fragments[0].text, "First line");
     assert_eq!(fragments[1].text, "Second line");
     assert!(
@@ -242,7 +252,11 @@ fn simple_font_winansi_hex_string() {
     assert_eq!(frags[0].text, "Hello");
     assert!((frags[0].x - 72.0).abs() < 1.0, "x={}", frags[0].x);
     assert!((frags[0].y - 700.0).abs() < 1.0, "y={}", frags[0].y);
-    assert!((frags[0].font_size - 12.0).abs() < 0.5, "font_size={}", frags[0].font_size);
+    assert!(
+        (frags[0].font_size - 12.0).abs() < 0.5,
+        "font_size={}",
+        frags[0].font_size
+    );
 }
 
 #[test]
@@ -289,7 +303,10 @@ fn font_name_is_populated() {
     let doc = Document::from_bytes(&pdf_bytes).unwrap();
     let frags = doc.extract_text_runs(1).unwrap();
     assert_eq!(frags.len(), 1);
-    assert_eq!(frags[0].font_name, "F1", "font_name should be the PDF resource name 'F1'");
+    assert_eq!(
+        frags[0].font_name, "F1",
+        "font_name should be the PDF resource name 'F1'"
+    );
 }
 
 #[test]
@@ -298,14 +315,20 @@ fn font_name_cjk_roundtrip() {
     let font_bytes = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_invisible_text("日本語", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("日本語", font, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let frags = doc2.extract_text_runs(1).unwrap();
 
     assert_eq!(frags.len(), 1);
-    assert!(!frags[0].font_name.is_empty(), "font_name should not be empty for CJK text");
+    assert!(
+        !frags[0].font_name.is_empty(),
+        "font_name should not be empty for CJK text"
+    );
     // harumi embeds as "HR<n>"
     assert!(
         frags[0].font_name.starts_with("HR"),
@@ -326,7 +349,11 @@ fn color_default_is_black() {
     let doc = Document::from_bytes(&pdf_bytes).unwrap();
     let frags = doc.extract_text_runs(1).unwrap();
     assert_eq!(frags.len(), 1);
-    assert_eq!(frags[0].color, [0.0, 0.0, 0.0], "default color should be black");
+    assert_eq!(
+        frags[0].color,
+        [0.0, 0.0, 0.0],
+        "default color should be black"
+    );
     assert!(!frags[0].invisible, "render mode 0 should not be invisible");
 }
 
@@ -343,7 +370,10 @@ fn color_rg_operator_tracked() {
         "red channel should be 1.0, got {}",
         frags[0].color[0]
     );
-    assert!(frags[0].color[1].abs() < 0.01, "green channel should be 0.0");
+    assert!(
+        frags[0].color[1].abs() < 0.01,
+        "green channel should be 0.0"
+    );
     assert!(frags[0].color[2].abs() < 0.01, "blue channel should be 0.0");
 }
 
@@ -353,14 +383,20 @@ fn invisible_flag_set_for_render_mode_3() {
     let font_bytes = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_invisible_text("Secret", font, [72.0, 700.0], 12.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("Secret", font, [72.0, 700.0], 12.0)
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let frags = doc2.extract_text_runs(1).unwrap();
 
     assert_eq!(frags.len(), 1);
-    assert!(frags[0].invisible, "add_invisible_text should produce invisible=true (Tr 3)");
+    assert!(
+        frags[0].invisible,
+        "add_invisible_text should produce invisible=true (Tr 3)"
+    );
 }
 
 #[test]
@@ -368,14 +404,20 @@ fn invisible_flag_false_for_visible_text() {
     let font_bytes = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_text("Visible", font, [72.0, 700.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Visible", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let frags = doc2.extract_text_runs(1).unwrap();
 
     assert_eq!(frags.len(), 1);
-    assert!(!frags[0].invisible, "add_text should produce invisible=false (Tr 0)");
+    assert!(
+        !frags[0].invisible,
+        "add_text should produce invisible=false (Tr 0)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +430,10 @@ fn height_equals_font_size() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
     // Place text at a known font size
-    doc.page(1).unwrap().add_text("A", font, [72.0, 700.0], 24.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("A", font, [72.0, 700.0], 24.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -407,7 +452,10 @@ fn bounding_box_fields_are_non_zero() {
     let font_bytes = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_invisible_text("日本語", font, [100.0, 500.0], 14.0).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("日本語", font, [100.0, 500.0], 14.0)
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -427,8 +475,14 @@ fn height_scales_with_font_size() {
     let font_bytes = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&font_bytes).unwrap();
-    doc.page(1).unwrap().add_text("A", font, [72.0, 700.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("B", font, [100.0, 600.0], 36.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("A", font, [72.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("B", font, [100.0, 600.0], 36.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -450,10 +504,22 @@ fn sort_by_reading_order_top_to_bottom_left_to_right() {
     let font = doc.embed_font(&font_bytes).unwrap();
 
     // Add text in reverse reading order (bottom→top, right→left)
-    doc.page(1).unwrap().add_text("Bottom Left", font, [72.0, 100.0], 12.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Bottom Right", font, [400.0, 100.0], 12.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Top Left", font, [72.0, 700.0], 12.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Top Right", font, [400.0, 700.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Bottom Left", font, [72.0, 100.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Bottom Right", font, [400.0, 100.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Top Left", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Top Right", font, [400.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -475,7 +541,7 @@ fn uni_glyph_name_pattern_decoding() {
     // Test that uni<XXXX> glyph name patterns are decoded.
     // Build a minimal PDF with a Type1 font using custom Encoding with uni glyph names.
 
-    use harumi::lopdf::{dictionary, Document as LDoc, Object, Stream};
+    use harumi::lopdf::{Document as LDoc, Object, Stream, dictionary};
 
     let mut doc = LDoc::with_version("1.4");
     let pages_id = doc.new_object_id();

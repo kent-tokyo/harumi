@@ -16,7 +16,7 @@ categories = ["command-line-utilities", "text-processing"]
 name = "harumi-mcp"
 
 [dependencies]
-harumi = { version = "1", features = ["html"] }
+harumi = { path = "../", features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-anyhow = "1"
+unicode-normalization = "0.1"

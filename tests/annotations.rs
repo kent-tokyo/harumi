@@ -25,7 +25,10 @@ fn add_link_url_basic() {
     let page_ids = reloaded.get_pages();
     let page_id = *page_ids.get(&1).unwrap();
     let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
-    assert!(page_dict.get(b"Annots").is_ok(), "/Annots must be present on page");
+    assert!(
+        page_dict.get(b"Annots").is_ok(),
+        "/Annots must be present on page"
+    );
 }
 
 #[test]
@@ -81,8 +84,14 @@ fn add_multiple_url_links_on_same_page() {
     let pdf = minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&pdf).unwrap();
 
-    doc.page(1).unwrap().add_link_url([0.0, 700.0, 200.0, 15.0], "https://a.example.com").unwrap();
-    doc.page(1).unwrap().add_link_url([0.0, 680.0, 200.0, 15.0], "https://b.example.com").unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_link_url([0.0, 700.0, 200.0, 15.0], "https://a.example.com")
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_link_url([0.0, 680.0, 200.0, 15.0], "https://b.example.com")
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
@@ -123,15 +132,24 @@ fn add_link_internal_two_page_doc() {
     let annot = reloaded.get_object(annot_ref).unwrap().as_dict().unwrap();
     assert_eq!(annot.get(b"Subtype").unwrap().as_name().unwrap(), b"Link");
     // Internal links use /Dest, not /A.
-    assert!(annot.get(b"Dest").is_ok(), "/Dest must be present for internal links");
-    assert!(annot.get(b"A").is_err(), "/A must NOT be present for internal links");
+    assert!(
+        annot.get(b"Dest").is_ok(),
+        "/Dest must be present for internal links"
+    );
+    assert!(
+        annot.get(b"A").is_err(),
+        "/A must NOT be present for internal links"
+    );
 }
 
 #[test]
 fn add_link_internal_out_of_range_returns_error() {
     let pdf = minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&pdf).unwrap();
-    let result = doc.page(1).unwrap().add_link_internal([0.0, 0.0, 100.0, 20.0], 99);
+    let result = doc
+        .page(1)
+        .unwrap()
+        .add_link_internal([0.0, 0.0, 100.0, 20.0], 99);
     assert!(matches!(result, Err(Error::PageNotFound(99))));
 }
 
@@ -146,9 +164,17 @@ fn add_bookmark_adds_outlines_to_catalog() {
     let bytes = doc.save_to_bytes().unwrap();
 
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
-    assert!(catalog.get(b"Outlines").is_ok(), "/Outlines must be present in /Catalog");
+    assert!(
+        catalog.get(b"Outlines").is_ok(),
+        "/Outlines must be present in /Catalog"
+    );
 }
 
 #[test]
@@ -165,10 +191,19 @@ fn add_bookmark_count_and_linked_list() {
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-    let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+    let outlines = reloaded
+        .get_object(outlines_ref)
+        .unwrap()
+        .as_dict()
+        .unwrap();
 
     let count = outlines.get(b"Count").unwrap().as_i64().unwrap();
     assert_eq!(count, 3, "/Count must equal number of bookmarks");
@@ -188,10 +223,19 @@ fn add_bookmark_first_item_has_no_prev() {
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-    let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+    let outlines = reloaded
+        .get_object(outlines_ref)
+        .unwrap()
+        .as_dict()
+        .unwrap();
 
     let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
     let first = reloaded.get_object(first_ref).unwrap().as_dict().unwrap();
@@ -210,8 +254,13 @@ fn add_bookmark_out_of_range_page_returns_error() {
 #[test]
 fn add_bookmark_after_save_returns_error() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    let font = doc.embed_font(include_bytes!("fixtures/NotoSansJP-Regular.ttf")).unwrap();
-    doc.page(1).unwrap().add_invisible_text("x", font, [10.0, 10.0], 10.0).unwrap();
+    let font = doc
+        .embed_font(include_bytes!("fixtures/NotoSansJP-Regular.ttf"))
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("x", font, [10.0, 10.0], 10.0)
+        .unwrap();
     doc.save_to_bytes().unwrap(); // triggers finalize()
 
     let result = doc.add_bookmark("Late", 1, 800.0);
@@ -226,7 +275,12 @@ fn add_bookmark_cjk_title_roundtrips() {
 
     // Just verify the document saves without error and has /Outlines.
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     assert!(catalog.get(b"Outlines").is_ok());
 }
@@ -238,16 +292,29 @@ fn add_bookmark_cjk_title_roundtrips() {
 #[test]
 fn bookmark_and_text_on_same_document() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    let font = doc.embed_font(include_bytes!("fixtures/NotoSansJP-Regular.ttf")).unwrap();
-    doc.page(1).unwrap().add_text("Hello", font, [72.0, 700.0], 12.0, [0.0, 0.0, 0.0]).unwrap();
+    let font = doc
+        .embed_font(include_bytes!("fixtures/NotoSansJP-Regular.ttf"))
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Hello", font, [72.0, 700.0], 12.0, [0.0, 0.0, 0.0])
+        .unwrap();
     doc.add_bookmark("Start", 1, 800.0).unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
-    assert!(catalog.get(b"Outlines").is_ok(), "Bookmarks must survive alongside text ops");
+    assert!(
+        catalog.get(b"Outlines").is_ok(),
+        "Bookmarks must survive alongside text ops"
+    );
 }
 
 /// A document with only bookmarks (no text ops) must still save successfully.
@@ -259,7 +326,12 @@ fn bookmarks_only_no_text_ops() {
     assert!(!bytes.is_empty());
 
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     assert!(catalog.get(b"Outlines").is_ok());
 }
@@ -284,13 +356,25 @@ fn add_bookmark_preserves_existing_outlines_on_reload() {
 
     // Verify: both bookmarks survive in the final PDF.
     let reloaded = harumi::lopdf::Document::load_from(bytes2.as_slice()).unwrap();
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
-    let catalog  = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-    let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+    let outlines = reloaded
+        .get_object(outlines_ref)
+        .unwrap()
+        .as_dict()
+        .unwrap();
 
     let count = outlines.get(b"Count").unwrap().as_i64().unwrap();
-    assert_eq!(count, 2, "Both bookmarks must be present after reload+add cycle");
+    assert_eq!(
+        count, 2,
+        "Both bookmarks must be present after reload+add cycle"
+    );
 
     // Walk the linked list: First → Second.
     let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
@@ -311,7 +395,10 @@ fn add_bookmark_preserves_existing_outlines_on_reload() {
     assert_eq!(second_title, b"Second", "Second bookmark title mismatch");
 
     // The last item must have no /Next.
-    assert!(second_item.get(b"Next").is_err(), "Last item must not have /Next");
+    assert!(
+        second_item.get(b"Next").is_err(),
+        "Last item must not have /Next"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +411,10 @@ fn add_link_url_uri_content_roundtrip() {
     let url = "https://example.com/harumi?v=0.5";
     let pdf = minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&pdf).unwrap();
-    doc.page(1).unwrap().add_link_url([72.0, 700.0, 200.0, 20.0], url).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_link_url([72.0, 700.0, 200.0, 20.0], url)
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
@@ -338,7 +428,11 @@ fn add_link_url_uri_content_roundtrip() {
 
     let action = annot.get(b"A").unwrap().as_dict().unwrap();
     let stored_url = action.get(b"URI").unwrap().as_str().unwrap();
-    assert_eq!(stored_url, url.as_bytes(), "URI string must round-trip unchanged");
+    assert_eq!(
+        stored_url,
+        url.as_bytes(),
+        "URI string must round-trip unchanged"
+    );
 }
 
 /// add_link_internal must create a /Dest whose first element points to the
@@ -351,7 +445,10 @@ fn add_link_internal_dest_points_to_correct_page() {
     assert_eq!(doc.page_count(), 3);
 
     // Link from page 1 to page 3.
-    doc.page(1).unwrap().add_link_internal([0.0, 0.0, 100.0, 20.0], 3).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_link_internal([0.0, 0.0, 100.0, 20.0], 3)
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
@@ -368,7 +465,10 @@ fn add_link_internal_dest_points_to_correct_page() {
 
     let dest = annot.get(b"Dest").unwrap().as_array().unwrap();
     let dest_page_id = dest[0].as_reference().unwrap();
-    assert_eq!(dest_page_id, page3_id, "/Dest must reference the correct page object");
+    assert_eq!(
+        dest_page_id, page3_id,
+        "/Dest must reference the correct page object"
+    );
 }
 
 /// add_bookmark with CJK title: round-trip the /Title and verify it decodes
@@ -383,10 +483,19 @@ fn add_bookmark_cjk_title_semantic_roundtrip() {
     let bytes = doc.save_to_bytes().unwrap();
     let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
 
-    let root_ref = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root_ref = reloaded
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
     let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
     let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
-    let outlines = reloaded.get_object(outlines_ref).unwrap().as_dict().unwrap();
+    let outlines = reloaded
+        .get_object(outlines_ref)
+        .unwrap()
+        .as_dict()
+        .unwrap();
     let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
     let first = reloaded.get_object(first_ref).unwrap().as_dict().unwrap();
 
@@ -396,14 +505,20 @@ fn add_bookmark_cjk_title_semantic_roundtrip() {
         harumi::lopdf::Object::String(bytes, _) => bytes,
         _ => panic!("Expected String object for /Title"),
     };
-    assert!(title_bytes.starts_with(&[0xFE, 0xFF]), "/Title must start with UTF-16BE BOM");
+    assert!(
+        title_bytes.starts_with(&[0xFE, 0xFF]),
+        "/Title must start with UTF-16BE BOM"
+    );
 
     let units: Vec<u16> = title_bytes[2..]
         .chunks(2)
         .map(|c| u16::from_be_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
         .collect();
     let decoded = String::from_utf16(&units).unwrap();
-    assert_eq!(decoded, title, "UTF-16BE decoded title must match the original string");
+    assert_eq!(
+        decoded, title,
+        "UTF-16BE decoded title must match the original string"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -426,7 +541,10 @@ fn redact_basic() {
     let page_ids = reloaded.get_pages();
     let page_id = *page_ids.get(&1).unwrap();
     let page_dict = reloaded.get_object(page_id).unwrap().as_dict().unwrap();
-    assert!(page_dict.get(b"Annots").is_ok(), "/Annots must be present on page after redact");
+    assert!(
+        page_dict.get(b"Annots").is_ok(),
+        "/Annots must be present on page after redact"
+    );
 }
 
 #[test]
@@ -489,10 +607,16 @@ fn redact_zero_size_returns_error() {
     let mut doc = Document::from_bytes(&pdf).unwrap();
 
     let result = doc.page(1).unwrap().redact([50.0, 100.0, 0.0, 50.0]);
-    assert!(result.is_err(), "redact with zero width should return error");
+    assert!(
+        result.is_err(),
+        "redact with zero width should return error"
+    );
 
     let result = doc.page(1).unwrap().redact([50.0, 100.0, 150.0, 0.0]);
-    assert!(result.is_err(), "redact with zero height should return error");
+    assert!(
+        result.is_err(),
+        "redact with zero height should return error"
+    );
 }
 
 #[test]
@@ -501,7 +625,10 @@ fn redact_nan_returns_error() {
     let mut doc = Document::from_bytes(&pdf).unwrap();
 
     let result = doc.page(1).unwrap().redact([f32::NAN, 100.0, 150.0, 50.0]);
-    assert!(result.is_err(), "redact with NaN coordinate should return error");
+    assert!(
+        result.is_err(),
+        "redact with NaN coordinate should return error"
+    );
 }
 
 #[test]

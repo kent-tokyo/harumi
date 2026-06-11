@@ -201,14 +201,16 @@ fn password_roundtrip_page_count_matches_plain() {
     let plain_count = Document::from_bytes(&plain_bytes).unwrap().page_count();
 
     // Encrypt that same PDF
-    let mut inner =
-        harumi::lopdf::Document::load_from(plain_bytes.as_slice()).unwrap();
+    let mut inner = harumi::lopdf::Document::load_from(plain_bytes.as_slice()).unwrap();
     use harumi::lopdf::{EncryptionState, EncryptionVersion, Object, Permissions, StringFormat};
     let id_b = b"\x01\x23\x45\x67\x89\xab\xcd\xef\x01\x23\x45\x67\x89\xab\xcd\xef".to_vec();
-    inner.trailer.set("ID", Object::Array(vec![
-        Object::String(id_b.clone(), StringFormat::Hexadecimal),
-        Object::String(id_b, StringFormat::Hexadecimal),
-    ]));
+    inner.trailer.set(
+        "ID",
+        Object::Array(vec![
+            Object::String(id_b.clone(), StringFormat::Hexadecimal),
+            Object::String(id_b, StringFormat::Hexadecimal),
+        ]),
+    );
     let ver = EncryptionVersion::V2 {
         document: &inner,
         owner_password: "owner",
@@ -226,5 +228,8 @@ fn password_roundtrip_page_count_matches_plain() {
         .unwrap()
         .page_count();
 
-    assert_eq!(plain_count, enc_count, "page count must survive encryption round-trip");
+    assert_eq!(
+        plain_count, enc_count,
+        "page count must survive encryption round-trip"
+    );
 }

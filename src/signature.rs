@@ -106,7 +106,11 @@ impl Document {
     }
 
     /// Extracts signature information from a signature field dictionary.
-    fn extract_signature_info(&self, field: &Dictionary, _pdf_bytes: &[u8]) -> Option<SignatureInfo> {
+    fn extract_signature_info(
+        &self,
+        field: &Dictionary,
+        _pdf_bytes: &[u8],
+    ) -> Option<SignatureInfo> {
         // Get field name
         let field_name = match field.get(b"T") {
             Ok(Object::String(bytes, _)) => String::from_utf8_lossy(bytes).to_string(),
@@ -148,6 +152,10 @@ mod tests {
         let mut doc = Document::new((100.0, 100.0)).unwrap();
         let pdf_bytes = doc.save_to_bytes().unwrap();
         let signatures = doc.verify_signatures(&pdf_bytes).unwrap();
-        assert_eq!(signatures.len(), 0, "unsigned document should have no signatures");
+        assert_eq!(
+            signatures.len(),
+            0,
+            "unsigned document should have no signatures"
+        );
     }
 }
