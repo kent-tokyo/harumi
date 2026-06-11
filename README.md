@@ -98,6 +98,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
 | Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts signature metadata (signer, timestamp, field name); cryptographic validation TBD (`digital-signature` feature) |
+| Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — requires `digital-signature` feature; creates signature field, generates RSA PKCS#1 v1.5 signature; full PDF embedding deferred to v1.2.1 |
 
 ---
 

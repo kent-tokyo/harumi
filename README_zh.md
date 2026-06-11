@@ -100,6 +100,8 @@ doc.save("searchable.pdf")?;
 | 需要读取 PDF 表单字段值 | `doc.form_fields()` — 返回 `Vec<FormField>`（名称、类型、当前值） |
 | 需要以程序方式填写 PDF 表单 | `doc.fill_form(&[("字段名", "值")])` — 自动设置 NeedAppearances |
 | 需要操作页面裁切框和印刷框 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 所有框类型均以 `[x,y,w,h]` 格式处理 |
+| 需要验证 PDF 数字签名 | `doc.verify_signatures(&pdf_bytes)` — 提取签名元数据（签名者、时间戳、字段名）；密码学验证待做（`digital-signature` feature） |
+| 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
 
 ---
 

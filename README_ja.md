@@ -103,6 +103,7 @@ doc.save("searchable.pdf")?;
 | ページのクロップボックスや印刷用ボックスを操作したい | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 全ボックス種別に対応（`[x,y,w,h]` 形式） |
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
 | PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 署名メタデータ（署名者・タイムスタンプ・フィールド名）を抽出。暗号学的検証は TODO（`digital-signature` feature） |
+| PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature が必要。署名フィールド作成、RSA PKCS#1 v1.5 署名を生成。PDF への完全な署名埋め込みは v1.2.1 予定 |
 
 ---
 

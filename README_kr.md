@@ -101,6 +101,8 @@ doc.save("searchable.pdf")?;
 | PDF 폼 필드 값을 읽고 싶다 | `doc.form_fields()` — `Vec<FormField>` 반환（이름, 종류, 현재 값） |
 | PDF 폼을 프로그래밍으로 채우고 싶다 | `doc.fill_form(&[("필드명", "값")])` — NeedAppearances 자동 설정 |
 | 페이지 크롭 박스와 인쇄 박스를 조작하고 싶다 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — `[x,y,w,h]` 형식으로 모든 박스 타입 지원 |
+| PDF 디지털 서명을 검증하고 싶다 | `doc.verify_signatures(&pdf_bytes)` — 서명 메타데이터（서명자, 타임스탬프, 필드명）추출；암호화 검증은 TODO（`digital-signature` feature） |
+| PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
 
 ---
 
