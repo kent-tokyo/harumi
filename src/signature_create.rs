@@ -220,6 +220,32 @@ pub mod inner {
         // when PDF incremental update and PKCS#7/CMS are integrated.
         Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])  // Dummy signature for testing
     }
+
+    /// Calculate PDF signature ByteRange [0, X, Y, Z]
+    ///
+    /// For PDF incremental update with signature:
+    /// - [0, X] = bytes before /Contents hex placeholder
+    /// - [X, Y] = length of hex placeholder (2 × DER signature size)
+    /// - [Z, end] = bytes after placeholder
+    pub fn calculate_byte_range(
+        pre_contents_offset: u32,
+        hex_string_length: u32,
+        total_pdf_size: u32,
+    ) -> Result<[u32; 4]> {
+        if pre_contents_offset == 0 || hex_string_length == 0 {
+            return Err(crate::Error::InvalidInput(
+                "ByteRange offset and length must be > 0".into(),
+            ));
+        }
+
+        // ByteRange format: [start1, length1, start2, length2]
+        // start1=0, length1=pre_contents_offset (header)
+        // start2=pre_contents_offset+hex_string_length, length2=remaining
+        let start2 = pre_contents_offset + hex_string_length;
+        let length2 = total_pdf_size - start2;
+
+        Ok([0, pre_contents_offset, hex_string_length, total_pdf_size])
+    }
 }
 
 #[cfg(feature = "digital-signature")]
