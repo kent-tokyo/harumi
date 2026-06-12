@@ -244,13 +244,91 @@ pub mod inner {
     }
 
     /// Create an RSA signature using PKCS#1 v1.5 with SHA-256 digest info.
-    /// v1.2.2: Placeholder implementation. Full PKCS#1 v1.5 signing requires
-    /// working around the rsa crate's AssociatedOid trait constraints.
-    /// TODO v1.2.3: Implement real PKCS#1 v1.5 signing using raw RSA operations.
-    pub fn sign_hash(_private_key: &RsaPrivateKey, _hash: &[u8]) -> Result<Vec<u8>> {
-        // Placeholder for v1.2.2. This will be implemented properly in v1.2.3
-        // once the RSA API issue is resolved.
-        Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])
+    pub fn sign_hash(private_key: &RsaPrivateKey, hash: &[u8]) -> Result<Vec<u8>> {
+        use rsa::traits::{PublicKeyParts, PrivateKeyParts};
+        use num_bigint::BigUint;
+
+        // Build DigestInfo with SHA-256 OID and hash
+        let sha256_oid = vec![0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
+
+        // AlgorithmIdentifier SEQUENCE for SHA-256
+        let mut alg_id = vec![0x30]; // SEQUENCE tag
+        let alg_content_len = 2 + sha256_oid.len() + 2;
+        encode_der_length(&mut alg_id, alg_content_len);
+        alg_id.push(0x06); // OID tag
+        encode_der_length(&mut alg_id, sha256_oid.len());
+        alg_id.extend_from_slice(&sha256_oid);
+        alg_id.push(0x05); // NULL tag
+        alg_id.push(0x00);
+
+        // DigestInfo SEQUENCE
+        let mut digest_info = vec![0x30]; // SEQUENCE tag
+        let digest_info_content_len = alg_id.len() + 2 + hash.len();
+        encode_der_length(&mut digest_info, digest_info_content_len);
+        digest_info.extend_from_slice(&alg_id);
+        digest_info.push(0x04); // OCTET STRING tag
+        encode_der_length(&mut digest_info, hash.len());
+        digest_info.extend_from_slice(hash);
+
+        // Apply PKCS#1 v1.5 signature padding
+        let modulus_size = private_key.size();
+        let padded = build_pkcs1v15_signature_padding(&digest_info, modulus_size)?;
+
+        // Perform RSA operation: signature = padded_message^d mod n
+        let m = BigUint::from_bytes_be(&padded);
+        let d = BigUint::from_bytes_be(&private_key.d().to_bytes_be());
+        let n = BigUint::from_bytes_be(&private_key.n().to_bytes_be());
+
+        let signature_int = m.modpow(&d, &n);
+
+        // Convert back to bytes, padding with zeros to match modulus size
+        let mut signature = signature_int.to_bytes_be();
+        if signature.len() < modulus_size {
+            let mut padded_sig = vec![0u8; modulus_size - signature.len()];
+            padded_sig.extend_from_slice(&signature);
+            signature = padded_sig;
+        }
+
+        Ok(signature)
+    }
+
+    /// Build PKCS#1 v1.5 signature padding.
+    /// Format: 0x00 || 0x01 || PS || 0x00 || DigestInfo
+    /// where PS is 0xFF bytes (padding string)
+    fn build_pkcs1v15_signature_padding(digest_info: &[u8], modulus_size: usize) -> Result<Vec<u8>> {
+        if digest_info.len() + 11 > modulus_size {
+            return Err(crate::Error::SignatureFailed(
+                "Digest too large for PKCS#1 v1.5 padding".into(),
+            ));
+        }
+
+        let mut padded = Vec::with_capacity(modulus_size);
+        padded.push(0x00);
+        padded.push(0x01);
+
+        // Padding string: 0xFF bytes
+        let ps_len = modulus_size - digest_info.len() - 3;
+        for _ in 0..ps_len {
+            padded.push(0xFF);
+        }
+
+        padded.push(0x00); // Separator
+        padded.extend_from_slice(digest_info);
+
+        Ok(padded)
+    }
+
+    /// Encode a length value in DER format.
+    /// Supports both short form (length < 128) and long form (multi-byte).
+    fn encode_der_length(result: &mut Vec<u8>, len: usize) {
+        if len < 128 {
+            result.push(len as u8);
+        } else {
+            let be = len.to_be_bytes();
+            let significant = &be[be.iter().take_while(|&&b| b == 0).count()..];
+            result.push(0x80 | significant.len() as u8);
+            result.extend_from_slice(significant);
+        }
     }
 
 
