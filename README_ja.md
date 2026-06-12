@@ -102,8 +102,8 @@ doc.save("searchable.pdf")?;
 | PDF フォームをプログラムから記入したい | `doc.fill_form(&[("フィールド名", "値")])` — NeedAppearances を自動設定 |
 | ページのクロップボックスや印刷用ボックスを操作したい | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 全ボックス種別に対応（`[x,y,w,h]` 形式） |
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
-| PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 署名メタデータ（署名者・タイムスタンプ・フィールド名）を抽出。暗号学的検証は TODO（`digital-signature` feature） |
-| PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature が必要。署名フィールド作成、RSA PKCS#1 v1.5 署名を生成。PDF への完全な署名埋め込みは v1.2.1 予定 |
+| PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 全署名データを抽出（署名者・タイムスタンプ・フィールド名）、RSA PKCS#1 v1.5 暗号学的検証を実行、`is_valid: bool` 付き `SignatureInfo` を返す（`digital-signature` feature、v1.2.2+） |
+| PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |
 
 ---
 
@@ -125,7 +125,8 @@ doc.save("searchable.pdf")?;
 | 暗号化（書き込み） | Yes (RC4-128) | Yes | No | No | Yes |
 | マークアップ注釈 | Yes | Partial (basic) | No | No | Yes |
 | CMYKカラー対応 | Yes (v1.0+) | Yes | Yes | No | Yes |
-| デジタル署名検証 | Partial (metadata) | Partial (basic) | No | No | Yes |
+| デジタル署名作成 | Yes (v1.2.2+) | No | No | No | No |
+| デジタル署名検証 | Yes (v1.2.2+) | Partial (basic) | No | No | Yes |
 
 > Yes = 対応  Partial = 部分対応  No = 非対応  N/A = 言語レベルの機能
 

@@ -97,8 +97,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to fill in a PDF form programmatically | `doc.fill_form(&[("FieldName", "value")])` — sets values and triggers NeedAppearances |
 | Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
-| Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts signature metadata (signer, timestamp, field name); cryptographic validation TBD (`digital-signature` feature) |
-| Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — requires `digital-signature` feature; creates signature field, generates RSA PKCS#1 v1.5 signature; full PDF embedding deferred to v1.2.1 |
+| Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts all signature data (signer, timestamp, field name); performs RSA PKCS#1 v1.5 cryptographic verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
+| Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |
 
 ---
 
@@ -120,7 +120,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Encryption (write) | Yes (RC4-128) | Yes | No | No | Yes |
 | Markup annotations | Yes | Partial (basic) | No | No | Yes |
 | CMYK color support | Yes (v1.0+) | Yes | Yes | No | Yes |
-| Digital signature verification | Partial (metadata) | Partial (basic) | No | No | Yes |
+| Digital signature creation | Yes (v1.2.2+) | No | No | No | No |
+| Digital signature verification | Yes (v1.2.2+) | Partial (basic) | No | No | Yes |
 
 > Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature
 
