@@ -7,6 +7,16 @@ use lopdf::{Dictionary, Object};
 
 use crate::{Document, Result};
 
+/// Read a PDF string entry (`/Key (value)`) from a dictionary as a `String`.
+///
+/// Returns `None` when the key is absent or not a string object.
+fn dict_string(dict: &Dictionary, key: &[u8]) -> Option<String> {
+    match dict.get(key) {
+        Ok(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).to_string()),
+        _ => None,
+    }
+}
+
 /// Information about a PDF signature field.
 ///
 /// Returned by [`Document::verify_signatures`].
@@ -110,53 +120,31 @@ impl Document {
     fn extract_signature_info(
         &self,
         field: &Dictionary,
-        pdf_bytes: &[u8],
+        // Reserved for byte-range hashing once cryptographic validation lands.
+        _pdf_bytes: &[u8],
     ) -> Option<SignatureInfo> {
-        // Get field name
-        let field_name = match field.get(b"T") {
-            Ok(Object::String(bytes, _)) => String::from_utf8_lossy(bytes).to_string(),
-            _ => "unknown".to_string(),
-        };
+        let field_name = dict_string(field, b"T").unwrap_or_else(|| "unknown".to_string());
+        let reason = dict_string(field, b"Reason");
+        let signing_time = dict_string(field, b"M");
 
-        // Get reason for signing
-        let reason = match field.get(b"Reason") {
-            Ok(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).to_string()),
-            _ => None,
-        };
-
-        // Get signing time
-        let signing_time = match field.get(b"M") {
-            Ok(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).to_string()),
-            _ => None,
-        };
-
-        // v1.2.2: Extract signature dictionary and validate
+        // v1.2.2: Resolve the signature dictionary referenced by /V.
         let sig_dict_ref = field.get(b"V").ok()?.as_reference().ok()?;
         let sig_dict = self.inner.get_object(sig_dict_ref).ok()?.as_dict().ok()?;
 
-        // Extract signature contents (hex string)
-        let _sig_hex = match sig_dict.get(b"Contents") {
-            Ok(Object::String(bytes, _)) => String::from_utf8_lossy(bytes).to_string(),
+        // The signature must carry hex /Contents to be considered present.
+        dict_string(sig_dict, b"Contents")?;
+
+        // Validate the /ByteRange: exactly four entries starting at 0.
+        let byte_range = match sig_dict.get(b"ByteRange") {
+            Ok(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|obj| obj.as_i64().ok().map(|n| n as u32))
+                .collect::<Vec<u32>>(),
             _ => return None,
         };
-
-        // Extract ByteRange for validation
-        let _byte_range = match sig_dict.get(b"ByteRange") {
-            Ok(Object::Array(arr)) => {
-                // Collect u32 values from array
-                let nums: Vec<u32> = arr
-                    .iter()
-                    .filter_map(|obj| obj.as_i64().ok().map(|n| n as u32))
-                    .collect();
-
-                if nums.len() == 4 && nums[0] == 0 {
-                    nums
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
-        };
+        if byte_range.len() != 4 || byte_range[0] != 0 {
+            return None;
+        }
 
         // v1.2.2: Basic signer name extraction
         // TODO v1.2.3: Full certificate parsing and CN extraction

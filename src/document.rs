@@ -1591,6 +1591,48 @@ impl Document {
         crate::extract::extract_text_runs_from_page(&self.inner, page_id)
     }
 
+    /// Extracts text runs from all pages, returning a flat vector of
+    /// `(page_number, TextFragment)` tuples.
+    ///
+    /// Pages are numbered starting from 1. This is a convenience method
+    /// combining the results of [`extract_text_runs`](Document::extract_text_runs)
+    /// across all pages in reading order.
+    ///
+    /// # Errors
+    /// Returns an error if any page cannot be read.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// # let doc = Document::from_file("example.pdf")?;
+    /// let all_runs = doc.extract_all_text_runs()?;
+    /// for (page_num, fragment) in all_runs {
+    ///     println!("Page {}: {} at ({}, {})", page_num, fragment.text, fragment.x, fragment.y);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn extract_all_text_runs(&self) -> Result<Vec<(u32, crate::extract::TextFragment)>> {
+        // SECURITY: Prevent unbounded memory allocation from malicious PDFs.
+        const MAX_PAGES_SAFE: u32 = 1_000_000;
+        let page_count = self.page_count();
+        if page_count > MAX_PAGES_SAFE {
+            return Err(Error::InvalidInput(format!(
+                "PDF has {} pages, exceeds safe limit of {}",
+                page_count, MAX_PAGES_SAFE
+            )));
+        }
+
+        let page_count_usize = page_count as usize;
+        let mut result = Vec::with_capacity(page_count_usize);
+        for page_num in 1..=page_count {
+            let fragments = self.extract_text_runs(page_num)?;
+            result.extend(fragments.into_iter().map(|frag| (page_num, frag)));
+        }
+        Ok(result)
+    }
+
     /// Extracts the largest raster image embedded on the given page (1-indexed).
     ///
     /// Designed for **scanned PDFs** where each page is a single Image XObject.
@@ -2664,6 +2706,101 @@ impl Document {
 
         Ok(())
     }
+
+    /// Atomically replaces multiple text pairs on a single page, preserving the existing font.
+    ///
+    /// Validates all text pairs before queuing any replacements. If any pair fails
+    /// validation, **no replacements are queued** and an error is returned. This
+    /// atomic behavior is more robust than manually calling
+    /// [`PageHandle::replace_text_preserve_font`] in a loop, which would queue
+    /// replacements incrementally.
+    ///
+    /// Returns the total number of text matches found across all pairs.
+    ///
+    /// # Performance Note
+    /// This method scans the page content twice: once during validation, once during
+    /// replacement. This two-phase approach ensures atomicity (all-or-nothing semantics)
+    /// but at the cost of redundant parsing. For single replacements, prefer
+    /// [`PageHandle::replace_text_preserve_font`] directly.
+    ///
+    /// # Arguments
+    /// * `page` — 1-indexed page number
+    /// * `pairs` — slice of `(&str, &str)` tuples where the first string is the
+    ///   text to find and the second is the replacement text
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if the page does not exist, or
+    /// [`Error::FontCharNotMapped`] if any replacement text contains characters
+    /// absent from the page's font. **No replacements are queued if validation fails.**
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// # let mut doc = Document::from_file("example.pdf")?;
+    /// let pairs = vec![
+    ///     ("Hello", "こんにちは"),
+    ///     ("World", "世界"),
+    /// ];
+    /// let count = doc.batch_replace_text_preserve_font(1, &pairs)?;
+    /// println!("Replaced {} total matches", count);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn batch_replace_text_preserve_font(
+        &mut self,
+        page: u32,
+        pairs: &[(&str, &str)],
+    ) -> Result<usize> {
+        // SECURITY: Check finalized state before any operations.
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "batch_replace_text_preserve_font called after save()".into(),
+            ));
+        }
+
+        // Validate page exists once, upfront.
+        let page_id = self.inner.get_pages()
+            .get(&page)
+            .copied()
+            .ok_or(Error::PageNotFound(page))?;
+
+        // Validation phase: check all pairs before queuing any.
+        // Borrow self.inner immutably to validate.
+        let mut pair_counts = Vec::with_capacity(pairs.len());
+        let mut seen_old_texts = std::collections::HashSet::new();
+
+        for &(old_text, new_text) in pairs {
+            // SECURITY: Prevent double-counting with duplicate old_text.
+            // Each search text can only be replaced once per batch.
+            if !seen_old_texts.insert(old_text) {
+                return Err(Error::InvalidInput(format!(
+                    "duplicate search text in batch: '{}'",
+                    old_text
+                )));
+            }
+
+            let count = crate::replace::count_matches_in_page(
+                &self.inner,
+                page_id,
+                old_text,
+                Some(new_text),
+            )?;
+            pair_counts.push(count);
+        }
+
+        // Execution phase: all pairs are validated; now queue replacements.
+        // Release the immutable borrow of self.inner before acquiring mutable borrow of page_handle.
+        let mut page_handle = self.page(page)?;
+        let mut total_count: usize = 0;
+
+        for (count, &(old_text, new_text)) in pair_counts.iter().zip(pairs) {
+            page_handle.replace_text_preserve_font(old_text, new_text)?;
+            total_count = total_count.saturating_add(*count);
+        }
+
+        Ok(total_count)
+    }
 }
 
 /// Vertical alignment for [`PageHandle::add_text_box_aligned`].
@@ -2941,6 +3078,16 @@ impl<'doc> PageHandle<'doc> {
                 "replace_text_resubset called after save()".into(),
             ));
         }
+
+        // SECURITY: Limit font byte size to prevent memory exhaustion.
+        const MAX_FONT_SIZE: usize = 50 * 1024 * 1024; // 50 MB
+        if font_bytes.len() > MAX_FONT_SIZE {
+            return Err(Error::InvalidInput(format!(
+                "font bytes exceed {} MB limit",
+                MAX_FONT_SIZE / 1024 / 1024
+            )));
+        }
+
         // Validate font bytes eagerly.
         let face =
             ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
@@ -2986,6 +3133,15 @@ impl<'doc> PageHandle<'doc> {
             return Err(Error::InvalidInput(
                 "replace_text_resubset_with_wrap called after save()".into(),
             ));
+        }
+
+        // SECURITY: Limit font byte size to prevent memory exhaustion.
+        const MAX_FONT_SIZE: usize = 50 * 1024 * 1024; // 50 MB
+        if font_bytes.len() > MAX_FONT_SIZE {
+            return Err(Error::InvalidInput(format!(
+                "font bytes exceed {} MB limit",
+                MAX_FONT_SIZE / 1024 / 1024
+            )));
         }
 
         // Validate line_height: must be finite and non-negative.
@@ -3041,6 +3197,59 @@ impl<'doc> PageHandle<'doc> {
         self.media_box()
             .map(|b| (b[2] - b[0]) - 144.0)
             .unwrap_or(451.0)
+    }
+
+    /// Replaces text, automatically falling back to font re-subsetting if the
+    /// current font subset doesn't contain necessary characters.
+    ///
+    /// First attempts [`replace_text_preserve_font`](PageHandle::replace_text_preserve_font)
+    /// using the existing embedded font. If that fails with [`FontCharNotMapped`](crate::Error::FontCharNotMapped),
+    /// automatically retries with [`replace_text_resubset`](PageHandle::replace_text_resubset)
+    /// using the provided fallback font bytes.
+    ///
+    /// This is a convenience method for multi-language replacements where the
+    /// target characters may not be in the current subset. All other errors
+    /// (e.g., text not found, invalid font) are propagated immediately.
+    ///
+    /// # Arguments
+    /// * `old_text` — text to find
+    /// * `new_text` — replacement text
+    /// * `fallback_font` — original (unsubsetted) TTF bytes to use if the current font
+    ///   lacks characters from `new_text`. For best results, provide the same font
+    ///   that was used to create the page's existing text.
+    ///
+    /// # Returns
+    /// The number of replacements found and queued (will be the same via either path).
+    ///
+    /// # Errors
+    /// Errors from [`replace_text_resubset`](PageHandle::replace_text_resubset) if the
+    /// fallback path is needed but encounters a font-format or other error.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// # let mut doc = Document::from_file("example.pdf")?;
+    /// # let font_bytes = std::fs::read("font.ttf")?;
+    /// let mut page = doc.page(1)?;
+    /// let count = page.replace_text_with_fallback("Hello", "こんにちは", &font_bytes)?;
+    /// println!("Replaced {} occurrences", count);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn replace_text_with_fallback(
+        &mut self,
+        old_text: &str,
+        new_text: &str,
+        fallback_font: &[u8],
+    ) -> Result<usize> {
+        match self.replace_text_preserve_font(old_text, new_text) {
+            Ok(count) => Ok(count),
+            Err(Error::FontCharNotMapped { .. }) => {
+                self.replace_text_resubset(old_text, new_text, fallback_font)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Scans the page for `old_text` and validates that all characters in `new_text`
