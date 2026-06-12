@@ -224,6 +224,7 @@ impl Document {
 }
 
 /// Convert hex string to bytes
+#[cfg(feature = "digital-signature")]
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
     let hex = hex.trim();
     if hex.len() % 2 != 0 {
@@ -240,6 +241,7 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// Hash PDF content according to ByteRange per PDF spec ISO 32000-2
+#[cfg(feature = "digital-signature")]
 fn hash_pdf_byte_range(pdf_bytes: &[u8], byte_range: &[u32]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
 
@@ -265,6 +267,7 @@ fn hash_pdf_byte_range(pdf_bytes: &[u8], byte_range: &[u32]) -> Vec<u8> {
 
 /// Extract signature and certificate from PKCS#7 SignedData structure
 /// For v1.2.2: Simplified parsing - extracts from our known structure
+#[cfg(feature = "digital-signature")]
 fn extract_signature_and_cert_from_pkcs7(cms_bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // PKCS#7 structure (simplified parsing for our generated format):
     // SEQUENCE { OID signedData, [0] SignedData }
@@ -311,6 +314,7 @@ fn extract_signature_and_cert_from_pkcs7(cms_bytes: &[u8]) -> Option<(Vec<u8>, V
 
 /// Extract RSA public key (n, e) from X.509 certificate DER
 /// For v1.2.2: Simplified parsing - finds SEQUENCE containing modulus and exponent
+#[cfg(feature = "digital-signature")]
 fn extract_rsa_public_key_from_cert(cert_der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // X.509 structure contains SubjectPublicKeyInfo with RSA key
     // For v1.2.2: Heuristic search for INTEGER sequences (modulus and exponent)
@@ -341,6 +345,7 @@ fn extract_rsa_public_key_from_cert(cert_der: &[u8]) -> Option<(Vec<u8>, Vec<u8>
 }
 
 /// Build DigestInfo for verification (same format as signing)
+#[cfg(feature = "digital-signature")]
 fn build_digest_info_for_verification(hash: &[u8]) -> Vec<u8> {
     let sha256_oid = vec![0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 
@@ -367,6 +372,7 @@ fn build_digest_info_for_verification(hash: &[u8]) -> Vec<u8> {
 }
 
 /// Encode DER length for verification
+#[cfg(feature = "digital-signature")]
 fn encode_der_length_for_verify(result: &mut Vec<u8>, len: usize) {
     if len < 128 {
         result.push(len as u8);
@@ -379,6 +385,7 @@ fn encode_der_length_for_verify(result: &mut Vec<u8>, len: usize) {
 }
 
 /// Build PKCS#1 v1.5 padding for verification
+#[cfg(feature = "digital-signature")]
 fn build_pkcs1v15_signature_padding(message: &[u8], modulus_size: usize) -> Option<Vec<u8>> {
     if message.len() + 11 > modulus_size {
         return None;
