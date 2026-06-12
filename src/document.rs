@@ -1819,11 +1819,12 @@ impl Document {
         );
         let cms_hex = cms_builder.to_hex_string()?;
 
-        // 5. Build PDF incremental update section
+        // 5. Build PDF incremental update section with metadata
         let incremental_builder = IncrementalUpdateBuilder::new(
             base_pdf,
             field_name.to_string(),
             cms_hex,
+            Some(context.signer_name().to_string()),
         );
         let signed_pdf = incremental_builder.build()?;
 
