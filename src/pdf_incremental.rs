@@ -4,12 +4,13 @@
 #[cfg(feature = "digital-signature")]
 pub mod inner {
     use crate::Result;
-    use std::collections::BTreeMap;
 
     /// Build PDF incremental update section with embedded signature
     pub struct IncrementalUpdateBuilder {
         base_pdf: Vec<u8>,
-        field_name: String,
+        /// Reserved for the real field-update logic (currently object 1 is
+        /// overwritten unconditionally; see `build_signature_field_update`).
+        _field_name: String,
         cms_hex: String,
     }
 
@@ -18,7 +19,7 @@ pub mod inner {
         pub fn new(base_pdf: Vec<u8>, field_name: String, cms_hex: String) -> Self {
             IncrementalUpdateBuilder {
                 base_pdf,
-                field_name,
+                _field_name: field_name,
                 cms_hex,
             }
         }
@@ -35,29 +36,52 @@ pub mod inner {
             // Find the previous xref offset in the base PDF
             let prev_xref_offset = self.find_prev_xref_offset()?;
 
-            // Build the signature update object
-            // For v1.2.1: Create a minimal signature field update
-            let sig_field_update = self.build_signature_field_update(&self.cms_hex)?;
-
-            // Build incremental update section
+            // Build incremental update section with placeholders
             let mut update_section = Vec::new();
 
             // Object updates (simplified for v1.2.1)
-            let obj_offset = self.base_pdf.len();
             update_section.extend_from_slice(b"\n");
+            let sig_field_offset = update_section.len();
+
+            // Build the signature update object
+            // For v1.2.1: Create a minimal signature field update
+            let sig_field_update = self.build_signature_field_update(&self.cms_hex)?;
             update_section.extend_from_slice(sig_field_update.as_bytes());
 
             // Build xref table
-            let xref_offset = self.base_pdf.len() + update_section.len();
             let mut xref_table = Vec::new();
             xref_table.extend_from_slice(b"xref\n");
-            xref_table.extend_from_slice(b"0 1\n");
-            xref_table.extend_from_slice(format!("{:010} {:05} f\n", 0, 65535).as_bytes());
+            xref_table.extend_from_slice(b"1 1\n");
+            let sig_obj_offset = (self.base_pdf.len() + sig_field_offset) as u32;
+            xref_table.extend_from_slice(
+                format!("{:010} 00000 n\n", sig_obj_offset).as_bytes()
+            );
 
+            // Calculate xref offset (where xref table starts in incremental section)
+            let xref_offset = self.base_pdf.len() + sig_field_offset + sig_field_update.len();
+
+            // Build trailer with actual xref offset
+            let trailer = self.build_trailer(prev_xref_offset, xref_offset as u32);
+
+            // Now we can calculate the final structure size and correct ByteRange
+            // After final assembly: [base_pdf][newline][sig_obj][xref][trailer]
+            let final_size = self.base_pdf.len() + update_section.len() + xref_table.len() + trailer.len();
+            let hex_len = self.cms_hex.len() as u32;
+            let length2 = final_size as u32 - (self.base_pdf.len() as u32 + hex_len);
+
+            // Rebuild signature field update with correct ByteRange
+            let sig_field_with_range = self.build_signature_field_update_with_range(
+                &self.cms_hex,
+                self.base_pdf.len() as u32,
+                hex_len,
+                length2,
+            )?;
+
+            // Rebuild update section with corrected signature object
+            let mut update_section = Vec::new();
+            update_section.extend_from_slice(b"\n");
+            update_section.extend_from_slice(sig_field_with_range.as_bytes());
             update_section.extend_from_slice(&xref_table);
-
-            // Build trailer
-            let trailer = self.build_trailer(prev_xref_offset);
             update_section.extend_from_slice(&trailer);
 
             // Combine base PDF + incremental update
@@ -67,112 +91,79 @@ pub mod inner {
             Ok(signed_pdf)
         }
 
-        /// Find the previous xref offset in base PDF
-        /// Searches backwards from EOF for "startxref" marker
+        /// Find the previous xref offset in base PDF.
+        ///
+        /// Searches the last 1 KiB for the `startxref` marker and parses the
+        /// decimal offset that follows it. Falls back to the PDF length when no
+        /// marker is found.
         fn find_prev_xref_offset(&self) -> Result<u32> {
-            // Look for "startxref" keyword near end of PDF
-            let search_start = if self.base_pdf.len() > 1024 {
-                self.base_pdf.len() - 1024
-            } else {
-                0
+            let pdf = &self.base_pdf;
+            let search_start = pdf.len().saturating_sub(1024);
+
+            let marker_pos = pdf[search_start..]
+                .windows(b"startxref".len())
+                .position(|w| w == b"startxref")
+                .map(|pos| search_start + pos);
+
+            let Some(marker_pos) = marker_pos else {
+                // No marker found: assume xref is at end.
+                return Ok(pdf.len() as u32);
             };
 
-            let search_area = &self.base_pdf[search_start..];
+            // Skip "startxref" and the whitespace immediately following it.
+            let after_marker = &pdf[marker_pos + "startxref".len()..];
+            let whitespace_len = after_marker
+                .iter()
+                .take_while(|b| matches!(b, b' ' | b'\n' | b'\r'))
+                .count();
 
-            // Find "startxref"
-            if let Some(pos) = self.find_bytes(search_area, b"startxref") {
-                let abs_pos = search_start + pos;
-                // Skip "startxref" and whitespace
-                let mut offset_start = abs_pos + 9;
-                while offset_start < self.base_pdf.len()
-                    && (self.base_pdf[offset_start] == b' '
-                        || self.base_pdf[offset_start] == b'\n'
-                        || self.base_pdf[offset_start] == b'\r')
-                {
-                    offset_start += 1;
-                }
+            // Read the contiguous digit run that follows.
+            let digits = &after_marker[whitespace_len..];
+            let digit_len = digits.iter().take_while(|b| b.is_ascii_digit()).count();
 
-                // Parse the offset number
-                let mut offset_end = offset_start;
-                while offset_end < self.base_pdf.len()
-                    && self.base_pdf[offset_end].is_ascii_digit()
-                {
-                    offset_end += 1;
-                }
+            let offset = std::str::from_utf8(&digits[..digit_len])
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(pdf.len() as u32);
 
-                if offset_end > offset_start {
-                    let offset_str = std::str::from_utf8(&self.base_pdf[offset_start..offset_end])
-                        .map_err(|_| crate::Error::InvalidInput("Invalid xref offset".into()))?;
-                    let offset: u32 = offset_str
-                        .parse()
-                        .map_err(|_| crate::Error::InvalidInput("Failed to parse xref offset".into()))?;
-                    return Ok(offset);
-                }
-            }
-
-            // Default: assume xref is at end
-            Ok(self.base_pdf.len() as u32)
+            Ok(offset)
         }
 
-        /// Find bytes in array
-        fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
-            haystack.windows(needle.len()).position(|w| w == needle)
-        }
-
-        /// Build signature field update object
+        /// Build signature field update object (used internally for pre-calculation)
         fn build_signature_field_update(&self, cms_hex: &str) -> Result<String> {
-            let byte_range = [0, self.base_pdf.len() as u32, cms_hex.len() as u32, (self.base_pdf.len() + cms_hex.len() + 100) as u32];
+            // Build with placeholder ByteRange for size calculation
+            let obj_str = format!(
+                "1 0 obj\n<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <{}> /ByteRange [ 0 0 0 0 ] >>\nendobj\n",
+                cms_hex
+            );
+            Ok(obj_str)
+        }
 
-            // Create signature dictionary update
-            // Format: "1 0 obj << /Type /Sig /Contents <hex> /ByteRange [0 X Y Z] >> endobj"
+        /// Build signature field update object with correct ByteRange values
+        fn build_signature_field_update_with_range(
+            &self,
+            cms_hex: &str,
+            length1: u32,
+            hex_len: u32,
+            length2: u32,
+        ) -> Result<String> {
+            // ByteRange per PDF spec ISO 32000-2:
+            // [start1, length1, start2, length2]
+            let start1 = 0;
+            let start2 = length1 + hex_len;
+
             let obj_str = format!(
                 "1 0 obj\n<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <{}> /ByteRange [ {} {} {} {} ] >>\nendobj\n",
                 cms_hex,
-                byte_range[0], byte_range[1], byte_range[2], byte_range[3]
+                start1, length1, start2, length2
             );
 
             Ok(obj_str)
         }
 
-        /// Calculate ByteRange [0, X, Y, Z] for the signature
-        fn calculate_byte_range(&self, contents_offset: usize, cms_hex_len: usize) -> [u32; 4] {
-            [
-                0,
-                contents_offset as u32,
-                cms_hex_len as u32,
-                (self.base_pdf.len() + 100) as u32,  // Approximate final size
-            ]
-        }
-
-        /// Build the xref table for the incremental update
-        /// Records byte positions of modified objects
-        fn build_xref_table(&self, objects: &[(u32, Vec<u8>)]) -> Vec<u8> {
-            let mut xref = Vec::new();
-            xref.extend_from_slice(b"xref\n");
-
-            // Sort by object ID
-            let mut sorted = objects.to_vec();
-            sorted.sort_by_key(|&(id, _)| id);
-
-            // Write xref entries (format: "objnum count")
-            if !sorted.is_empty() {
-                let start_id = sorted[0].0;
-                let count = sorted.len();
-                xref.extend_from_slice(format!("{} {}\n", start_id, count).as_bytes());
-
-                for (_, obj_data) in &sorted {
-                    // Offset is cumulative from base_pdf + previous objects
-                    // v1.2.1: Track actual byte positions
-                    xref.extend_from_slice(b"0000000000 00000 n\n");
-                }
-            }
-
-            xref
-        }
-
         /// Build the trailer dictionary for incremental update
         /// Links to the previous xref section
-        fn build_trailer(&self, prev_xref_offset: u32) -> Vec<u8> {
+        fn build_trailer(&self, prev_xref_offset: u32, xref_offset: u32) -> Vec<u8> {
             let mut trailer = Vec::new();
             trailer.extend_from_slice(b"trailer\n");
             trailer.extend_from_slice(
@@ -183,9 +174,7 @@ pub mod inner {
                 .as_bytes(),
             );
             trailer.extend_from_slice(b"startxref\n");
-            // Note: The actual xref offset will be calculated at PDF assembly time
-            // For now, placeholder
-            trailer.extend_from_slice(b"XREF_OFFSET_PLACEHOLDER\n");
+            trailer.extend_from_slice(format!("{}\n", xref_offset).as_bytes());
             trailer.extend_from_slice(b"%%EOF\n");
 
             trailer

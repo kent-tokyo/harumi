@@ -79,6 +79,20 @@ pub(crate) fn count_matches_in_page(
 
         for seg in &segments {
             let text: String = seg.chars.iter().map(|e| e.ch).collect();
+
+            // SECURITY: Prevent ReDoS (algorithmic complexity attack).
+            // Naive substring search is O(n*m); limit to prevent excessive CPU.
+            const MAX_SEARCH_COMPLEXITY: usize = 100_000_000;
+            let search_complexity = text.len().saturating_mul(old_text.len());
+            if search_complexity > MAX_SEARCH_COMPLEXITY {
+                return Err(crate::Error::InvalidInput(format!(
+                    "text search complexity too high ({}*{} > {}); text or pattern too long",
+                    text.len(),
+                    old_text.len(),
+                    MAX_SEARCH_COMPLEXITY
+                )));
+            }
+
             let mut pos = 0usize;
             while let Some(byte_idx) = text[pos..].find(old_text) {
                 if let Some(new) = new_text {
@@ -158,8 +172,10 @@ pub(crate) fn rewrite_page_streams(
 fn emit_tj_with_width_delta(out: &mut Vec<u8>, text_hex: &[u8], width_delta: f32) {
     out.extend_from_slice(&encode_str_hex(text_hex));
     out.extend_from_slice(b" Tj\n");
-    if width_delta.abs() > 0.01 {
-        push_number(out, width_delta);
+    // SECURITY: Clamp width_delta to prevent NaN/Infinity in PDF output.
+    let clamped_delta = width_delta.clamp(-1_000_000.0, 1_000_000.0);
+    if clamped_delta.is_finite() && clamped_delta.abs() > 0.01 {
+        push_number(out, clamped_delta);
         out.extend_from_slice(b" 0 Td\n");
     }
 }

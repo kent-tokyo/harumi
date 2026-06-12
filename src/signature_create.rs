@@ -129,7 +129,10 @@ pub mod inner {
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
         let mut result = Vec::new();
-        let input = input.replace('\n', "").replace('\r', "").replace(' ', "");
+        let input: String = input
+            .chars()
+            .filter(|c| !matches!(c, '\n' | '\r' | ' '))
+            .collect();
 
         for chunk in input.as_bytes().chunks(4) {
             if chunk.len() < 2 {
@@ -181,24 +184,22 @@ pub mod inner {
         // In production, use x509-cert crate, but this is a fallback
         let cn_oid = &[0x06, 0x03, 0x55, 0x04, 0x03]; // 2.5.4.3 (CN OID)
 
-        if let Some(pos) = find_subsequence(der_bytes, cn_oid) {
-            if pos + 5 < der_bytes.len() {
-                let tag = der_bytes[pos + 5];
-                if tag == 0x13 || tag == 0x0C {
-                    // UTF8String or PrintableString
-                    if pos + 6 < der_bytes.len() {
-                        let len = der_bytes[pos + 6] as usize;
-                        if pos + 7 + len <= der_bytes.len() {
-                            if let Ok(cn) = std::str::from_utf8(&der_bytes[pos + 7..pos + 7 + len])
-                            {
-                                return Some(cn.to_string());
-                            }
-                        }
-                    }
-                }
-            }
+        // The OID is immediately followed by the value's tag (offset +5),
+        // its length (offset +6), and then the UTF-8/printable bytes.
+        let pos = find_subsequence(der_bytes, cn_oid)?;
+        if pos + 6 >= der_bytes.len() {
+            return None;
         }
-        None
+
+        // Only UTF8String (0x0C) and PrintableString (0x13) carry a CN here.
+        let tag = der_bytes[pos + 5];
+        if tag != 0x13 && tag != 0x0C {
+            return None;
+        }
+
+        let len = der_bytes[pos + 6] as usize;
+        let value = der_bytes.get(pos + 7..pos + 7 + len)?;
+        std::str::from_utf8(value).ok().map(str::to_string)
     }
 
     /// Find a subsequence in a byte array.
@@ -207,26 +208,62 @@ pub mod inner {
     }
 
     /// Hash the PDF content using SHA-256.
+    /// Per PDF spec ISO 32000-2, the signature hash is calculated over the ByteRange only:
+    /// - bytes [0, start2) and bytes [start2 + length2, EOF)
+    /// The /Contents placeholder itself (between start2 and length2) is excluded.
+    pub fn hash_pdf_content_with_byte_range(
+        content: &[u8],
+        byte_range: [u32; 4],
+    ) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        let start1 = byte_range[0] as usize;
+        let length1 = byte_range[1] as usize;
+        let start2 = byte_range[2] as usize;
+        let length2 = byte_range[3] as usize;
+
+        // Hash [start1, start1 + length1)
+        if start1 + length1 <= content.len() {
+            hasher.update(&content[start1..start1 + length1]);
+        }
+
+        // Hash [start2, start2 + length2)
+        if start2 + length2 <= content.len() {
+            hasher.update(&content[start2..start2 + length2]);
+        }
+
+        hasher.finalize().to_vec()
+    }
+
+    /// Hash the PDF content using SHA-256.
+    /// NOTE: This hashes the entire PDF. For proper signature verification,
+    /// use `hash_pdf_content_with_byte_range` after the ByteRange is known.
     pub fn hash_pdf_content(content: &[u8]) -> Vec<u8> {
         let mut hasher = Sha256::new();
         hasher.update(content);
         hasher.finalize().to_vec()
     }
 
-    /// Create an RSA signature (stub for v1.2.0).
-    /// v1.2.1: Proper PKCS#1 v1.5 signing with SHA-256 digest info.
+    /// Create an RSA signature using PKCS#1 v1.5 with SHA-256 digest info.
+    /// v1.2.2: Placeholder implementation. Full PKCS#1 v1.5 signing requires
+    /// working around the rsa crate's AssociatedOid trait constraints.
+    /// TODO v1.2.3: Implement real PKCS#1 v1.5 signing using raw RSA operations.
     pub fn sign_hash(_private_key: &RsaPrivateKey, _hash: &[u8]) -> Result<Vec<u8>> {
-        // v1.2.0: Placeholder. Signature generation will be fully implemented in v1.2.1
-        // when PDF incremental update and PKCS#7/CMS are integrated.
-        Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])  // Dummy signature for testing
+        // Placeholder for v1.2.2. This will be implemented properly in v1.2.3
+        // once the RSA API issue is resolved.
+        Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])
     }
 
+
     /// Calculate PDF signature ByteRange [0, X, Y, Z]
+    ///
+    /// Per PDF spec ISO 32000-2, ByteRange is [start1, length1, start2, length2]:
+    /// - start1=0, length1=bytes before /Contents hex placeholder
+    /// - start2=bytes at which hex placeholder starts, length2=bytes after placeholder
     ///
     /// For PDF incremental update with signature:
     /// - [0, X] = bytes before /Contents hex placeholder
     /// - [X, Y] = length of hex placeholder (2 × DER signature size)
-    /// - [Z, end] = bytes after placeholder
+    /// - [Y, Z] = remaining bytes after placeholder (xref + trailer)
     pub fn calculate_byte_range(
         pre_contents_offset: u32,
         hex_string_length: u32,
@@ -239,12 +276,12 @@ pub mod inner {
         }
 
         // ByteRange format: [start1, length1, start2, length2]
-        // start1=0, length1=pre_contents_offset (header)
-        // start2=pre_contents_offset+hex_string_length, length2=remaining
+        let start1 = 0;
+        let length1 = pre_contents_offset;
         let start2 = pre_contents_offset + hex_string_length;
         let length2 = total_pdf_size - start2;
 
-        Ok([0, pre_contents_offset, hex_string_length, total_pdf_size])
+        Ok([start1, length1, start2, length2])
     }
 }
 

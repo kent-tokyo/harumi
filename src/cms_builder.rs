@@ -31,57 +31,52 @@ pub mod inner {
             // Build minimal PKCS#7 SignedData structure
             // For v1.2.1: Construct a simplified but valid structure
 
-            let mut der_bytes = Vec::new();
-
-            // SEQUENCE wrapper
-            der_bytes.push(0x30);
-
-            // Build content
+            // Build the SEQUENCE content: three OCTET STRINGs.
             let mut content = Vec::new();
+            self.push_octet_string(&mut content, &self.hash_bytes);
+            self.push_octet_string(&mut content, &self.signature_bytes);
+            self.push_octet_string(&mut content, &self.certificate_der);
 
-            // Add hash (OCTET STRING)
-            content.push(0x04);
-            content.push(self.hash_bytes.len() as u8);
-            content.extend_from_slice(&self.hash_bytes);
-
-            // Add signature (OCTET STRING)
-            content.push(0x04);
-            self.encode_length(&mut content, self.signature_bytes.len());
-            content.extend_from_slice(&self.signature_bytes);
-
-            // Add certificate (OCTET STRING)
-            content.push(0x04);
-            self.encode_length(&mut content, self.certificate_der.len());
-            content.extend_from_slice(&self.certificate_der);
-
-            // Set length
+            // Wrap the content in a SEQUENCE (tag 0x30 + length).
+            let mut der_bytes = vec![0x30];
             self.encode_length(&mut der_bytes, content.len());
             der_bytes.extend_from_slice(&content);
 
-            // Convert to hex
-            let hex = der_bytes
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>();
-
-            Ok(hex)
+            Ok(to_hex(&der_bytes))
         }
 
-        /// Encode length in DER format
+        /// Append a DER OCTET STRING (tag, length, value) to `out`.
+        fn push_octet_string(&self, out: &mut Vec<u8>, value: &[u8]) {
+            out.push(0x04);
+            self.encode_length(out, value.len());
+            out.extend_from_slice(value);
+        }
+
+        /// Encode a length in DER format.
+        ///
+        /// Lengths below 128 use the short form (a single byte). Larger lengths
+        /// use the long form: `0x80 | byte_count` followed by the big-endian
+        /// minimal-width bytes.
         fn encode_length(&self, result: &mut Vec<u8>, len: usize) {
             if len < 128 {
                 result.push(len as u8);
-            } else {
-                let mut len_bytes = Vec::new();
-                let mut n = len;
-                while n > 0 {
-                    len_bytes.insert(0, n as u8);
-                    n >>= 8;
-                }
-                result.push(0x80 | len_bytes.len() as u8);
-                result.extend_from_slice(&len_bytes);
+                return;
             }
+
+            let be = len.to_be_bytes();
+            let significant = &be[be.iter().take_while(|&&b| b == 0).count()..];
+            result.push(0x80 | significant.len() as u8);
+            result.extend_from_slice(significant);
         }
+    }
+
+    /// Lowercase hex-encode a byte slice.
+    fn to_hex(bytes: &[u8]) -> String {
+        use std::fmt::Write;
+        bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+            let _ = write!(acc, "{:02x}", b);
+            acc
+        })
     }
 }
 
