@@ -22,6 +22,7 @@ ttf-parser = "0.25"
 png = { version = "0.17", optional = true }
 sha2 = { version = "0.10", optional = true }
 rsa = { version = "0.9", optional = true }
+num-bigint = { version = "0.4", optional = true }
 pkcs1 = { version = "0.7", optional = true }
 pkcs8 = { version = "0.10", optional = true }
 x509-cert = { version = "0.2", optional = true }
@@ -37,7 +38,7 @@ image = ["dep:png", "draw"]
 ocr = []
 flow = ["draw"]
 html = ["flow"]
-digital-signature = ["dep:sha2", "dep:rsa", "dep:pkcs1", "dep:pkcs8", "dep:x509-cert", "dep:der", "dep:cms", "dep:rand", "dep:zeroize"]
+digital-signature = ["dep:sha2", "dep:rsa", "dep:num-bigint", "dep:pkcs1", "dep:pkcs8", "dep:x509-cert", "dep:der", "dep:cms", "dep:rand", "dep:zeroize"]
 
 # getrandom is needed for AES-256 key generation. Backend differs per target family.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
