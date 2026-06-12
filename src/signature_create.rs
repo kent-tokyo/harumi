@@ -210,6 +210,7 @@ pub mod inner {
     /// Hash the PDF content using SHA-256.
     /// Per PDF spec ISO 32000-2, the signature hash is calculated over the ByteRange only:
     /// - bytes [0, start2) and bytes [start2 + length2, EOF)
+    ///
     /// The /Contents placeholder itself (between start2 and length2) is excluded.
     pub fn hash_pdf_content_with_byte_range(
         content: &[u8],
@@ -308,9 +309,7 @@ pub mod inner {
 
         // Padding string: 0xFF bytes
         let ps_len = modulus_size - digest_info.len() - 3;
-        for _ in 0..ps_len {
-            padded.push(0xFF);
-        }
+        padded.extend(std::iter::repeat_n(0xFF, ps_len));
 
         padded.push(0x00); // Separator
         padded.extend_from_slice(digest_info);

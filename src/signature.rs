@@ -196,7 +196,7 @@ impl Document {
         let digest_info = build_digest_info_for_verification(&hash);
 
         // Apply PKCS#1 v1.5 padding to the digest
-        let modulus_size = ((n.bits() + 7) / 8) as usize;
+        let modulus_size = n.bits().div_ceil(8) as usize;
         let padded_expected = match build_pkcs1v15_signature_padding(&digest_info, modulus_size) {
             Some(p) => p,
             None => return false,
@@ -227,7 +227,7 @@ impl Document {
 #[cfg(feature = "digital-signature")]
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
     let hex = hex.trim();
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
 
@@ -396,9 +396,7 @@ fn build_pkcs1v15_signature_padding(message: &[u8], modulus_size: usize) -> Opti
     padded.push(0x01);
 
     let ps_len = modulus_size - message.len() - 3;
-    for _ in 0..ps_len {
-        padded.push(0xFF);
-    }
+    padded.extend(std::iter::repeat_n(0xFF, ps_len));
 
     padded.push(0x00);
     padded.extend_from_slice(message);

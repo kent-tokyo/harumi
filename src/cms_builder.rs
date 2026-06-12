@@ -8,7 +8,7 @@ pub mod inner {
     pub struct CmsSignedDataBuilder {
         certificate_der: Vec<u8>,
         signature_bytes: Vec<u8>,
-        hash_bytes: Vec<u8>,
+        _hash_bytes: Vec<u8>,
     }
 
     impl CmsSignedDataBuilder {
@@ -21,7 +21,7 @@ pub mod inner {
             CmsSignedDataBuilder {
                 certificate_der: cert_der,
                 signature_bytes: signature,
-                hash_bytes: hash,
+                _hash_bytes: hash,
             }
         }
 

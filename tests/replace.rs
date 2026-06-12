@@ -1,5 +1,4 @@
 use harumi::Document;
-use lopdf;
 
 const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -11,6 +10,7 @@ const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 /// `<HEX> Tj` into two consecutive Tj operators at `split_at_char` CID chars.
 /// Returns the modified PDF bytes. Used to simulate text split across multiple
 /// Tj operators in the same BT/ET block (the cross-operator match scenario).
+#[allow(dead_code)]
 fn split_first_tj(pdf_bytes: &[u8], split_at_char: usize) -> Vec<u8> {
     let mut ldoc = lopdf::Document::load_from(pdf_bytes).unwrap();
     let page_id = *ldoc.get_pages().values().next().unwrap();
@@ -66,11 +66,12 @@ fn split_first_tj(pdf_bytes: &[u8], split_at_char: usize) -> Vec<u8> {
 /// Find the first `<HEX> Tj` in `content` and split it at `split_at_char`
 /// CID characters (each CID char = 4 hex digits). Returns `None` if no
 /// suitable Tj is found or the split point is out of range.
+#[allow(dead_code)]
 fn try_split_hex_tj(content: &str, split_at_char: usize) -> Option<String> {
     let tj_idx = content.find("> Tj")?;
     let lt_idx = content[..tj_idx].rfind('<')?;
     let hex_str = &content[lt_idx + 1..tj_idx];
-    if hex_str.len() % 4 != 0 || hex_str.is_empty() {
+    if !hex_str.len().is_multiple_of(4) || hex_str.is_empty() {
         return None;
     }
     let split_pos = split_at_char * 4;

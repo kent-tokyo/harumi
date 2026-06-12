@@ -1743,7 +1743,6 @@ impl Document {
     /// # Ok(())
     /// # }
     /// ```
-
     /// Signs the document with a digital signature (requires `digital-signature` feature).
     ///
     /// The signature is embedded into the specified signature field. The field must have been
@@ -2454,6 +2453,7 @@ impl Document {
     /// **Limitation:** `/Count` merging is only accurate for flat (non-nested) outline trees.
     /// For PDFs whose existing outlines have nested children, the count may be imprecise, but
     /// the linked-list structure remains navigable.
+    #[allow(clippy::type_complexity)]
     fn build_outlines_from_bookmarks(&mut self) -> Result<()> {
         if self.pending_bookmarks.is_empty() {
             return Ok(());

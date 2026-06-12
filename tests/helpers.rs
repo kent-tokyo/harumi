@@ -1,5 +1,6 @@
 /// Creates a minimal valid single-page PDF as bytes using lopdf.
 /// The page has an A4-sized MediaBox and no content streams.
+#[allow(dead_code)]
 pub fn minimal_pdf_bytes() -> Vec<u8> {
     use lopdf::{Document, Object, dictionary};
 

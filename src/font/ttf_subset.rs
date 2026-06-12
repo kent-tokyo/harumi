@@ -152,10 +152,8 @@ pub(super) fn subset(
     let mut new_maxp = maxp.to_vec();
 
     // Update head.indexToLocFormat if needed.
-    if new_loca.len() > (num_glyphs + 1) * 2 {
-        if new_head.len() > 50 {
-            new_head[50] = 1; // long format
-        }
+    if new_loca.len() > (num_glyphs + 1) * 2 && new_head.len() > 50 {
+        new_head[50] = 1; // long format
     }
 
     // Update hhea.numberOfHMetrics.
@@ -219,6 +217,7 @@ fn parse_offset_table(data: &[u8]) -> Result<OffsetTable, Box<dyn std::error::Er
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_table_records_raw(
     data: &[u8],
     offset_table: &OffsetTable,

@@ -49,7 +49,6 @@ fn extract_multiple_xobjects_returns_largest() {
     let mut page = doc.page(1).unwrap();
     page.add_image(JPEG, [0.0, 0.0, 10.0, 10.0]).unwrap();
     page.add_image(PNG, [10.0, 0.0, 10.0, 10.0]).unwrap();
-    drop(page);
 
     let pdf_bytes = doc.save_to_bytes().unwrap();
     let reloaded = Document::from_bytes(&pdf_bytes).unwrap();
@@ -88,7 +87,6 @@ fn extract_all_images_returns_both() {
     let mut page = doc.page(1).unwrap();
     page.add_image(JPEG, [0.0, 0.0, 10.0, 10.0]).unwrap();
     page.add_image(PNG, [10.0, 0.0, 10.0, 10.0]).unwrap();
-    drop(page);
 
     let pdf_bytes = doc.save_to_bytes().unwrap();
     let reloaded = Document::from_bytes(&pdf_bytes).unwrap();
