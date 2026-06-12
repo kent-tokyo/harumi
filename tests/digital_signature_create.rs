@@ -69,7 +69,7 @@ fn test_sign_document_basic() {
     let signed_bytes = doc.sign_document(&ctx, "Sig1").expect("Sign document");
 
     // Check that we got valid PDF bytes back
-    assert!(signed_bytes.len() > 0);
+    assert!(!signed_bytes.is_empty());
     assert!(signed_bytes.starts_with(b"%PDF"));
 }
 

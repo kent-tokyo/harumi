@@ -60,7 +60,7 @@ pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
 
     // Parse color type and extract RGB/RGBA data.
     let info = reader.info();
-    let has_alpha = matches!(
+    let _has_alpha = matches!(
         info.color_type,
         png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
     );
@@ -277,9 +277,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]); // marker + length=16
         data.extend_from_slice(&[0u8; 14]); // padding up to length
         // 0xFF fill bytes before SOF0 (the Mi-3 case)
-        for _ in 0..fill_bytes {
-            data.push(0xFF);
-        }
+        data.extend(std::iter::repeat_n(0xFF, fill_bytes));
         // SOF0: FF C0 len(2) precision(1) height(2) width(2) components(1)
         data.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
         data.extend_from_slice(&h.to_be_bytes());

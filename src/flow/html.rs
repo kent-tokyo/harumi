@@ -212,15 +212,13 @@ fn collect_inline_spans_inner(
         Some(t) => t,
         None => {
             // Text node
-            if let Some(text) = elem.as_text() {
-                if !text.is_empty() {
-                    out.push(InlineSpan {
-                        text: text.to_string(),
-                        bold: parent_bold,
-                        italic: parent_italic,
-                        color: parent_color.into(),
-                    });
-                }
+            if let Some(text) = elem.as_text() && !text.is_empty() {
+                out.push(InlineSpan {
+                    text: text.to_string(),
+                    bold: parent_bold,
+                    italic: parent_italic,
+                    color: parent_color.into(),
+                });
             }
             return;
         }
@@ -233,10 +231,8 @@ fn collect_inline_spans_inner(
     for child in elem.children() {
         let child_tag = child.tag_name();
         // Skip non-content elements.
-        if let Some(ct) = child_tag {
-            if matches!(ct, "script" | "style" | "head") {
-                continue;
-            }
+        if let Some(ct) = child_tag && matches!(ct, "script" | "style" | "head") {
+            continue;
         }
         collect_inline_spans_inner(child, bold, italic, color, out);
     }
@@ -249,10 +245,8 @@ fn inherited_color(elem: &HtmlNode, tag: &str, parent_color: [f32; 3]) -> [f32; 
         return [0.0, 0.0, 0.8];
     }
     // Look for inline style="color: ...".
-    if let Some(style) = elem.attr("style") {
-        if let Some(c) = parse_css_color(&style) {
-            return c;
-        }
+    if let Some(style) = elem.attr("style") && let Some(c) = parse_css_color(&style) {
+        return c;
     }
     parent_color
 }

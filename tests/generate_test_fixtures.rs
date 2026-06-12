@@ -9,7 +9,6 @@
 #[ignore]
 fn generate_test_rsa_keys() {
     use std::fs;
-    use std::path::Path;
 
     let cert_path = "tests/fixtures/test_rsa_2048.crt";
     let key_path = "tests/fixtures/test_rsa_2048.der";

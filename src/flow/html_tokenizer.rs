@@ -49,6 +49,7 @@ impl HtmlNode {
     }
 
     /// Returns iterator over child elements (skipping text nodes).
+    #[allow(dead_code)]
     pub(crate) fn child_elements(&self) -> impl Iterator<Item = &HtmlNode> {
         match self {
             HtmlNode::Element { children, .. } => children.iter(),
@@ -352,17 +353,15 @@ impl HtmlParser {
                         self.advance();
                     }
                     // Pop from stack if tag matches
-                    if let Some((tag, _, _)) = stack.last() {
-                        if closing_tag == *tag {
-                            let (tag, attrs, children) = stack.pop().unwrap();
-                            let node = HtmlNode::Element {
-                                tag,
-                                attrs,
-                                children,
-                            };
-                            if let Some((_, _, parent_children)) = stack.last_mut() {
-                                parent_children.push(node);
-                            }
+                    if let Some((tag, _, _)) = stack.last() && closing_tag == *tag {
+                        let (tag, attrs, children) = stack.pop().unwrap();
+                        let node = HtmlNode::Element {
+                            tag,
+                            attrs,
+                            children,
+                        };
+                        if let Some((_, _, parent_children)) = stack.last_mut() {
+                            parent_children.push(node);
                         }
                     }
                 } else if let Some((tag, attrs, is_self_closing)) = self.parse_tag() {
@@ -390,10 +389,8 @@ impl HtmlParser {
                     self.advance();
                 }
                 let decoded = Self::decode_html_entities(&text);
-                if !decoded.trim().is_empty() {
-                    if let Some((_, _, children)) = stack.last_mut() {
-                        children.push(HtmlNode::Text(decoded));
-                    }
+                if !decoded.trim().is_empty() && let Some((_, _, children)) = stack.last_mut() {
+                    children.push(HtmlNode::Text(decoded));
                 }
             }
         }
