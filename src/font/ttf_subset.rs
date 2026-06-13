@@ -106,15 +106,15 @@ pub(super) fn subset(
         return Err("head table too short".into());
     };
 
-    // Read number of metrics from hhea.
-    let num_h_metrics = if hhea.len() >= 34 {
+    // Read number of metrics from hhea. numberOfHMetrics is at bytes [34..36].
+    let num_h_metrics = if hhea.len() >= 36 {
         u16::from_be_bytes([hhea[34], hhea[35]]) as usize
     } else {
         return Err("hhea table too short".into());
     };
 
-    // Read numGlyphs from maxp.
-    let num_glyphs = if maxp.len() >= 4 {
+    // Read numGlyphs from maxp. numGlyphs is at bytes [4..6].
+    let num_glyphs = if maxp.len() >= 6 {
         u16::from_be_bytes([maxp[4], maxp[5]]) as usize
     } else {
         return Err("maxp table too short".into());
@@ -150,14 +150,14 @@ pub(super) fn subset(
     )?;
 
     // Patch head, hhea, maxp tables with new metrics.
-    let mut new_head = head.to_vec();
+    let new_head = head.to_vec();
     let mut new_hhea = hhea.to_vec();
     let mut new_maxp = maxp.to_vec();
 
-    // Update head.indexToLocFormat if needed.
-    if new_loca.len() > (num_glyphs + 1) * 2 && new_head.len() > 50 {
-        new_head[50] = 1; // long format
-    }
+    // head.indexToLocFormat: keep the original format.
+    // Subsetting never increases glyph data size, so short→long upgrade is never
+    // needed. The original check was also buggy: it wrote only the high byte of
+    // the big-endian u16 (setting the value to 0x0100 = 256 instead of 0x0001).
 
     // Update hhea.numberOfHMetrics.
     // All subset glyphs are written as full 4-byte longHorMetric entries in
