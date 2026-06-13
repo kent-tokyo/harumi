@@ -24,7 +24,7 @@ sha2 = { version = "0.10", optional = true }
 rsa = { version = "0.9", optional = true }
 num-bigint = { version = "0.4", optional = true }
 pkcs1 = { version = "0.7", optional = true }
-pkcs8 = { version = "0.10", optional = true }
+pkcs8 = { version = "0.11", optional = true }
 x509-cert = { version = "0.2", optional = true }
 der = { version = "0.7", optional = true }
 cms = { version = "0.2", optional = true }
