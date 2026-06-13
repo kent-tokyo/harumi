@@ -504,6 +504,72 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+// Regression: hhea.numberOfHMetrics must equal maxp.numGlyphs in the subset font,
+// and hmtx must be exactly numGlyphs*4 bytes (all entries as full longHorMetric).
+// Before the fix, build_hmtx misread advance_width for "mono" glyphs (gid >=
+// num_h_metrics in the source font), and numberOfHMetrics was capped at the source
+// font's num_h_metrics rather than the subset glyph count.
+#[test]
+fn subset_hmtx_and_hhea_are_consistent() {
+    let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
+    let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
+    let f = doc.embed_font(&font).unwrap();
+    doc.page(1).unwrap()
+        .add_text("Hello", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
+        .unwrap();
+    let out = doc.save_to_bytes().unwrap();
+    let embedded = extract_font_file2(&out);
+    let num_glyphs = read_maxp_num_glyphs(&embedded) as usize;
+
+    // hhea.numberOfHMetrics (bytes 34-35 of hhea table) must equal maxp.numGlyphs.
+    let hhea_num_metrics = read_hhea_num_h_metrics(&embedded);
+    assert_eq!(
+        hhea_num_metrics as usize, num_glyphs,
+        "hhea.numberOfHMetrics ({hhea_num_metrics}) != maxp.numGlyphs ({num_glyphs})"
+    );
+
+    // hmtx must be exactly numGlyphs * 4 bytes (all longHorMetric, no lsb-only section).
+    let hmtx_len = read_table_length(&embedded, b"hmtx");
+    assert_eq!(
+        hmtx_len, num_glyphs * 4,
+        "hmtx length ({hmtx_len}) != numGlyphs*4 ({})", num_glyphs * 4
+    );
+}
+
+fn read_hhea_num_h_metrics(font_data: &[u8]) -> u16 {
+    let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+    for i in 0..num_tables {
+        let base = 12 + i * 16;
+        if base + 16 > font_data.len() { break; }
+        if &font_data[base..base + 4] == b"hhea" {
+            let offset = u32::from_be_bytes([
+                font_data[base + 8], font_data[base + 9],
+                font_data[base + 10], font_data[base + 11],
+            ]) as usize;
+            // numberOfHMetrics is at bytes 34-35 of hhea (total header = 36 bytes)
+            if offset + 36 <= font_data.len() {
+                return u16::from_be_bytes([font_data[offset + 34], font_data[offset + 35]]);
+            }
+        }
+    }
+    0
+}
+
+fn read_table_length(font_data: &[u8], tag: &[u8; 4]) -> usize {
+    let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+    for i in 0..num_tables {
+        let base = 12 + i * 16;
+        if base + 16 > font_data.len() { break; }
+        if &font_data[base..base + 4] == tag {
+            return u32::from_be_bytes([
+                font_data[base + 12], font_data[base + 13],
+                font_data[base + 14], font_data[base + 15],
+            ]) as usize;
+        }
+    }
+    0
+}
+
 #[test]
 fn diagnose_fragment_coords() {
     let pdf = std::fs::read("test_documents/kanto_chemical/J_10005.pdf");

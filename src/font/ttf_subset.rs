@@ -160,7 +160,9 @@ pub(super) fn subset(
     }
 
     // Update hhea.numberOfHMetrics.
-    let num_new_metrics = gids_to_keep.len().min(num_h_metrics);
+    // All subset glyphs are written as full 4-byte longHorMetric entries in
+    // build_hmtx, so numberOfHMetrics must equal the subset glyph count.
+    let num_new_metrics = gids_to_keep.len();
     if new_hhea.len() >= 36 {
         let bytes = (num_new_metrics as u16).to_be_bytes();
         new_hhea[34..36].copy_from_slice(&bytes);
@@ -469,29 +471,35 @@ fn build_hmtx(
     gids_to_keep: &BTreeSet<u16>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut new_hmtx = Vec::new();
+    // Offset of the last longHorMetric entry's advance_width field.
+    // Glyphs in the lsb-only section share this advance width.
+    let last_adv_off = num_h_metrics.saturating_sub(1) * 4;
 
     for &gid in gids_to_keep.iter() {
-        let gid_usize = gid as usize;
-        let metrics_offset = if gid_usize < num_h_metrics {
-            gid_usize * 4
+        let g = gid as usize;
+        if g < num_h_metrics {
+            // Full longHorMetric entry: 4 bytes (advance_width + lsb).
+            let off = g * 4;
+            if off + 4 <= hmtx.len() {
+                new_hmtx.extend_from_slice(&hmtx[off..off + 4]);
+            } else {
+                new_hmtx.extend_from_slice(&(units_per_em as u16).to_be_bytes());
+                new_hmtx.extend_from_slice(&0i16.to_be_bytes());
+            }
         } else {
-            num_h_metrics * 4 + (gid_usize - num_h_metrics) * 2
-        };
-
-        // Read advance width.
-        if metrics_offset + 2 <= hmtx.len() {
-            new_hmtx.extend_from_slice(&hmtx[metrics_offset..metrics_offset + 2]);
-        } else {
-            // Default advance.
-            new_hmtx.extend_from_slice(&(units_per_em as u16).to_be_bytes());
-        }
-
-        // Read left side bearing.
-        if metrics_offset + 4 <= hmtx.len() {
-            new_hmtx.extend_from_slice(&hmtx[metrics_offset + 2..metrics_offset + 4]);
-        } else {
-            // Default lsb (0).
-            new_hmtx.extend_from_slice(&0i16.to_be_bytes());
+            // "Mono" glyph: advance_width = last longHorMetric's advance.
+            if last_adv_off + 2 <= hmtx.len() {
+                new_hmtx.extend_from_slice(&hmtx[last_adv_off..last_adv_off + 2]);
+            } else {
+                new_hmtx.extend_from_slice(&(units_per_em as u16).to_be_bytes());
+            }
+            // lsb from the lsb-only section.
+            let lsb_off = num_h_metrics * 4 + (g - num_h_metrics) * 2;
+            if lsb_off + 2 <= hmtx.len() {
+                new_hmtx.extend_from_slice(&hmtx[lsb_off..lsb_off + 2]);
+            } else {
+                new_hmtx.extend_from_slice(&0i16.to_be_bytes());
+            }
         }
     }
 
