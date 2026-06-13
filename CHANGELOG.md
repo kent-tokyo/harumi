@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (v1.4.0 — Phase 24: Text Extraction Quality)
+---
+
+## [1.3.0] — 2026-06-13
+
+### Added (Phase 24: Text Extraction Quality)
 
 - **`sort_by_reading_order(fragments: &mut [TextFragment])`** — reorder text fragments from
   content-stream order to human-readable reading order: top-to-bottom, left-to-right. Handles
@@ -25,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanned PDF page (previously only returned the largest image). Returns an error if no
   Image XObjects are found.
 
-### Added (v1.5.0 — Phase 25: AI/RAG Utilities)
+### Added (Phase 25: AI/RAG Utilities)
 
 - **`TextChunk` struct** — semantic text block extracted from a page, with fields:
   - `text: String` — concatenated fragment text

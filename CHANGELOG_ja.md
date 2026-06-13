@@ -9,7 +9,11 @@
 
 ## [未リリース]
 
-### 追加（v1.4.0 — Phase 24: テキスト抽出品質強化）
+---
+
+## [1.3.0] — 2026-06-13
+
+### 追加（Phase 24: テキスト抽出品質強化）
 
 - **`sort_by_reading_order(fragments: &mut [TextFragment])`** — テキスト抽出結果をコンテント
   ストリーム順から人間が読む順序（上から下へ、左から右へ）に並べ替えます。NaN/Infinity 座標を
@@ -23,7 +27,7 @@
 - **`Document::extract_page_images(page) -> Vec<PageImage>`** — スキャン PDF ページから
   すべての画像を抽出します（以前は最大サイズの画像のみ返していました）。Image XObject が見つからない場合はエラーを返します。
 
-### 追加（v1.5.0 — Phase 25: AI/RAG ユーティリティ）
+### 追加（Phase 25: AI/RAG ユーティリティ）
 
 - **`TextChunk` 構造体** — ページから抽出されたセマンティックテキストブロック。フィールド:
   - `text: String` — 複数フラグメントの連結テキスト
