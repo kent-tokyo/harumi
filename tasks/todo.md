@@ -711,7 +711,7 @@
   - re-subsetting の実装課題は解決しない。allsorts で自前実装する方針に変わりなし。（調査日: 2026-06-06）
 - [x] **調査済み: Apache PDFBox — テキスト置き換えなし、TTF サブセットあり、CFF サブセットなし**
   - **テキスト置き換え**: API なし。`ReplaceURLs.java` はアノテーションの URI を書き換えるだけで
-    Content Stream のテキストは一切触らない。`Overlay.java` はオーバーレイ（上書き追加）のみ。
+    Content Stream のテキストは一切触らない。`Overlay.java` もレイアウト保持の上書き追加のみで、`harumi-ai` の overlay mode でも必要なら短縮指示や別プロンプトで補う前提になる。
   - **TTF サブセット**: `fontbox/TTFSubsetter.java` — 純粋 Java 実装。新規埋め込み時に使用。
   - **CFF サブセット**: なし。`fontbox/cff/` パッケージは CFF パーサのみ（読み取り専用）。
   - **CJK 対応**: TTF ベースの CIDFontType2 埋め込みで日本語等に対応（`PDCIDFontType2Embedder.java`）。

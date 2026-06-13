@@ -338,3 +338,79 @@ fn extract_to_unicode_cmap(doc: &lopdf::Document, page_num: u32) -> String {
     let stream = doc.get_object(to_unicode_id).unwrap().as_stream().unwrap();
     String::from_utf8(stream.content.clone()).expect("ToUnicode must be valid UTF-8")
 }
+
+// Regression test: the TTF subsetter once emitted a 14-byte offset table instead of
+// 12 bytes (searchRange was written as u32 instead of u16), corrupting every table
+// offset. This test verifies the subsetted font has a well-formed offset table and
+// that text extraction (which depends on ToUnicode CMap) and glyph rendering (which
+// depends on correct table offsets) both work.
+#[test]
+fn subset_offset_table_is_well_formed() {
+    let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
+    let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
+    let f = doc.embed_font(&font).unwrap();
+    doc.page(1).unwrap()
+        .add_text("Hello World NotoSansJP", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
+        .unwrap();
+    let out = doc.save_to_bytes().unwrap();
+
+    // Verify text round-trips correctly (ToUnicode CMap OK).
+    let doc2 = harumi::Document::from_bytes(&out).unwrap();
+    let runs = doc2.extract_text_runs(1).unwrap();
+    let text: String = runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("");
+    assert!(text.contains("Hello"), "text extraction failed: {text:?}");
+
+    // Verify the embedded font has a valid TTF offset table (12 bytes).
+    // Extract the FontFile2 stream from the PDF and parse its header.
+    let raw = out.as_slice();
+    if let Some(pos) = find_bytes(raw, b"Length1") {
+        let stream_start = find_bytes(&raw[pos..], b"stream\n")
+            .map(|o| pos + o + 7)
+            .or_else(|| find_bytes(&raw[pos..], b"stream\r\n").map(|o| pos + o + 8));
+        if let Some(start) = stream_start {
+            if let Some(end) = find_bytes(&raw[start..], b"endstream") {
+                let font_data = &raw[start..start + end];
+                assert!(font_data.len() > 12, "embedded font too small");
+                // sfVersion: 0x00010000
+                let sf = u32::from_be_bytes([font_data[0], font_data[1], font_data[2], font_data[3]]);
+                assert_eq!(sf, 0x00010000, "wrong sfVersion");
+                let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+                assert!(num_tables > 0 && num_tables <= 64, "implausible numTables={num_tables}");
+                // All table offsets must be within the font data.
+                for i in 0..num_tables {
+                    let base = 12 + i * 16;
+                    if base + 16 > font_data.len() { break; }
+                    let offset = u32::from_be_bytes([
+                        font_data[base+8], font_data[base+9], font_data[base+10], font_data[base+11],
+                    ]) as usize;
+                    let length = u32::from_be_bytes([
+                        font_data[base+12], font_data[base+13], font_data[base+14], font_data[base+15],
+                    ]) as usize;
+                    assert!(
+                        offset + length <= font_data.len(),
+                        "table {i} offset={offset} length={length} out of bounds (font size={})",
+                        font_data.len()
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+#[test]
+fn diagnose_fragment_coords() {
+    let pdf = std::fs::read("test_documents/kanto_chemical/J_10005.pdf");
+    if pdf.is_err() { return; }
+    let doc = harumi::Document::from_bytes(&pdf.unwrap()).unwrap();
+    let runs = doc.extract_text_runs(1).unwrap();
+    println!("Total fragments page 1: {}", runs.len());
+    for r in runs.iter().take(10) {
+        println!("  x={:.1} y={:.1} w={:.1} h={:.1} fs={:.1} inv={} text={:?}",
+            r.x, r.y, r.width, r.height, r.font_size, r.invisible,
+            r.text.chars().take(20).collect::<String>());
+    }
+}

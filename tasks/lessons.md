@@ -321,10 +321,10 @@ lopdf 0.40 の `Object::as_str()` は `Result<&[u8]>` を返す。`&str` を期�
 ## MCP 翻訳ワークフローの実装教訓（Phase 28）
 
 ### `resubset` / `wrap` は CIDToGIDMap=Identity 前提。失敗時は `new_font` に切り替える
-`replace_text_resubset` は既存CIDフォントのGID対応を読み、フォントサブセットを再構築して全ページを再エンコードする。そのため既存PDFが `/CIDToGIDMap /Identity` でない場合、元CIDとGIDの対応を安全に推定できず `replace_text_resubset only supports CIDToGIDMap=Identity` で失敗する。これはKanto ChemicalのSDS（`J_10005.pdf`）でも発生した。翻訳用途でレイアウトを保ちたい場合は、既存ページ構造を維持しつつ該当テキストだけ新規埋め込みフォントへ切り替える `pdf_replace_text` の `mode: "new_font"` が現実的な回避策になる。
+`replace_text_resubset` は既存CIDフォントのGID対応を読み、フォントサブセットを再構築して全ページを再エンコードする。そのため既存PDFが `/CIDToGIDMap /Identity` でない場合、元CIDとGIDの対応を安全に推定できず `replace_text_resubset only supports CIDToGIDMap=Identity` で失敗する。これはKanto ChemicalのSDS（`J_10005.pdf`）でも発生した。翻訳用途でレイアウトを保ちたい場合は、既存ページ構造を維持しつつ該当テキストだけ新規埋め込みフォントへ切り替える `pdf_replace_text` の `mode: "new_font"` が現実的な回避策になる。`harumi-ai` は基本的に overlay mode を使い、再生成が必要な場合だけ new document に切り替える方が運用しやすい。
 
 ### MCPツールは低レベル保存エラーをユーザー向け診断に変換する
 `doc.save()` まで遅延されるエラーをそのまま `FILE_WRITE_ERROR` として返すと、利用者にはパスや権限の問題に見える。原因がフォントマップ非対応なら `UNSUPPORTED_FONT_MAP` のように意味のあるコードを返し、エラー文に「非Identity `CIDToGIDMap`」「`mode: "new_font"`」「Unicode TTF」を含める。MCPはLLMやIDEから呼ばれるため、次に試すべきパラメータまで返す方が実用的。
 
 ### PDF翻訳は抽出・翻訳・置換リストを成果物として残す
-`pdf_extract_all_pages` の出力を見て、PDF内のテキスト断片の粒度（見出し・項目・行末分割）を把握してから置換する。長い文は元PDFの行分割に合わせて短く訳すとレイアウト崩れが減る。翻訳結果は直接コマンドに埋め込むのではなく `*_en_replacements.json` のような置換リストに残すと、再生成・レビュー・微修正が容易になる。
+`pdf_extract_all_pages` の出力を見て、PDF内のテキスト断片の粒度（見出し・項目・行末分割）を把握してから置換する。長い文は元PDFの行分割に合わせて短く訳すとレイアウト崩れが減る。翻訳結果は直接コマンドに埋め込むのではなく `*_en_replacements.json` のような置換リストに残すと、再生成・レビュー・微修正が容易になる。`harumi-ai` の overlay mode はこの方針と相性がよい。

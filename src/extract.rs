@@ -1627,7 +1627,8 @@ fn parse_content_stream(
     let mut stack: Vec<Token> = Vec::new();
     let mut in_bt = false;
     let mut font_name: Vec<u8> = Vec::new();
-    let mut font_size: f32 = 12.0;
+    let mut tf_font_size: f32 = 12.0; // raw size from Tf operator
+    let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
     let mut cur_color: [f32; 3] = [0.0, 0.0, 0.0];
@@ -1651,6 +1652,7 @@ fn parse_content_stream(
                     let second = stack.pop();
                     if let (Some(Token::Number(size)), Some(Token::Name(name))) = (top, second) {
                         font_name = name;
+                        tf_font_size = size;
                         font_size = size;
                     }
                     stack.clear();
@@ -1665,14 +1667,24 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"Tm" if in_bt => {
-                    let pop_f = stack.pop();
-                    let pop_e = stack.pop();
-                    for _ in 0..4 {
-                        stack.pop();
-                    }
+                    // Tm: a b c d e f Tm (stack top = f)
+                    let pop_f = stack.pop(); // f = y translation
+                    let pop_e = stack.pop(); // e = x translation
+                    let pop_d = stack.pop(); // d = y-axis component of scale/rotation
+                    let pop_c = stack.pop(); // c = y-axis component of skew/rotation
+                    stack.pop(); // b
+                    stack.pop(); // a
                     if let (Some(Token::Number(fy)), Some(Token::Number(ex))) = (pop_f, pop_e) {
                         x = ex;
                         y = fy;
+                    }
+                    // Compute effective font size from the Tm y-scale:
+                    // y_scale = sqrt(c² + d²) handles both scaling and rotation.
+                    if let (Some(Token::Number(dv)), Some(Token::Number(cv))) = (pop_d, pop_c) {
+                        let y_scale = (cv * cv + dv * dv).sqrt();
+                        if y_scale > 0.0 {
+                            font_size = tf_font_size * y_scale;
+                        }
                     }
                     stack.clear();
                 }

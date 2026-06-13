@@ -6,7 +6,7 @@
 //! ANTHROPIC_API_KEY=sk-ant-xxx \
 //! TRANSLATE_FONT=path/to/NotoSansJP-Regular.ttf \
 //! cargo run -p harumi-ai --example translate_pdf --features anthropic \
-//!     -- input.pdf output.pdf en [ja]
+//!     -- input.pdf output.pdf en [ja] [overlay]
 //! ```
 //!
 //! Arguments:
@@ -14,6 +14,7 @@
 //!   2. output PDF path
 //!   3. target language (BCP-47, e.g. "en", "zh", "ja")
 //!   4. source language (optional, BCP-47; omit for auto-detect)
+//!   5. mode (optional, "new" for a regenerated document or "overlay"; default: "overlay")
 //!
 //! Environment variables:
 //!   ANTHROPIC_API_KEY  — required
@@ -22,14 +23,15 @@
 //!                        default: NotoSansJP-Regular.ttf in current directory
 
 use std::env;
-use harumi_ai::{TranslateOptions, translate_pdf, providers::AnthropicTranslator};
+use harumi_ai::{TranslateOptions, TranslationMode, translate_pdf, providers::AnthropicTranslator};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
         eprintln!(
-            "Usage: translate_pdf <input.pdf> <output.pdf> <target_lang> [source_lang]\n\
+            "Usage: translate_pdf <input.pdf> <output.pdf> <target_lang> [source_lang] [mode]\n\
+             Mode: \"overlay\" (default) or \"new\"\n\
              Env: ANTHROPIC_API_KEY, ANTHROPIC_MODEL, TRANSLATE_FONT"
         );
         std::process::exit(1);
@@ -39,6 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_path = &args[2];
     let target_lang = &args[3];
     let source_lang = args.get(4).map(String::as_str);
+    let mode_arg    = args.get(5).map(String::as_str).unwrap_or("overlay");
+
+    let mode = if mode_arg == "new" {
+        TranslationMode::NewDocument
+    } else {
+        TranslationMode::Overlay
+    };
 
     // ── API key & model ───────────────────────────────────────────────────────
     let api_key = env::var("ANTHROPIC_API_KEY")
@@ -64,9 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut opts = TranslateOptions::new(target_lang.as_str(), translator, font);
     opts.source_lang = source_lang.map(str::to_owned);
+    opts.mode = mode;
 
     let src_display = source_lang.unwrap_or("auto");
-    println!("[harumi-ai] Translating: {input_path}  ({src_display} → {target_lang})");
+    println!("[harumi-ai] Translating: {input_path}  ({src_display} → {target_lang})  mode={mode_arg}");
 
     let translated = translate_pdf(&pdf_bytes, opts).await
         .unwrap_or_else(|e| panic!("Translation failed: {e}"));

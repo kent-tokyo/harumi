@@ -29,6 +29,8 @@ For layout-preserving PDF translation, extract all pages with `pdf_extract_all_p
 translate the fragments, then apply replacements with `pdf_replace_text`. If a PDF
 cannot be resubset because it uses a non-Identity `CIDToGIDMap`, use
 `mode: "new_font"` with a Unicode TTF font.
+The `harumi-ai` CLI defaults to `overlay` mode when you want to keep the original
+page layout intact; pass `new` only when you want a regenerated document.
 
 Register on [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) for one-click installation.
 

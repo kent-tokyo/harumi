@@ -1591,6 +1591,18 @@ impl Document {
         crate::extract::extract_text_runs_from_page(&self.inner, page_id)
     }
 
+    /// Extracts the decoded text from a single page as a plain string.
+    ///
+    /// This is a convenience wrapper over [`extract_text_runs`](Document::extract_text_runs).
+    /// The text is returned in content-stream order, concatenated without adding spacing.
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page` is out of range.
+    pub fn extract_text(&self, page: u32) -> Result<String> {
+        let fragments = self.extract_text_runs(page)?;
+        Ok(fragments.into_iter().map(|frag| frag.text).collect::<Vec<_>>().join(""))
+    }
+
     /// Extracts text runs from all pages, returning a flat vector of
     /// `(page_number, TextFragment)` tuples.
     ///

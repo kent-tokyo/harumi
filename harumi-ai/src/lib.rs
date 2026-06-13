@@ -31,11 +31,13 @@ mod error;
 mod extractor;
 mod builder;
 mod layout;
+mod overlay;
 mod pdf_translator;
+mod prompts;
 mod translator;
 pub mod providers;
 
 pub use error::{Error, Result};
 pub use layout::LayoutOptions;
-pub use pdf_translator::{TranslateOptions, TranslateOptionsBuilder, translate_pdf};
+pub use pdf_translator::{TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf};
 pub use translator::Translator;

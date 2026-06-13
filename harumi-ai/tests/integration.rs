@@ -29,6 +29,75 @@ fn make_multipage_pdf() -> Vec<u8> {
     doc.save_to_bytes().unwrap()
 }
 
+fn make_four_page_pdf() -> Vec<u8> {
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    for page_num in 2..=4 {
+        doc.insert_blank_page(page_num - 1, (595.0, 842.0)).unwrap();
+    }
+    for page_num in 1..=4 {
+        doc.page(page_num)
+            .unwrap()
+            .add_text(
+                &format!("Source page {page_num}"),
+                font,
+                [72.0, 700.0],
+                14.0,
+                BLACK,
+            )
+            .unwrap();
+    }
+    doc.save_to_bytes().unwrap()
+}
+
+struct DelayedPageTranslator;
+
+#[async_trait::async_trait]
+impl harumi_ai::Translator for DelayedPageTranslator {
+    async fn translate(
+        &self,
+        texts: &[String],
+        _target_lang: &str,
+        _source_lang: Option<&str>,
+    ) -> harumi_ai::Result<Vec<String>> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            let input: serde_json::Value = serde_json::from_str(text)
+                .map_err(|e| harumi_ai::Error::Translator(e.to_string()))?;
+            let pages = input["pages"]
+                .as_array()
+                .ok_or_else(|| harumi_ai::Error::Translator("missing pages".into()))?;
+            let first_page = pages
+                .first()
+                .and_then(|p| p["page"].as_u64())
+                .unwrap_or(1);
+
+            tokio::time::sleep(std::time::Duration::from_millis((5 - first_page) * 20)).await;
+
+            let translated_pages: Vec<serde_json::Value> = pages
+                .iter()
+                .map(|page| {
+                    let page_num = page["page"].as_u64().unwrap_or(0);
+                    let blocks: Vec<serde_json::Value> = page["blocks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|block| {
+                            serde_json::json!({
+                                "id": block["id"].as_u64().unwrap_or(0),
+                                "text": format!("Translated page {page_num}"),
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({ "blocks": blocks })
+                })
+                .collect();
+            out.push(serde_json::json!({ "pages": translated_pages }).to_string());
+        }
+        Ok(out)
+    }
+}
+
 #[tokio::test]
 async fn echo_translator_single_page() {
     let pdf = make_test_pdf();
@@ -59,6 +128,35 @@ async fn echo_translator_multipage() {
         "expected ≥2 pages, got {}",
         check.page_count()
     );
+}
+
+#[tokio::test]
+async fn concurrent_batches_preserve_page_order() {
+    let pdf = make_four_page_pdf();
+    let opts = TranslateOptions::builder()
+        .target_lang("en")
+        .translator(DelayedPageTranslator)
+        .font(FONT.to_vec())
+        .concurrency(4)
+        .pages_per_batch(1)
+        .build();
+
+    let out = translate_pdf(&pdf, opts).await.unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    assert_eq!(check.page_count(), 4);
+
+    for page_num in 1..=4 {
+        let text: String = check
+            .extract_text_runs(page_num)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.text)
+            .collect();
+        assert!(
+            text.contains(&format!("Translated page {page_num}")),
+            "page {page_num} text was {text:?}"
+        );
+    }
 }
 
 #[tokio::test]

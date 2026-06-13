@@ -10,3 +10,6 @@ AGENTS.md
 wasm-demo/www/pkg/
 wasm-demo/target/
 test_documents/
+
+.env
+tasks/

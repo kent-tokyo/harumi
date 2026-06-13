@@ -9,6 +9,18 @@ use crate::{
     extractor,
 };
 
+/// Controls how the translated PDF is produced.
+#[derive(Default)]
+pub enum TranslationMode {
+    /// Keep the original PDF intact and overlay translated text on top,
+    /// covering original text with white rectangles.
+    #[default]
+    Overlay,
+    /// Build a brand-new PDF from scratch. All original layout, images, and
+    /// graphics are discarded; only text is preserved.
+    NewDocument,
+}
+
 /// Options for [`translate_pdf`].
 ///
 /// # Quick construction
@@ -40,6 +52,8 @@ pub struct TranslateOptions {
     /// (default: `1`). Larger values give the model cross-page context at the
     /// cost of larger prompts.
     pub pages_per_batch: usize,
+    /// Translation output mode (default: `Overlay`).
+    pub mode: TranslationMode,
 }
 
 impl TranslateOptions {
@@ -57,6 +71,7 @@ impl TranslateOptions {
             layout: LayoutOptions::default(),
             concurrency: 4,
             pages_per_batch: 1,
+            mode: TranslationMode::default(),
         }
     }
 
@@ -77,6 +92,7 @@ pub struct TranslateOptionsBuilder {
     layout: Option<LayoutOptions>,
     concurrency: Option<usize>,
     pages_per_batch: Option<usize>,
+    mode: Option<TranslationMode>,
 }
 
 impl TranslateOptionsBuilder {
@@ -122,6 +138,12 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Translation output mode (default: `Overlay`).
+    pub fn mode(mut self, m: TranslationMode) -> Self {
+        self.mode = Some(m);
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -136,6 +158,7 @@ impl TranslateOptionsBuilder {
             layout: self.layout.unwrap_or_default(),
             concurrency: self.concurrency.unwrap_or(4),
             pages_per_batch: self.pages_per_batch.unwrap_or(1),
+            mode: self.mode.unwrap_or_default(),
         }
     }
 }
@@ -152,8 +175,16 @@ impl TranslateOptionsBuilder {
 ///    and sent to the `Translator` as `{"pages": [...]}` JSON. Batches run concurrently
 ///    up to [`TranslateOptions::concurrency`].
 /// 3. **Build** — a new PDF is assembled using harumi's direct `add_text` API (CIDFontType2
-///    + ToUnicode CMap — PSPDFKit-compatible).
+///    + ToUnicode CMap — PSPDFKit-compatible), or overlaid on the original if
+///      [`TranslationMode::Overlay`] is selected.
 pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
+    match options.mode {
+        TranslationMode::NewDocument => translate_pdf_new_document(pdf_bytes, options).await,
+        TranslationMode::Overlay => crate::overlay::translate_pdf_overlay(pdf_bytes, options).await,
+    }
+}
+
+async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
     // ── Phase 1: Extract (sync) ───────────────────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
     let pages = extractor::extract_pages(&mut doc)?;
@@ -221,7 +252,7 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
                 Ok::<Vec<TranslatedPage>, Error>(translated)
             }
         })
-        .buffer_unordered(options.concurrency)
+        .buffered(options.concurrency)
         .collect::<Vec<_>>()
         .await
         .into_iter()

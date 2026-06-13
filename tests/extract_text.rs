@@ -76,12 +76,19 @@ fn empty_page_returns_empty() {
     let doc = Document::new((595.0, 842.0)).unwrap();
     let fragments = doc.extract_text_runs(1).unwrap();
     assert!(fragments.is_empty(), "blank page should have no fragments");
+    assert_eq!(doc.extract_text(1).unwrap(), "");
 }
 
 #[test]
 fn page_not_found_error() {
     let doc = Document::new((595.0, 842.0)).unwrap();
     let err = doc.extract_text_runs(99).unwrap_err();
+    assert!(
+        matches!(err, Error::PageNotFound(99)),
+        "expected PageNotFound(99), got {err:?}"
+    );
+
+    let err = doc.extract_text(99).unwrap_err();
     assert!(
         matches!(err, Error::PageNotFound(99)),
         "expected PageNotFound(99), got {err:?}"
@@ -105,6 +112,7 @@ fn roundtrip_invisible_text() {
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let fragments = doc2.extract_text_runs(1).unwrap();
+    let text = doc2.extract_text(1).unwrap();
 
     assert_eq!(
         fragments.len(),
@@ -113,6 +121,7 @@ fn roundtrip_invisible_text() {
         fragments.len()
     );
     assert_eq!(fragments[0].text, "Hello");
+    assert_eq!(text, "Hello");
     assert!(
         (fragments[0].x - 72.0).abs() < 1.0,
         "x should be ~72, got {}",

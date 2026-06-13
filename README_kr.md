@@ -34,6 +34,8 @@ PDF 번역은 `pdf_extract_all_pages` 로 모든 페이지의 텍스트 조각�
 번역한 뒤 `pdf_replace_text` 로 기존 레이아웃을 유지하며 교체합니다. 비 Identity
 `CIDToGIDMap` 때문에 재서브셋팅할 수 없는 PDF는 Unicode TTF를 지정하고
 `mode: "new_font"` 를 사용하세요.
+`harumi-ai` CLI는 기존 레이아웃을 유지할 때 기본적으로 `overlay` mode를 사용합니다.
+새 문서로 다시 만들고 싶을 때만 `new` 를 지정하세요.
 
 [smithery.ai](https://smithery.ai) 또는 [mcp.so](https://mcp.so)에 등록 예정.
 

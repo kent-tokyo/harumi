@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use crate::{Error, Result, Translator};
+
+use crate::{prompts::translation_system_prompt, Error, Result, Translator};
 
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -68,25 +69,9 @@ impl OpenAiTranslatorBuilder {
             endpoint: self.endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
             api_key: self.api_key.unwrap_or_default(),
             model: self.model.unwrap_or_else(|| DEFAULT_MODEL.to_owned()),
-            system_prompt_template: self
-                .system_prompt_template
-                .unwrap_or_else(default_system_prompt),
+            system_prompt_template: self.system_prompt_template.unwrap_or_default(),
         }
     }
-}
-
-fn default_system_prompt() -> String {
-    "You are a professional document translator. \
-     The user provides a JSON object with a \"pages\" array. \
-     Each page has a \"blocks\" array where every block has \"id\", \"type\" \
-     (\"h1\"–\"h6\" or \"paragraph\"), and \"text\". \
-     Translate each block's \"text\" {source_lang}to {target_lang}. \
-     Return ONLY a valid JSON object mirroring the input structure: \
-     {\"pages\": [{\"blocks\": [{\"id\": <number>, \"text\": \"<translated>\"}, ...]}, ...]}. \
-     Preserve every id, maintain the same page order, and return exactly the same \
-     number of pages and blocks as the input. \
-     Do not add commentary, markdown fences, or any text outside the JSON."
-        .to_owned()
 }
 
 impl OpenAiTranslator {
@@ -95,13 +80,21 @@ impl OpenAiTranslator {
     }
 
     fn build_system(&self, target_lang: &str, source_lang: Option<&str>) -> String {
-        let src_part = match source_lang {
-            Some(s) if !s.is_empty() && s != "auto" => format!("from {s} "),
-            _ => String::new(),
-        };
-        self.system_prompt_template
-            .replace("{source_lang}", &src_part)
-            .replace("{target_lang}", target_lang)
+        if self.system_prompt_template.is_empty() {
+            translation_system_prompt(target_lang, source_lang)
+        } else if self.system_prompt_template.contains("{target_lang}")
+            || self.system_prompt_template.contains("{source_lang}")
+        {
+            let src_part = match source_lang {
+                Some(s) if !s.is_empty() && s != "auto" => format!("from {s} "),
+                _ => String::new(),
+            };
+            self.system_prompt_template
+                .replace("{source_lang}", &src_part)
+                .replace("{target_lang}", target_lang)
+        } else {
+            self.system_prompt_template.clone()
+        }
     }
 }
 

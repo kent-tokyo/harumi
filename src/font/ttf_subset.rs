@@ -434,13 +434,14 @@ fn assemble_font(
     is_truetype: bool,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let num_tables = tables.len();
-    let search_range: u32 = (1u32 << (31 - (num_tables as u32).leading_zeros())) * 16;
-    let entry_selector = (31 - (num_tables as u32).leading_zeros()) as u16;
-    let range_shift = (num_tables as u16 * 16) - search_range as u16;
+    // TTF offset table fields are all u16 (2 bytes each).
+    let search_range: u16 = (1u16 << (15 - (num_tables as u16).leading_zeros())) * 16;
+    let entry_selector: u16 = 15 - (num_tables as u16).leading_zeros() as u16;
+    let range_shift: u16 = num_tables as u16 * 16 - search_range;
 
     let mut font = Vec::new();
 
-    // Offset table (12 bytes).
+    // Offset table: sfVersion(4) + numTables(2) + searchRange(2) + entrySelector(2) + rangeShift(2) = 12 bytes.
     let scaler = if is_truetype {
         0x00010000u32
     } else {
