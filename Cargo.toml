@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "harumi-mcp"]
+members = [".", "harumi-mcp", "harumi-ai"]
 
 [package]
 name = "harumi"
