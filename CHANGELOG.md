@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] — 2026-06-14
+
+### Fixed
+
+- **Embedded fonts rendered as ● in macOS Preview and PSPDFKit** — the internal TTF
+  subsetter was copying all optional tables verbatim from the source font, including
+  `GSUB`, `GPOS`, `gvar`, `fvar`, `post`, `vhea`, `vmtx`, and others. After subsetting
+  to a small character set these tables contain stale GID references pointing to glyphs
+  that no longer exist. macOS Core Text and PSPDFKit validate embedded fonts and reject
+  them as malformed when GID references are inconsistent, causing every glyph to render
+  as a ● replacement character.
+
+  The subsetter now uses a whitelist approach: only the core TrueType tables (`head`,
+  `hhea`, `maxp`, `glyf`, `loca`, `hmtx`) and safe hinting tables (`fpgm`, `prep`,
+  `cvt`, `gasp`) are included in the subset. All other tables — OpenType layout
+  (`GSUB`, `GPOS`, `GDEF`, `BASE`), variable-font data (`gvar`, `fvar`, `avar`, `HVAR`,
+  `STAT`), and metadata tables (`post`, `name`, `vhea`, `vmtx`, `kern`) — are stripped.
+  This is correct for PDF CIDFont embedding with Identity-H encoding, where no OpenType
+  shaping is applied.
+
+- **Composite glyph component GIDs not rewritten after subsetting** — when a glyph
+  composited from component glyphs was included in the subset, `build_glyf` was copying
+  the composite record verbatim, leaving component GID references pointing to the original
+  (pre-subset) GID values. After subsetting those GIDs are remapped to new sequential
+  positions, so the component references were wrong. `build_glyf` now rewrites component
+  GIDs in composite glyph records to their new positions.
+
+- **GID→char mapping incorrect when composite deps expand the kept-glyph set** — the
+  char-to-GID mapping was derived from `GlyphRemapper` which only knew about explicitly
+  requested glyphs, not the composite dependencies added inside `subset()`. If a composite
+  dependency glyph had an original GID that sorted before a requested glyph, the new-GID
+  positions were off by one or more. The mapping now uses the final `gids_to_keep` set
+  (returned from `subset()`) which includes all composite dependencies.
+
+---
+
 ## [1.3.0] — 2026-06-13
 
 ### Added (Phase 24: Text Extraction Quality)

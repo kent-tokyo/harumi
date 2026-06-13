@@ -61,7 +61,7 @@ doc.save("searchable.pdf")?;
 
 | 挑战 | harumi 的答案 |
 |---|---|
-| CJK 字体子集化复杂 | 一次 `embed_font()` 调用——只包含实际使用的字形，GID 正确重新编号 |
+| CJK 字体子集化复杂 | 一次 `embed_font()` 调用——只包含实际使用的字形，GID 正确重新编号；剥离 GSUB/GPOS/可变字体表，兼容 macOS Preview 和 PSPDFKit |
 | 不想破坏原有 PDF 结构 | 仅追加；harumi 从不修改原始对象图 |
 | 需要在 WASM / Lambda / 交叉编译环境运行 | 纯 Rust——零 C/C++ 依赖 |
 | 需要将 OCR 文本写入指定坐标 | `add_invisible_text` / 批量版 `add_invisible_text_runs` |

@@ -58,7 +58,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 
 | Challenge | harumi's answer |
 |---|---|
-| CJK font subsetting is complex | One `embed_font()` call — only used glyphs are included, GIDs correctly remapped |
+| CJK font subsetting is complex | One `embed_font()` call — only used glyphs are included, GIDs correctly remapped; GSUB/GPOS/variable-font tables stripped for macOS Preview and PSPDFKit compatibility |
 | Don't want to corrupt existing PDF structure | Append-only: harumi never touches the original object graph |
 | Need to run in WASM / Lambda / cross-compile | Pure Rust — zero C/C++ dependencies |
 | Need OCR text at specific coordinates | `add_invisible_text` / batch `add_invisible_text_runs` |

@@ -63,7 +63,7 @@ doc.save("searchable.pdf")?;
 
 | 과제 | harumi의 답 |
 |---|---|
-| CJK 폰트 서브셋팅이 복잡하다 | `embed_font()` 한 번 — 실제 사용된 글리프만 포함, GID 정확히 재번호 지정 |
+| CJK 폰트 서브셋팅이 복잡하다 | `embed_font()` 한 번 — 실제 사용된 글리프만 포함, GID 정확히 재번호 지정; GSUB/GPOS/가변 폰트 테이블 제거로 macOS Preview 및 PSPDFKit 호환성 보장 |
 | 기존 PDF 구조를 망가뜨리고 싶지 않다 | 추가 전용 — 원본 객체 그래프를 절대 수정하지 않음 |
 | WASM / Lambda / 크로스 컴파일 환경이 필요하다 | 순수 Rust — C/C++ 의존성 없음 |
 | OCR 텍스트를 좌표와 함께 삽입하고 싶다 | `add_invisible_text` / 배치 버전 `add_invisible_text_runs` |

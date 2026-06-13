@@ -328,3 +328,36 @@ lopdf 0.40 の `Object::as_str()` は `Result<&[u8]>` を返す。`&str` を期�
 
 ### PDF翻訳は抽出・翻訳・置換リストを成果物として残す
 `pdf_extract_all_pages` の出力を見て、PDF内のテキスト断片の粒度（見出し・項目・行末分割）を把握してから置換する。長い文は元PDFの行分割に合わせて短く訳すとレイアウト崩れが減る。翻訳結果は直接コマンドに埋め込むのではなく `*_en_replacements.json` のような置換リストに残すと、再生成・レビュー・微修正が容易になる。`harumi-ai` の overlay mode はこの方針と相性がよい。
+
+## TTF サブセッターの実装教訓（v1.3.1 バグ修正）
+
+### GSUB/GPOS/gvar などを含む埋め込みフォントは macOS Core Text に拒否される
+`src/font/ttf_subset.rs` の TTF サブセッターがオプションテーブルをブラックリスト方式で除外していた（`cmap`, `OS/2`, `VORG` のみ）。ほとんどのオプションテーブルがそのままコピーされていたため、サブセット後のフォントに以下が含まれていた:
+- `GSUB` / `GPOS` / `GDEF` / `BASE`: OpenType レイアウトテーブル（GID参照大量）
+- `gvar` / `fvar` / `avar` / `HVAR` / `STAT`: 可変フォントテーブル（GID索引データ）
+- `post`: `numGlyphs` フィールドが `maxp.numGlyphs` と不一致
+- `vhea` / `vmtx`: 縦書きメトリクス（GID索引）
+
+これらのテーブルに含まれる GID 参照はサブセット後に無効になる（存在しない GID を指す）。NotoSansJP のような大規模フォントでは 7000+ GID のうち 50 程度にサブセットされるため、ほぼすべての参照が無効になる。macOS Core Text はこの不整合を検出してフォント全体を拒否するため、全グリフが ● に置き換わる。
+
+**修正**: ホワイトリスト方式に変更。PDF CIDFont 埋め込みに必要なテーブルのみ保持する。Identity-H エンコーディング + CIDToGIDMap=Identity の構成では OpenType シェーピング（GSUB/GPOS）が適用されないため、これらのテーブルは安全に削除できる。
+
+```rust
+// PDF CIDFont 埋め込みに必要なテーブルのみ保持
+// head/hhea/maxp/glyf/loca/hmtx: 必須コア
+// fpgm/prep/cvt/gasp: ヒンティング（安全）
+// それ以外はすべて除外
+```
+
+### コンポジットグリフのコンポーネント GID は verbatim コピーで壊れる
+TTF のコンポジットグリフデータには「コンポーネント GID」フィールドがあり、元フォントの GID を参照する。サブセット化で GID が 0..N に再採番されるが、`build_glyf` が glyph data を verbatim コピーしていたため、コンポーネント GID が旧GIDを指したままになっていた。サブセット後のフォントでその GID は異なるグリフを指すか、存在しない。修正: `rewrite_composite_gids()` でコンポーネント GID を新GIDに書き換える。
+
+### GlyphRemapper はコンポジット依存 GID を含まない
+`subset.rs` の `GlyphRemapper` はリクエストされたグリフのみを保持し、`ttf_subset.rs` 内で `collect_composite_deps()` によって追加されるコンポジット依存 GID は含まない。そのため `remapper.get(orig)` が返す「新GID位置」が、実際のフォント内の位置とずれる場合があった（コンポジット依存 GID がリクエストされた GID の間に挿入されると位置がひとつ以上ずれる）。修正: `subset()` が最終的な `gids_to_keep` セット（コンポジット依存含む）を返すようにし、`gid_to_char` / `gid_to_advance` の計算に使用する。
+
+### 新しいフォントを試みる場合は必ず Preview と PSPDFKit で確認する
+フォント埋め込みのバグは構造テスト（PDF reloadできる、ToUnicode CMapが存在する）では検出できない。実際の描画ではじめて ● が現れる。フォントサブセット化を変更した場合は必ず:
+1. `cargo test` で既存テスト全通過
+2. `Document::new() + embed_font + add_text` でテスト PDF を生成
+3. macOS Preview でファイルを開き、文字が正しく表示されることを確認
+4. PSPDFKit があれば同様に確認

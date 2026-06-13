@@ -63,7 +63,7 @@ doc.save("searchable.pdf")?;
 
 | 課題 | harumi の答え |
 |---|---|
-| CJKフォントのサブセット化が難しい | `embed_font()` 1回で完結。使用文字だけ自動的に間引き、GIDも正しく再採番 |
+| CJKフォントのサブセット化が難しい | `embed_font()` 1回で完結。使用文字だけ自動的に間引き、GIDも正しく再採番。GSUB/GPOS/可変フォントテーブルを除去してmacOS Preview・PSPDFKit互換 |
 | 既存PDFの構造を壊したくない | 追記のみ。元のオブジェクトグラフには触れない |
 | WASM / Lambda / クロスコンパイル環境でビルドしたい | 純Rust。C依存ゼロ |
 | OCRテキストを座標付きで埋め込みたい | `add_invisible_text` / バッチ版 `add_invisible_text_runs` |

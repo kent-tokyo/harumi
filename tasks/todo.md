@@ -1131,6 +1131,29 @@
 
 ---
 
+---
+
+## バグ修正 (v1.3.1) — 2026-06-14
+
+### embed_font + add_text の ● 表示修正（macOS Preview / PSPDFKit）
+
+- [x] **根本原因の特定**: 内製 TTF サブセッターがオプションテーブルを verbatim でコピー
+  - NotoSansJP-Regular.ttf は GSUB / GPOS / gvar / fvar / avar / HVAR / STAT / post /
+    vhea / vmtx など 23 テーブルを持つ可変フォント
+  - サブセット後もこれらのテーブルが元フォントの全 GID（7000+）への参照を保持
+  - macOS Core Text がこの不整合を検出してフォントを拒否 → 全グリフ ● 表示
+- [x] **Fix 1（主修正）**: テーブル除外をホワイトリスト方式に変更（`src/font/ttf_subset.rs`）
+  - コア TrueType（head/hhea/maxp/glyf/loca/hmtx）とヒンティング（fpgm/prep/cvt/gasp）のみ保持
+  - GSUB/GPOS/GDEF/BASE/gvar/fvar/avar/HVAR/STAT/post/vhea/vmtx/kern/name 等はすべて除外
+- [x] **Fix 2（副修正）**: コンポジットグリフのコンポーネント GID 書き換え（`build_glyf`）
+  - `rewrite_composite_gids()` 追加：コンポーネント GID を新位置に更新
+- [x] **Fix 3（副修正）**: GID→文字マッピングの正確化（`src/font/subset.rs`）
+  - `GlyphRemapper.get()` を廃止、`gids_to_keep`（コンポジット依存含む）から直接計算
+  - `subset()` が `(Vec<u8>, BTreeSet<u16>)` を返すよう変更
+- [x] **回帰テスト追加**: `subset_font_excludes_tables_with_stale_gid_refs`（`tests/e2e_noto_jp.rs`）
+  - "Hello World" + NotoSansJP で PDF 生成し埋め込みフォントに GSUB/GPOS/gvar 等がないことを検証
+  - maxp.numGlyphs が小さなサブセットサイズになっていることを確認
+
 ### 中優先度
 
 - [ ] **PDF/A 準拠出力** — 対象ユーザー: 長期保存・官公庁PDF。ICC プロファイル埋め込み・XMP メタデータ等が必要（難度: 大）
