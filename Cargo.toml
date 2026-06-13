@@ -19,7 +19,7 @@ categories = ["rendering::data-formats", "text-processing", "parser-implementati
 [dependencies]
 lopdf = "0.40"
 ttf-parser = "0.25"
-png = { version = "0.17", optional = true }
+png = { version = "0.18", optional = true }
 sha2 = { version = "0.10", optional = true }
 rsa = { version = "0.9", optional = true }
 num-bigint = { version = "0.4", optional = true }
