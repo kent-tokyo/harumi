@@ -89,27 +89,37 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         remapper.remap(gid);
     }
 
-    let subsetted = subsetter_subset(ttf_bytes, 0, &remapper)
+    let (subsetted, gids_to_keep) = subsetter_subset(ttf_bytes, 0, &remapper)
         .map_err(|e| Error::FontParse(format!("font subsetting failed: {}", e)))?;
 
-    // subsetter reassigns GIDs via the remapper.
+    // gids_to_keep is the final sorted set of original GIDs in the subset
+    // (includes composite glyph dependencies beyond what remapper requested).
     // Guard: new GIDs are u16 indices, so the subset cannot exceed 65535 glyphs.
-    if gids.len() > u16::MAX as usize {
+    if gids_to_keep.len() > u16::MAX as usize {
         return Err(Error::FontParse(format!(
             "font has {} glyphs; maximum supported is {}",
-            gids.len(),
+            gids_to_keep.len(),
             u16::MAX
         )));
     }
 
-    let gid_to_char: BTreeMap<u16, char> = orig_gid_to_char
-        .into_iter()
-        .filter_map(|(orig, ch)| remapper.get(orig).map(|new| (new as u16, ch)))
+    // Build new-GID → char and new-GID → advance maps using the actual gids_to_keep
+    // order (sorted by original GID). This correctly accounts for composite deps
+    // that may have been inserted between requested glyphs in the sorted order.
+    let gid_to_char: BTreeMap<u16, char> = gids_to_keep
+        .iter()
+        .enumerate()
+        .filter_map(|(new_idx, orig_gid)| {
+            orig_gid_to_char.get(orig_gid).map(|&ch| (new_idx as u16, ch))
+        })
         .collect();
 
-    let gid_to_advance: BTreeMap<u16, u16> = orig_gid_to_advance
-        .into_iter()
-        .filter_map(|(orig, adv)| remapper.get(orig).map(|new| (new as u16, adv)))
+    let gid_to_advance: BTreeMap<u16, u16> = gids_to_keep
+        .iter()
+        .enumerate()
+        .filter_map(|(new_idx, orig_gid)| {
+            orig_gid_to_advance.get(orig_gid).map(|&adv| (new_idx as u16, adv))
+        })
         .collect();
 
     Ok(SubsetResult {

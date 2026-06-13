@@ -25,13 +25,6 @@ impl GlyphRemapper {
         self.orig_gids.insert(gid);
     }
 
-    /// Get the new GID for an original GID.
-    /// Returns None if the glyph is not in the subset.
-    pub fn get(&self, orig: u16) -> Option<u32> {
-        let sorted: Vec<_> = self.orig_gids.iter().copied().collect();
-        sorted.iter().position(|&g| g == orig).map(|i| i as u32)
-    }
-
     /// Get sorted list of original GIDs to preserve (for internal use).
     fn sorted_gids(&self) -> Vec<u16> {
         self.orig_gids.iter().copied().collect()
@@ -40,13 +33,17 @@ impl GlyphRemapper {
 
 /// Subset a TrueType font to include only the specified glyphs.
 ///
+/// Returns the subsetted font bytes and the final sorted set of original GIDs
+/// that were included (which may be larger than the remapper's set when
+/// composite glyphs pull in additional component GIDs).
+///
 /// # Errors
 /// Returns an error if the font is malformed, CFF-based, or subsetting fails.
 pub(super) fn subset(
     data: &[u8],
     face_index: u32,
     remapper: &GlyphRemapper,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<u8>, BTreeSet<u16>), Box<dyn std::error::Error>> {
     let face = Face::parse(data, face_index)?;
 
     // For TTC (TrueType Collection), find the font data at the specified face_index.
@@ -135,7 +132,13 @@ pub(super) fn subset(
     }
 
     // Build new glyf and loca tables.
-    let (new_glyf, new_glyph_offsets) = build_glyf(&glyph_offsets, glyf, &gids_to_keep)?;
+    // Also rewrite composite glyph component GIDs to their new positions.
+    let gid_remap: BTreeMap<u16, u16> = gids_to_keep
+        .iter()
+        .enumerate()
+        .map(|(new_idx, &orig_gid)| (orig_gid, new_idx as u16))
+        .collect();
+    let (new_glyf, new_glyph_offsets) = build_glyf(&glyph_offsets, glyf, &gids_to_keep, &gid_remap)?;
     let new_loca = build_loca(&new_glyph_offsets, index_to_loc_format as u8)?;
 
     // Build new hmtx table.
@@ -178,21 +181,32 @@ pub(super) fn subset(
     output_tables.insert("loca".into(), new_loca);
     output_tables.insert("hmtx".into(), new_hmtx);
 
-    // Copy over optional tables (excluding cmap and OS/2 which CIDFont PDF handles).
+    // For PDF CIDFont embedding with Identity-H, only core TrueType tables and
+    // hinting tables are safe to include. All other tables contain GID references
+    // (GSUB, GPOS, gvar, etc.) or glyph counts (post, vhea/vmtx) that become
+    // inconsistent after subsetting, causing Core Text / PDF viewers to reject
+    // the embedded font and render all glyphs as replacement characters (●).
     for (tag, data_slice) in table_records.iter() {
-        if matches!(tag.as_str(), "cmap" | "OS/2" | "VORG") {
-            continue; // Skip; not needed for PDF CIDFont embedding.
+        // Skip tables already rebuilt above.
+        if matches!(tag.as_str(), "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx") {
+            continue;
         }
-        if !matches!(
-            tag.as_str(),
-            "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx"
-        ) {
+        // Include only hinting tables: safe (no GID references).
+        if matches!(tag.as_str(), "fpgm" | "prep" | "cvt " | "gasp") {
             output_tables.insert(tag.clone(), data_slice.to_vec());
         }
+        // Everything else is dropped:
+        // - GSUB/GPOS/GDEF/BASE: OpenType layout with stale GID refs after subsetting
+        // - gvar/fvar/avar/HVAR/STAT: variable-font tables with GID-indexed data
+        // - post: numGlyphs field mismatches maxp.numGlyphs after subsetting
+        // - vhea/vmtx: vertical metrics indexed by GID, not rebuilt for subset
+        // - cmap/OS/2/VORG: PDF Identity-H handles encoding; not needed
+        // - name/kern/morx/mort/JSTF/...: not used for PDF CIDFont rendering
     }
 
     // Assemble the new font binary.
-    assemble_font(&output_tables, offset_table.is_truetype)
+    let font_bytes = assemble_font(&output_tables, offset_table.is_truetype)?;
+    Ok((font_bytes, gids_to_keep))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -355,6 +369,7 @@ fn build_glyf(
     glyph_offsets: &[u32],
     glyf: &[u8],
     gids_to_keep: &BTreeSet<u16>,
+    gid_remap: &BTreeMap<u16, u16>,
 ) -> Result<(Vec<u8>, Vec<u32>), Box<dyn std::error::Error>> {
     let mut new_glyf = Vec::new();
     let mut new_offsets = vec![0u32];
@@ -369,11 +384,67 @@ fn build_glyf(
         if start > glyf.len() || end > glyf.len() {
             return Err("glyph offset out of bounds".into());
         }
-        new_glyf.extend_from_slice(&glyf[start..end]);
+        let glyph_data = &glyf[start..end];
+        if glyph_data.len() >= 2 {
+            let num_contours = i16::from_be_bytes([glyph_data[0], glyph_data[1]]);
+            if num_contours < 0 {
+                // Composite glyph: copy with component GIDs rewritten to new positions.
+                new_glyf.extend_from_slice(rewrite_composite_gids(glyph_data, gid_remap).as_slice());
+            } else {
+                new_glyf.extend_from_slice(glyph_data);
+            }
+        } else {
+            new_glyf.extend_from_slice(glyph_data);
+        }
         new_offsets.push(new_glyf.len() as u32);
     }
 
     Ok((new_glyf, new_offsets))
+}
+
+/// Rewrites composite glyph component GIDs from original to new positions.
+fn rewrite_composite_gids(glyph_data: &[u8], gid_remap: &BTreeMap<u16, u16>) -> Vec<u8> {
+    let mut out = glyph_data.to_vec();
+    let mut offset = 10; // Skip glyph header (numberOfContours + bounding box = 10 bytes)
+
+    while offset < out.len() {
+        if offset + 4 > out.len() {
+            break;
+        }
+        let flags = u16::from_be_bytes([out[offset], out[offset + 1]]);
+        let orig_comp_gid = u16::from_be_bytes([out[offset + 2], out[offset + 3]]);
+
+        // Rewrite the component GID to its new position.
+        if let Some(&new_gid) = gid_remap.get(&orig_comp_gid) {
+            let bytes = new_gid.to_be_bytes();
+            out[offset + 2] = bytes[0];
+            out[offset + 3] = bytes[1];
+        }
+
+        offset += 4;
+
+        // Advance past argument bytes (same logic as collect_composite_deps).
+        if (flags & 0x0001) != 0 {
+            offset += 4; // Two i16
+        } else {
+            offset += 2; // Two i8
+        }
+
+        // Advance past scale/matrix.
+        if (flags & 0x0008) != 0 {
+            offset += 2; // F2Dot14
+        } else if (flags & 0x0040) != 0 {
+            offset += 4; // Two F2Dot14
+        } else if (flags & 0x0080) != 0 {
+            offset += 8; // 2x2 matrix
+        }
+
+        if (flags & 0x0020) == 0 {
+            break; // No more components
+        }
+    }
+
+    out
 }
 
 fn build_loca(glyph_offsets: &[u32], format: u8) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
