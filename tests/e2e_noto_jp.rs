@@ -555,6 +555,44 @@ fn read_hhea_num_h_metrics(font_data: &[u8]) -> u16 {
     0
 }
 
+// Regression: embedded font must have a valid head.checkSumAdjustment (not always 0).
+// The value B1B0AFBA is the target: sum of all 32-bit words in the font plus
+// checkSumAdjustment must equal 0xB1B0AFBA (mod 2^32).
+#[test]
+fn subset_head_checksum_adjustment_is_valid() {
+    let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
+    let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
+    let f = doc.embed_font(&font).unwrap();
+    doc.page(1).unwrap()
+        .add_text("Hello", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
+        .unwrap();
+    let out = doc.save_to_bytes().unwrap();
+    // extract_font_file2 may include a trailing '\n' added by lopdf before "endstream".
+    // Strip trailing CR/LF bytes — the TTF binary itself never ends with newline characters.
+    let mut embedded = extract_font_file2(&out);
+    while embedded.last().map_or(false, |&b| b == b'\n' || b == b'\r') {
+        embedded.pop();
+    }
+
+    // Compute the sum of all 32-bit big-endian words in the font (wrapping).
+    let total_sum: u32 = embedded.chunks(4)
+        .fold(0u32, |acc, chunk| {
+            let word = if chunk.len() == 4 {
+                u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            } else {
+                let mut buf = [0u8; 4];
+                buf[..chunk.len()].copy_from_slice(chunk);
+                u32::from_be_bytes(buf)
+            };
+            acc.wrapping_add(word)
+        });
+
+    assert_eq!(
+        total_sum, 0xB1B0AFBA,
+        "font checksum invalid: sum=0x{total_sum:08X}, expected 0xB1B0AFBA"
+    );
+}
+
 fn read_table_length(font_data: &[u8], tag: &[u8; 4]) -> usize {
     let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
     for i in 0..num_tables {

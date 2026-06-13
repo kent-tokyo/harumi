@@ -139,7 +139,12 @@ pub(super) fn subset(
         .map(|(new_idx, &orig_gid)| (orig_gid, new_idx as u16))
         .collect();
     let (new_glyf, new_glyph_offsets) = build_glyf(&glyph_offsets, glyf, &gids_to_keep, &gid_remap)?;
-    let new_loca = build_loca(&new_glyph_offsets, index_to_loc_format as u8)?;
+
+    // Determine loca format. After 4-byte glyph alignment the total glyf size
+    // might (rarely) exceed the short-format limit of 0xFFFF * 2 = 131070 bytes.
+    let max_glyph_offset = new_glyph_offsets.last().copied().unwrap_or(0);
+    let loca_format: u8 = if max_glyph_offset > 131070 { 1 } else { index_to_loc_format as u8 };
+    let new_loca = build_loca(&new_glyph_offsets, loca_format)?;
 
     // Build new hmtx table.
     let new_hmtx = build_hmtx(
@@ -150,22 +155,92 @@ pub(super) fn subset(
     )?;
 
     // Patch head, hhea, maxp tables with new metrics.
-    let new_head = head.to_vec();
+    let mut new_head = head.to_vec();
+    // Zero out checkSumAdjustment (bytes 8-11 of head) so assemble_font can
+    // compute and write the correct value for the final subset binary.
+    // The original font's value would otherwise corrupt the full-font checksum.
+    if new_head.len() >= 12 {
+        new_head[8..12].copy_from_slice(&[0u8; 4]);
+    }
     let mut new_hhea = hhea.to_vec();
     let mut new_maxp = maxp.to_vec();
 
-    // head.indexToLocFormat: keep the original format.
-    // Subsetting never increases glyph data size, so short→long upgrade is never
-    // needed. The original check was also buggy: it wrote only the high byte of
-    // the big-endian u16 (setting the value to 0x0100 = 256 instead of 0x0001).
+    // Update head.indexToLocFormat if we had to upgrade to long format.
+    if loca_format as u16 != index_to_loc_format && new_head.len() >= 52 {
+        new_head[50..52].copy_from_slice(&(loca_format as u16).to_be_bytes());
+    }
 
     // Update hhea.numberOfHMetrics.
     // All subset glyphs are written as full 4-byte longHorMetric entries in
     // build_hmtx, so numberOfHMetrics must equal the subset glyph count.
     let num_new_metrics = gids_to_keep.len();
     if new_hhea.len() >= 36 {
-        let bytes = (num_new_metrics as u16).to_be_bytes();
-        new_hhea[34..36].copy_from_slice(&bytes);
+        new_hhea[34..36].copy_from_slice(&(num_new_metrics as u16).to_be_bytes());
+    }
+
+    // Update hhea.advanceWidthMax and hhea.minLeftSideBearing from rebuilt hmtx.
+    if new_hhea.len() >= 14 && !new_hmtx.is_empty() {
+        let adv_max = new_hmtx.chunks(4)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .max()
+            .unwrap_or(0);
+        new_hhea[10..12].copy_from_slice(&adv_max.to_be_bytes());
+        let lsb_min = new_hmtx.chunks(4)
+            .map(|c| i16::from_be_bytes([c[2], c[3]]))
+            .min()
+            .unwrap_or(0);
+        new_hhea[12..14].copy_from_slice(&lsb_min.to_be_bytes());
+    }
+
+    // Compute hhea.minRightSideBearing, hhea.xMaxExtent, and head.fontBBox
+    // from the subset glyph bounding boxes in the new glyf table.
+    {
+        let mut g_x_min = i16::MAX;
+        let mut g_y_min = i16::MAX;
+        let mut g_x_max = i16::MIN;
+        let mut g_y_max = i16::MIN;
+        let mut min_rsb = i16::MAX;
+        let mut max_extent: i16 = i16::MIN;
+        let mut has_outlines = false;
+
+        for new_idx in 0..gids_to_keep.len() {
+            let start = new_glyph_offsets[new_idx] as usize;
+            let end = new_glyph_offsets[new_idx + 1] as usize;
+            if end < start + 10 || end > new_glyf.len() { continue; }
+
+            let hdr = &new_glyf[start..end];
+            let x_min = i16::from_be_bytes([hdr[2], hdr[3]]);
+            let y_min = i16::from_be_bytes([hdr[4], hdr[5]]);
+            let x_max = i16::from_be_bytes([hdr[6], hdr[7]]);
+            let y_max = i16::from_be_bytes([hdr[8], hdr[9]]);
+            let adv = if new_idx * 4 + 2 <= new_hmtx.len() {
+                u16::from_be_bytes([new_hmtx[new_idx * 4], new_hmtx[new_idx * 4 + 1]]) as i16
+            } else { 0 };
+            let lsb = if new_idx * 4 + 4 <= new_hmtx.len() {
+                i16::from_be_bytes([new_hmtx[new_idx * 4 + 2], new_hmtx[new_idx * 4 + 3]])
+            } else { 0 };
+
+            g_x_min = g_x_min.min(x_min);
+            g_y_min = g_y_min.min(y_min);
+            g_x_max = g_x_max.max(x_max);
+            g_y_max = g_y_max.max(y_max);
+            min_rsb = min_rsb.min(adv - lsb - (x_max - x_min));
+            max_extent = max_extent.max(lsb + (x_max - x_min));
+            has_outlines = true;
+        }
+
+        if has_outlines {
+            if new_hhea.len() >= 18 {
+                new_hhea[14..16].copy_from_slice(&min_rsb.to_be_bytes());
+                new_hhea[16..18].copy_from_slice(&max_extent.to_be_bytes());
+            }
+            if new_head.len() >= 44 {
+                new_head[36..38].copy_from_slice(&g_x_min.to_be_bytes());
+                new_head[38..40].copy_from_slice(&g_y_min.to_be_bytes());
+                new_head[40..42].copy_from_slice(&g_x_max.to_be_bytes());
+                new_head[42..44].copy_from_slice(&g_y_max.to_be_bytes());
+            }
+        }
     }
 
     // Update maxp.numGlyphs.
@@ -398,6 +473,9 @@ fn build_glyf(
         } else {
             new_glyf.extend_from_slice(glyph_data);
         }
+        // Align next glyph to 4-byte boundary (TrueType spec requirement).
+        let padding = (4 - new_glyf.len() % 4) % 4;
+        new_glyf.resize(new_glyf.len() + padding, 0u8);
         new_offsets.push(new_glyf.len() as u32);
     }
 
@@ -508,6 +586,23 @@ fn build_hmtx(
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Computes the OpenType/TrueType table checksum: sum of all 32-bit big-endian words,
+/// with any trailing bytes zero-padded to form the last word.
+fn calc_checksum(data: &[u8]) -> u32 {
+    let mut sum = 0u32;
+    let mut i = 0;
+    while i + 4 <= data.len() {
+        sum = sum.wrapping_add(u32::from_be_bytes([data[i], data[i+1], data[i+2], data[i+3]]));
+        i += 4;
+    }
+    if i < data.len() {
+        let mut buf = [0u8; 4];
+        buf[..data.len() - i].copy_from_slice(&data[i..]);
+        sum = sum.wrapping_add(u32::from_be_bytes(buf));
+    }
+    sum
+}
+
 fn assemble_font(
     tables: &BTreeMap<String, Vec<u8>>,
     is_truetype: bool,
@@ -560,6 +655,33 @@ fn assemble_font(
         }
         font.extend_from_slice(data);
         current_offset += data.len();
+    }
+
+    // --- Fill in per-table checksums ---
+    // The directory entries are at positions 12, 28, 44, ... (12 + i*16).
+    // Each 16-byte entry: tag(4) | checksum(4) | offset(4) | length(4).
+    for (i, (_tag, offset, length)) in table_offsets.iter().enumerate() {
+        let checksum = calc_checksum(&font[*offset..*offset + *length]);
+        let cs_pos = 12 + i * 16 + 4;
+        font[cs_pos..cs_pos + 4].copy_from_slice(&checksum.to_be_bytes());
+    }
+
+    // --- Compute and write head.checkSumAdjustment ---
+    // Per spec: sum entire font as 32-bit big-endian words (with head.checkSumAdjustment = 0,
+    // which it is since we haven't set it yet), then store 0xB1B0AFBA - sum at bytes 8-11
+    // of the head table. The head table's per-table checksum in the directory was computed
+    // with checkSumAdjustment = 0, which is the correct behavior per the spec.
+    let full_sum = calc_checksum(&font);
+    let adjustment = 0xB1B0AFBAu32.wrapping_sub(full_sum);
+    for (tag, offset, _length) in &table_offsets {
+        if tag == "head" {
+            // checkSumAdjustment is at bytes 8-11 of the head table.
+            let pos = offset + 8;
+            if pos + 4 <= font.len() {
+                font[pos..pos + 4].copy_from_slice(&adjustment.to_be_bytes());
+            }
+            break;
+        }
     }
 
     Ok(font)
