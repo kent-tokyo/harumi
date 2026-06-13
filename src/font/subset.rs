@@ -8,8 +8,15 @@ use crate::error::{Error, Result};
 
 pub struct SubsetResult {
     pub bytes: Vec<u8>,
-    /// Maps **new** GID (0..N, post-subset) → Unicode char.
+    /// Maps **new** GID (0..N, post-subset) → Unicode char (one per GID).
+    /// Used for the ToUnicode CMap. When multiple chars share a glyph, only the
+    /// first char seen is kept here.
     pub gid_to_char: BTreeMap<u16, char>,
+    /// Maps every input char → its **new** GID. This is the authoritative mapping
+    /// for content stream encoding. Unlike `gid_to_char`, this map includes ALL
+    /// requested chars even when two chars share the same underlying glyph (both
+    /// map to the same new GID, which is correct for rendering).
+    pub char_to_gid: BTreeMap<char, u16>,
     /// Maps **new** GID (0..N, post-subset) → advance width in font design units.
     pub gid_to_advance: BTreeMap<u16, u16>,
     pub units_per_em: u16,
@@ -103,28 +110,49 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         )));
     }
 
-    // Build new-GID → char and new-GID → advance maps using the actual gids_to_keep
-    // order (sorted by original GID). This correctly accounts for composite deps
-    // that may have been inserted between requested glyphs in the sorted order.
-    let gid_to_char: BTreeMap<u16, char> = gids_to_keep
+    // Build orig_gid → new_gid from the final kept-glyph order (sorted, including
+    // composite deps). This is the authoritative position map for the subset font.
+    let orig_to_new_gid: BTreeMap<u16, u16> = gids_to_keep
         .iter()
         .enumerate()
-        .filter_map(|(new_idx, orig_gid)| {
-            orig_gid_to_char.get(orig_gid).map(|&ch| (new_idx as u16, ch))
+        .map(|(new_idx, &orig_gid)| (orig_gid, new_idx as u16))
+        .collect();
+
+    // gid_to_char: one char per new GID (for ToUnicode CMap).
+    // When multiple chars share a glyph, only the first char seen is kept here.
+    let gid_to_char: BTreeMap<u16, char> = gids_to_keep
+        .iter()
+        .filter_map(|orig_gid| {
+            let new_gid = *orig_to_new_gid.get(orig_gid)?;
+            orig_gid_to_char.get(orig_gid).map(|&ch| (new_gid, ch))
+        })
+        .collect();
+
+    // char_to_gid: all input chars → new GID (for content stream encoding).
+    // Built directly from the input chars so that every char gets a mapping,
+    // even when two chars share the same underlying glyph (both map to same new GID).
+    let char_to_gid: BTreeMap<char, u16> = chars
+        .iter()
+        .filter_map(|&ch| {
+            face.glyph_index(ch)
+                .filter(|gid| gid.0 != 0)
+                .and_then(|gid| orig_to_new_gid.get(&gid.0))
+                .map(|&new_gid| (ch, new_gid))
         })
         .collect();
 
     let gid_to_advance: BTreeMap<u16, u16> = gids_to_keep
         .iter()
-        .enumerate()
-        .filter_map(|(new_idx, orig_gid)| {
-            orig_gid_to_advance.get(orig_gid).map(|&adv| (new_idx as u16, adv))
+        .filter_map(|orig_gid| {
+            let new_gid = *orig_to_new_gid.get(orig_gid)?;
+            orig_gid_to_advance.get(orig_gid).map(|&adv| (new_gid, adv))
         })
         .collect();
 
     Ok(SubsetResult {
         bytes: subsetted,
         gid_to_char,
+        char_to_gid,
         gid_to_advance,
         units_per_em,
         font_kind,

@@ -394,11 +394,9 @@ pub(crate) fn resubset_and_replace(
     // --- Step 2: create new subset ---
     let all_chars_vec: Vec<char> = all_chars.into_iter().collect();
     let subset = subset_font(&work.font_bytes, &all_chars_vec)?;
-    let new_char_to_gid: BTreeMap<char, u16> = subset
-        .gid_to_char
-        .iter()
-        .map(|(&gid, &ch)| (ch, gid))
-        .collect();
+    // Use the pre-built char_to_gid from SubsetResult, which correctly maps
+    // ALL input chars even when two chars share the same underlying glyph.
+    let new_char_to_gid = subset.char_to_gid.clone();
 
     // --- Step 3: update PDF font objects ---
     // Find an anchor page that has this font to resolve object IDs.

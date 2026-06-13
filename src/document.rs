@@ -1994,11 +1994,9 @@ impl Document {
 
             let subset = subset_font(&raw.ttf_bytes, chars)?;
 
-            let char_to_gid: BTreeMap<char, u16> = subset
-                .gid_to_char
-                .iter()
-                .map(|(&gid, &ch)| (ch, gid))
-                .collect();
+            // Use the pre-built char_to_gid from SubsetResult, which correctly maps
+            // ALL input chars even when two chars share the same underlying glyph.
+            let char_to_gid = subset.char_to_gid.clone();
 
             let face =
                 Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
