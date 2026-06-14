@@ -124,6 +124,21 @@ struct PendingBookmark {
     level: u8,
 }
 
+/// Information about a file attached to a PDF.
+///
+/// Returned by [`Document::list_attachments`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct AttachmentInfo {
+    /// The filename as stored in the PDF `/Filespec` `/F` entry.
+    pub filename: String,
+    /// Uncompressed size in bytes, from the embedded stream's `/Params /Size` entry.
+    /// `0` if the size was not recorded.
+    pub size: usize,
+    /// MIME type from the embedded stream's `/Subtype` entry, if present.
+    pub mime_type: Option<String>,
+}
+
 /// PDF /Info dictionary fields.
 ///
 /// Used with [`Document::metadata`] and [`Document::set_metadata`].
@@ -825,6 +840,109 @@ impl Document {
         let pages_dict = self.inner.get_object_mut(pages_root)?.as_dict_mut()?;
         pages_dict.set("Kids", Object::Array(new_kids));
         pages_dict.set("Count", Object::Integer(count as i64));
+
+        Ok(())
+    }
+
+    /// Overlays each page of `other` on top of the corresponding page of `self`.
+    ///
+    /// Each page of `other` is embedded as a PDF Form XObject and rendered on top
+    /// of the matching page in `self` via the `Do` operator. Pages in `self` with
+    /// no corresponding `other` page are left untouched.
+    ///
+    /// The overlay is appended at the end of each base page's content stream, so it
+    /// renders on top of existing content. The base page's coordinate system is
+    /// preserved; if the base page uses an unbalanced `cm` without `q/Q`, the overlay
+    /// position may be affected.
+    ///
+    /// # What is preserved from `other`
+    /// Page content, embedded fonts, images, ExtGState (opacity), and other resources.
+    ///
+    /// # What is NOT preserved from `other`
+    /// Outlines/Bookmarks, AcroForm, /Names, /PageLabels, /OpenAction, /StructTreeRoot.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save) or if
+    /// `other` has unflushed pending operations (call `save_to_bytes()+from_bytes()` first).
+    pub fn overlay_from(&mut self, other: Document) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "overlay_from after save() is not supported; create a new Document".into(),
+            ));
+        }
+        if !other.pending.is_empty() {
+            return Err(Error::InvalidInput(
+                "other has unflushed pending operations; call save_to_bytes()+from_bytes() first"
+                    .into(),
+            ));
+        }
+
+        // Renumber other's object IDs to avoid collision with self.
+        let mut other_inner = other.inner;
+        other_inner.renumber_objects_with(self.inner.max_id + 1);
+
+        // Collect ordered page IDs from both documents.
+        let other_pages: Vec<ObjectId> = other_inner.get_pages().into_values().collect();
+        let self_pages: Vec<ObjectId> = self.inner.get_pages().into_values().collect();
+
+        // Merge all of other's objects into self (other's /Catalog and /Pages become orphans).
+        self.inner.objects.extend(other_inner.objects);
+        self.inner.max_id = other_inner.max_id;
+
+        let page_count = self_pages.len().min(other_pages.len());
+        for i in 0..page_count {
+            let self_page_id = self_pages[i];
+            let other_page_id = other_pages[i];
+
+            // Get the other page's MediaBox in [x1, y1, x2, y2] for the Form XObject BBox.
+            let bbox = inherited_media_box_raw(&self.inner, other_page_id);
+
+            // Get the other page's /Resources (with parent-chain inheritance).
+            let resources_dict =
+                inherited_resources(&self.inner, other_page_id).unwrap_or_default();
+
+            // Decode and concatenate all of the other page's content streams.
+            let content_streams =
+                crate::extract::page_content_streams(&self.inner, other_page_id);
+            let content_bytes: Vec<u8> = {
+                let mut all: Vec<u8> = Vec::new();
+                for (j, bytes) in content_streams.into_iter().enumerate() {
+                    if j > 0 {
+                        all.push(b'\n');
+                    }
+                    all.extend_from_slice(&bytes);
+                }
+                all
+            };
+
+            // Build a Form XObject from the other page's content and resources.
+            let mut form_dict = Dictionary::new();
+            form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+            form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+            form_dict.set(
+                "BBox",
+                Object::Array(vec![
+                    Object::Real(bbox[0]),
+                    Object::Real(bbox[1]),
+                    Object::Real(bbox[2]),
+                    Object::Real(bbox[3]),
+                ]),
+            );
+            form_dict.set("Resources", Object::Dictionary(resources_dict));
+            let form_stream = Stream::new(form_dict, content_bytes);
+            let form_id = self.inner.add_object(Object::Stream(form_stream));
+
+            // Register the Form XObject in the base page's /Resources /XObject dict.
+            let xobj_name = format!("OVRL{i}");
+            add_xobject_to_resources(&mut self.inner, self_page_id, xobj_name.as_bytes(), form_id)?;
+
+            // Append the Do operator to invoke the overlay.
+            let do_bytes = format!("/{xobj_name} Do\n").into_bytes();
+            let do_stream_id = self
+                .inner
+                .add_object(Object::Stream(Stream::new(Dictionary::new(), do_bytes)));
+            append_to_contents(&mut self.inner, self_page_id, do_stream_id)?;
+        }
 
         Ok(())
     }
@@ -1569,6 +1687,280 @@ impl Document {
             level,
         });
         Ok(())
+    }
+
+    /// Removes all bookmarks (table of contents) from the document.
+    ///
+    /// Clears both:
+    /// - Pending bookmarks queued with [`add_bookmark`](Document::add_bookmark) or
+    ///   [`add_outline_item`](Document::add_outline_item) that have not yet been saved.
+    /// - Any `/Outlines` tree already present in a loaded PDF.
+    ///
+    /// # Errors
+    /// Returns [`Error::Pdf`] if the document's catalog is structurally malformed.
+    pub fn clear_outline(&mut self) -> Result<()> {
+        self.pending_bookmarks.clear();
+        let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
+        let catalog = self.inner.get_object_mut(root_ref)?.as_dict_mut()?;
+        catalog.remove(b"Outlines");
+        Ok(())
+    }
+
+    /// Embeds a file as a PDF attachment.
+    ///
+    /// The attachment is stored in the document's `/Names /EmbeddedFiles` name tree
+    /// and is visible in PDF viewers that support attachments (Adobe Acrobat, Preview, etc.).
+    /// The data is compressed with FlateDecode before embedding.
+    ///
+    /// `mime_type` is stored as the `/Subtype` of the embedded stream (e.g. `"text/plain"`,
+    /// `"image/png"`). Pass an empty string to omit it.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save) or if
+    /// `filename` is empty.
+    pub fn attach_file(&mut self, filename: &str, data: &[u8], mime_type: &str) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "attach_file after save() is not supported".into(),
+            ));
+        }
+        if filename.is_empty() {
+            return Err(Error::InvalidInput("filename must not be empty".into()));
+        }
+
+        // Build the EmbeddedFile stream.
+        let mut ef_dict = Dictionary::new();
+        ef_dict.set("Type", Object::Name(b"EmbeddedFile".to_vec()));
+        if !mime_type.is_empty() {
+            ef_dict.set(
+                "Subtype",
+                Object::Name(mime_type.as_bytes().to_vec()),
+            );
+        }
+        let mut params = Dictionary::new();
+        params.set("Size", Object::Integer(data.len() as i64));
+        ef_dict.set("Params", Object::Dictionary(params));
+        let mut ef_stream = Stream::new(ef_dict, data.to_vec());
+        let _ = ef_stream.compress();
+        let ef_id = self.inner.add_object(Object::Stream(ef_stream));
+
+        // Build the Filespec dictionary.
+        let mut fs_dict = Dictionary::new();
+        fs_dict.set("Type", Object::Name(b"Filespec".to_vec()));
+        fs_dict.set(
+            "F",
+            Object::String(filename.as_bytes().to_vec(), StringFormat::Literal),
+        );
+        fs_dict.set("UF", pdf_text_string(filename));
+        let mut ef_ref_dict = Dictionary::new();
+        ef_ref_dict.set("F", Object::Reference(ef_id));
+        fs_dict.set("EF", Object::Dictionary(ef_ref_dict));
+        let fs_id = self.inner.add_object(Object::Dictionary(fs_dict));
+
+        // Insert into /Catalog /Names /EmbeddedFiles /Names array (sorted by filename).
+        let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
+
+        // Get or create /Names dict in catalog.
+        let names_id: ObjectId = {
+            let catalog = self.inner.get_object(root_ref)?.as_dict()?;
+            match catalog.get(b"Names").ok() {
+                Some(Object::Reference(r)) => *r,
+                Some(Object::Dictionary(_)) => {
+                    // Inline dict — upgrade to indirect reference.
+                    let d = catalog.get(b"Names")?.as_dict()?.clone();
+                    let id = self.inner.add_object(Object::Dictionary(d));
+                    self.inner.get_object_mut(root_ref)?.as_dict_mut()?.set(
+                        "Names",
+                        Object::Reference(id),
+                    );
+                    id
+                }
+                _ => {
+                    let id = self.inner.add_object(Object::Dictionary(Dictionary::new()));
+                    self.inner
+                        .get_object_mut(root_ref)?
+                        .as_dict_mut()?
+                        .set("Names", Object::Reference(id));
+                    id
+                }
+            }
+        };
+
+        // Get or create /EmbeddedFiles entry in /Names dict.
+        let ef_names_id: ObjectId = {
+            let names_dict = self.inner.get_object(names_id)?.as_dict()?;
+            match names_dict.get(b"EmbeddedFiles").ok() {
+                Some(Object::Reference(r)) => *r,
+                Some(Object::Dictionary(_)) => {
+                    let d = names_dict.get(b"EmbeddedFiles")?.as_dict()?.clone();
+                    let id = self.inner.add_object(Object::Dictionary(d));
+                    self.inner.get_object_mut(names_id)?.as_dict_mut()?.set(
+                        "EmbeddedFiles",
+                        Object::Reference(id),
+                    );
+                    id
+                }
+                _ => {
+                    let mut d = Dictionary::new();
+                    d.set("Names", Object::Array(vec![]));
+                    let id = self.inner.add_object(Object::Dictionary(d));
+                    self.inner
+                        .get_object_mut(names_id)?
+                        .as_dict_mut()?
+                        .set("EmbeddedFiles", Object::Reference(id));
+                    id
+                }
+            }
+        };
+
+        // Append [filename_string, filespec_ref] to the /Names array.
+        let ef_names_dict = self.inner.get_object_mut(ef_names_id)?.as_dict_mut()?;
+        let names_arr = match ef_names_dict.get_mut(b"Names") {
+            Ok(obj) => obj.as_array_mut()?,
+            Err(_) => {
+                ef_names_dict.set("Names", Object::Array(vec![]));
+                ef_names_dict.get_mut(b"Names")?.as_array_mut()?
+            }
+        };
+        names_arr.push(Object::String(
+            filename.as_bytes().to_vec(),
+            StringFormat::Literal,
+        ));
+        names_arr.push(Object::Reference(fs_id));
+
+        // PDF spec §7.9.6 requires /Names entries to be sorted ascending by key.
+        // Sort in-place, treating the flat array as (key, value) pairs.
+        let n = names_arr.len();
+        if n >= 4 {
+            let mut pairs: Vec<(Vec<u8>, Object)> = Vec::with_capacity(n / 2);
+            let mut iter = std::mem::take(names_arr).into_iter();
+            while let (Some(k), Some(v)) = (iter.next(), iter.next()) {
+                let key_bytes = match &k {
+                    Object::String(b, _) => b.clone(),
+                    _ => vec![],
+                };
+                pairs.push((key_bytes, v));
+            }
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (key_bytes, val) in pairs {
+                names_arr.push(Object::String(key_bytes, StringFormat::Literal));
+                names_arr.push(val);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns information about all files attached to this document.
+    ///
+    /// Reads the `/Names /EmbeddedFiles` name tree. Only flat (non-nested) `/Names`
+    /// arrays are currently traversed; hierarchical name trees with `/Kids` nodes are
+    /// skipped.
+    ///
+    /// # Errors
+    /// Returns [`Error::Pdf`] only on structurally malformed catalog data.
+    pub fn list_attachments(&self) -> Result<Vec<AttachmentInfo>> {
+        let root_ref = self.inner.trailer.get(b"Root")?.as_reference()?;
+        let catalog = self.inner.get_object(root_ref)?.as_dict()?;
+
+        let names_dict = match catalog.get(b"Names").ok() {
+            Some(Object::Reference(r)) => {
+                self.inner.get_object(*r)?.as_dict()?.clone()
+            }
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return Ok(vec![]),
+        };
+
+        let ef_dict = match names_dict.get(b"EmbeddedFiles").ok() {
+            Some(Object::Reference(r)) => {
+                self.inner.get_object(*r)?.as_dict()?.clone()
+            }
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return Ok(vec![]),
+        };
+
+        let names_arr = match ef_dict.get(b"Names").ok() {
+            Some(Object::Array(a)) => a.clone(),
+            _ => return Ok(vec![]),
+        };
+
+        let mut results = Vec::new();
+        let mut iter = names_arr.iter();
+        while let (Some(_key), Some(val)) = (iter.next(), iter.next()) {
+            let fs_dict = match val {
+                Object::Reference(r) => match self.inner.get_object(*r).ok() {
+                    Some(o) => match o.as_dict().ok() {
+                        Some(d) => d.clone(),
+                        None => continue,
+                    },
+                    None => continue,
+                },
+                Object::Dictionary(d) => d.clone(),
+                _ => continue,
+            };
+
+            // Resolve filename from /F entry.
+            let filename = match fs_dict.get(b"F").ok() {
+                Some(Object::String(bytes, _)) => {
+                    String::from_utf8_lossy(bytes).into_owned()
+                }
+                _ => continue,
+            };
+
+            // Resolve the EmbeddedFile stream for size and MIME type.
+            let (size, mime_type) = match fs_dict.get(b"EF").ok() {
+                Some(ef_obj) => {
+                    let ef_ref_dict = match ef_obj {
+                        Object::Dictionary(d) => Some(d.clone()),
+                        Object::Reference(r) => self
+                            .inner
+                            .get_object(*r)
+                            .ok()
+                            .and_then(|o| o.as_dict().ok().cloned()),
+                        _ => None,
+                    };
+                    if let Some(efd) = ef_ref_dict {
+                        let ef_stream_obj = match efd.get(b"F").ok() {
+                            Some(Object::Reference(r)) => {
+                                self.inner.get_object(*r).ok().cloned()
+                            }
+                            _ => None,
+                        };
+                        if let Some(Object::Stream(s)) = ef_stream_obj {
+                            let size = match s.dict.get(b"Params").ok() {
+                                Some(Object::Dictionary(p)) => {
+                                    match p.get(b"Size").ok() {
+                                        Some(Object::Integer(n)) => *n as usize,
+                                        _ => 0,
+                                    }
+                                }
+                                _ => 0,
+                            };
+                            let mime = match s.dict.get(b"Subtype").ok() {
+                                Some(Object::Name(n)) => {
+                                    Some(String::from_utf8_lossy(n).into_owned())
+                                }
+                                _ => None,
+                            };
+                            (size, mime)
+                        } else {
+                            (0, None)
+                        }
+                    } else {
+                        (0, None)
+                    }
+                }
+                _ => (0, None),
+            };
+
+            results.push(AttachmentInfo {
+                filename,
+                size,
+                mime_type,
+            });
+        }
+
+        Ok(results)
     }
 
     /// Extracts positioned text fragments from a page.
@@ -3860,6 +4252,86 @@ impl<'doc> PageHandle<'doc> {
 }
 
 // ---------------------------------------------------------------------------
+// Page content transform: scale_page_content, resize_page_with_content
+// ---------------------------------------------------------------------------
+impl<'doc> PageHandle<'doc> {
+    /// Scales all existing content on this page by inserting a `cm` (Concatenate Matrix)
+    /// operator as a new leading content stream.
+    ///
+    /// `scale_x` and `scale_y` are multipliers applied to the X and Y axes respectively.
+    /// Use equal values for uniform scaling (e.g. `1.414` to scale A4 content to A3).
+    ///
+    /// This operates on already-written content streams only. Pending text/draw operations
+    /// that have not yet been flushed (i.e. `save()` has not been called) are not affected
+    /// by this call — they are written after `cm` is applied and will also be scaled.
+    ///
+    /// **Annotations** (links, highlights, form fields) have their own coordinates and
+    /// are **not** scaled by this call.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save), or if
+    /// either scale value is non-positive or non-finite.
+    pub fn scale_page_content(&mut self, scale_x: f32, scale_y: f32) -> Result<()> {
+        if self.doc.finalized {
+            return Err(Error::InvalidInput(
+                "scale_page_content after save() is not supported".into(),
+            ));
+        }
+        check_finite(&[scale_x, scale_y], "scale_page_content")?;
+        if scale_x <= 0.0 || scale_y <= 0.0 {
+            return Err(Error::InvalidInput(
+                "scale values must be positive".into(),
+            ));
+        }
+        let cm_bytes = format!("{scale_x:.4} 0 0 {scale_y:.4} 0 0 cm\n").into_bytes();
+        let cm_stream = Stream::new(Dictionary::new(), cm_bytes);
+        let cm_id = self.doc.inner.add_object(Object::Stream(cm_stream));
+        prepend_to_contents(&mut self.doc.inner, self.page_id, cm_id)
+    }
+
+    /// Resizes the page and scales all existing content to fit the new dimensions.
+    ///
+    /// This is a convenience wrapper that:
+    /// 1. Reads the current page size via [`size()`](Self::size).
+    /// 2. Calls [`scale_page_content`](Self::scale_page_content) with
+    ///    `scale_x = new_width / current_width` and `scale_y = new_height / current_height`.
+    /// 3. Updates the MediaBox to the new dimensions via [`set_media_box`](Self::set_media_box).
+    ///
+    /// The CropBox (if any) is removed so the new MediaBox defines the visible area.
+    ///
+    /// **Annotations** are **not** repositioned.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save) or if the
+    /// new dimensions are non-positive or non-finite.
+    pub fn resize_page_with_content(&mut self, new_width: f32, new_height: f32) -> Result<()> {
+        if self.doc.finalized {
+            return Err(Error::InvalidInput(
+                "resize_page_with_content after save() is not supported".into(),
+            ));
+        }
+        check_finite(&[new_width, new_height], "resize_page_with_content")?;
+        check_positive_size(new_width, new_height, "resize_page_with_content")?;
+        let (cur_w, cur_h) = self.size()?;
+        if cur_w <= 0.0 || cur_h <= 0.0 {
+            return Err(Error::InvalidInput(
+                "current page size is zero or negative".into(),
+            ));
+        }
+        let scale_x = new_width / cur_w;
+        let scale_y = new_height / cur_h;
+        self.scale_page_content(scale_x, scale_y)?;
+        // Remove CropBox so the new MediaBox controls the visible area.
+        self.doc
+            .inner
+            .get_object_mut(self.page_id)?
+            .as_dict_mut()?
+            .remove(b"CropBox");
+        self.set_media_box([0.0, 0.0, new_width, new_height])
+    }
+}
+
+// ---------------------------------------------------------------------------
 // draw feature: add_rect, add_line
 // ---------------------------------------------------------------------------
 #[cfg(feature = "draw")]
@@ -5021,6 +5493,53 @@ fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) ->
     Ok(())
 }
 
+/// Inserts `new_stream_id` before all existing content streams in a page's `/Contents`.
+fn prepend_to_contents(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    new_stream_id: ObjectId,
+) -> Result<()> {
+    let contents_ref = doc
+        .get_object(page_id)?
+        .as_dict()?
+        .get(b"Contents")
+        .ok()
+        .cloned();
+
+    let new_ref = Object::Reference(new_stream_id);
+
+    match contents_ref {
+        Some(Object::Reference(r)) => {
+            let is_array = doc
+                .get_object(r)
+                .ok()
+                .map(|o| matches!(o, Object::Array(_)))
+                .unwrap_or(false);
+            if is_array {
+                doc.get_object_mut(r)?.as_array_mut()?.insert(0, new_ref);
+            } else {
+                let arr = Object::Array(vec![new_ref, Object::Reference(r)]);
+                doc.get_object_mut(page_id)?
+                    .as_dict_mut()?
+                    .set("Contents", arr);
+            }
+        }
+        Some(Object::Array(mut arr)) => {
+            arr.insert(0, new_ref);
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Contents", Object::Array(arr));
+        }
+        None => {
+            doc.get_object_mut(page_id)?
+                .as_dict_mut()?
+                .set("Contents", new_ref);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn append_to_contents(
     doc: &mut lopdf::Document,
     page_id: ObjectId,
@@ -5125,7 +5644,6 @@ fn ensure_font_entry(res_dict: &mut Dictionary, pdf_name: &[u8], font_ref: Objec
 }
 
 /// Resolves the Resources dict for a page (direct or indirect) and applies `f`.
-#[cfg(any(feature = "draw", feature = "image"))]
 fn with_resources_dict_mut<F>(doc: &mut lopdf::Document, page_id: ObjectId, f: F) -> Result<()>
 where
     F: FnOnce(&mut Dictionary),
@@ -5175,7 +5693,6 @@ fn add_ext_gstate_to_resources(
     })
 }
 
-#[cfg(feature = "image")]
 fn add_xobject_to_resources(
     doc: &mut lopdf::Document,
     page_id: ObjectId,
@@ -5195,6 +5712,55 @@ fn add_xobject_to_resources(
             res.set("XObject", Object::Dictionary(xobj_dict));
         }
     })
+}
+
+/// Returns the MediaBox for a page as raw `[x1, y1, x2, y2]`, traversing the parent chain.
+/// Falls back to A4 dimensions if no MediaBox is found.
+fn inherited_media_box_raw(doc: &lopdf::Document, page_id: ObjectId) -> [f32; 4] {
+    let mut current_id = page_id;
+    for _ in 0..32 {
+        let Ok(dict) = doc.get_object(current_id).and_then(|o| o.as_dict()) else {
+            break;
+        };
+        if let Ok(mb) = dict.get(b"MediaBox")
+            && let Ok(arr) = mb.as_array()
+            && arr.len() >= 4
+        {
+            let get = |i: usize| -> f32 {
+                match &arr[i] {
+                    Object::Integer(v) => *v as f32,
+                    Object::Real(v) => *v,
+                    _ => 0.0,
+                }
+            };
+            return [get(0), get(1), get(2), get(3)]; // x1, y1, x2, y2
+        }
+        match dict.get(b"Parent").ok() {
+            Some(Object::Reference(id)) => current_id = *id,
+            _ => break,
+        }
+    }
+    [0.0, 0.0, 595.0, 842.0] // A4 fallback
+}
+
+/// Returns the `/Resources` dictionary for a page, traversing the parent chain for inheritance.
+fn inherited_resources(doc: &lopdf::Document, page_id: ObjectId) -> Option<Dictionary> {
+    let mut current_id = page_id;
+    for _ in 0..32 {
+        let dict = doc.get_object(current_id).ok()?.as_dict().ok()?;
+        if let Ok(res) = dict.get(b"Resources") {
+            return match res {
+                Object::Dictionary(d) => Some(d.clone()),
+                Object::Reference(id) => doc.get_object(*id).ok()?.as_dict().ok().cloned(),
+                _ => None,
+            };
+        }
+        match dict.get(b"Parent").ok() {
+            Some(Object::Reference(id)) => current_id = *id,
+            _ => break,
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -361,3 +361,29 @@ TTF のコンポジットグリフデータには「コンポーネント GID」
 2. `Document::new() + embed_font + add_text` でテスト PDF を生成
 3. macOS Preview でファイルを開き、文字が正しく表示されることを確認
 4. PSPDFKit があれば同様に確認
+
+## PDF コンテンツスケール・オーバーレイ・ファイル添付の実装教訓（Phase 29 / v1.4.0）
+
+### feature gate の見落としが docs.rs 非表示の原因になる
+`add_text_with_opacity` と `add_text_with_rotation` は `#[cfg(feature = "draw")]` の impl ブロック内に定義されており、`default = []` の harumi をビルドする docs.rs にはこれらが表示されなかった。解決策: `Cargo.toml` に `[package.metadata.docs.rs]` セクションを追加し `features = [...]` ですべてのフィーチャーを指定する。feature gate のついたメソッドが docs.rs に出ない場合は、まず docs.rs のビルド設定を確認すること。
+
+### scale_page_content は `cm` ストリームをコンテンツ先頭に追加する
+PDF の `cm`（Concatenate Matrix）演算子はページ内の全座標変換に影響するため、既存コンテンツの前に適用する必要がある。`append_to_contents` とは逆の `prepend_to_contents` ヘルパーが必要になる。実装パターン: `/Contents` が `Reference(r)` の場合は `Array([new_ref, original_ref])` に変換；`Array(arr)` の場合は `arr.insert(0, new_ref)` で先頭に挿入；InDesign 形式（`Reference` が `Array` を指す）も考慮して `doc.get_object(r)` で配列かどうかを確認する。
+
+### overlay_from: /Resources は必ず親チェーンを遡る
+PDF のページ辞書は `/Resources` を持たず、親 `/Pages` ノードから継承していることがある（Word・InDesign 製 PDF でよく見られる）。harumi 生成の PDF のみをテストフィクスチャに使うと常に通過するが、実際のドキュメントで無リソースになる。`inherited_resources(doc, page_id)` ヘルパーで `/Parent` チェーンを最大 32 段遡って `/Resources` を探すことで、あらゆる PDF に対応できる。同様に MediaBox も `inherited_media_box_raw()` で親チェーンを遡る。
+
+### overlay_from: BBox は `[x1, y1, x2, y2]`（parse_box_array の `[x,y,w,h]` と異なる）
+`PageHandle::media_box()` は `parse_box_array()` を経由して `[x, y, w, h]` 形式を返すが、Form XObject の BBox は PDF 仕様上 `[x1, y1, x2, y2]` で指定する。`inherited_media_box_raw()` を別途実装して生の `[x1, y1, x2, y2]` を返すようにすることで、ゼロ原点でないページ（例: `MediaBox [10 10 605 852]`）でもオーバーレイが正しい位置に描画される。
+
+### overlay_from: Form XObject の /Resources にページリソースをコピーする
+Form XObject は自分の `/Resources` 辞書を持てる。オーバーレイ元ページの `/Resources` をそのまま Form XObject の `/Resources` に設定することで、フォント名・画像名の名前空間が Form XObject 内部に閉じ、ベースページとの衝突が発生しない。`with_resources_dict_mut` / `add_xobject_to_resources` ヘルパーはフィーチャーゲートが不要（lopdf 型のみ使用）なので cfg を外すことで overlay_from から利用できる。
+
+### overlay_from: テストは「Do が出力に存在する」まで確認する
+`overlay_from_produces_valid_pdf` が「ページ数が 2」「reload できる」だけを assert しても、Do 演算子が出力されなくてもテストが通過してしまう。lopdf で直接 `/Resources/XObject` に `OVRL0` があること、コンテンツバイト列に `"Do"` が含まれることを assert することで、機能の実効性まで確認できる。
+
+### PDF 名前ツリーの /Names 配列は昇順ソートが必須
+PDF 仕様 §7.9.6 では名前ツリーの `/Names` 配列のキーを昇順ソートと定めている。Adobe Acrobat や PDF/A バリデーターはバイナリ探索でキーを検索するため、ソートが保証されない場合に添付ファイルが見えなくなる。`attach_file` ではエントリ追加後に `/Names` 配列を `(key_bytes, value)` ペアとして取り出してソートし直す。テストでは逆順に添付してから生の配列を lopdf で検査し、昇順になっていることを確認する（`list_attachments` は線形スキャンするため誤りを検出できない）。
+
+### `pdf_text_string()` は `Object` を返す（`Vec<u8>` ではない）
+既存の `pdf_text_string(s: &str) -> Object` ヘルパーは ASCII なら `Literal`、非 ASCII なら UTF-16BE+BOM の `Object::String(...)` を返す完成した Object を返す。これを `Object::String(pdf_text_string(filename), ...)` のように二重ラップしようとするとコンパイルエラー（型不一致）になる。正しい使い方: `fs_dict.set("UF", pdf_text_string(filename))` のように Object のまま渡す。

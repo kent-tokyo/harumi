@@ -26,9 +26,10 @@ impl FontKind {
 
 /// Opaque handle to a font registered with [`crate::Document::embed_font`].
 ///
-/// The handle is cheap to copy and can be passed to any number of text
-/// placement calls on any page of the same document. Using a handle from a
-/// different document will produce an [`Error::InvalidFont`](crate::Error::InvalidFont).
+/// `FontHandle` is `Copy` — it is a small integer index under the hood.
+/// Pass it freely across pages and loop iterations without cloning.
+/// Using a handle from a different document produces
+/// [`Error::InvalidFont`](crate::Error::InvalidFont).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FontHandle(pub(crate) u32);
 

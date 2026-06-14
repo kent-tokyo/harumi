@@ -1,5 +1,7 @@
 # harumi
 
+> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+
 **Pure-Rust PDF — CJK font embedding, OCR text overlay, text extraction, HTML→PDF, page merge/split.**
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)

@@ -104,8 +104,9 @@ pub(crate) mod pdf_incremental;
 
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
-    Color, Document, FieldType, FormField, PageHandle, PdfMetadata, TextFieldOptions, TextRun,
-    VerticalAlign, calculate_text_width, glyph_advance_pt, wrap_paragraph,
+    AttachmentInfo, Color, Document, FieldType, FormField, PageHandle, PdfMetadata,
+    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, glyph_advance_pt,
+    wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{TextFragment, sort_by_reading_order};

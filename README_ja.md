@@ -1,5 +1,7 @@
 # harumi
 
+> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+
 **テキスト注入・抽出、ページ操作、図形描画まで — 純Rust製PDF操作ライブラリ。**  
 日本語・中国語・韓国語（CJK）フォント完全対応。C依存ゼロ。WASM対応。
 
@@ -103,6 +105,10 @@ doc.save("searchable.pdf")?;
 | PDF フォームのフィールド値を読み取りたい | `doc.form_fields()` — `Vec<FormField>` を返す（名前・種別・現在値） |
 | PDF フォームをプログラムから記入したい | `doc.fill_form(&[("フィールド名", "値")])` — NeedAppearances を自動設定 |
 | ページのクロップボックスや印刷用ボックスを操作したい | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 全ボックス種別に対応（`[x,y,w,h]` 形式） |
+| ページのコンテンツをスケールしたい（例: A4 → A3） | `page.scale_page_content(sx, sy)` で既存コンテンツの先頭に `cm` 行列を挿入；`resize_page_with_content(w, h)` でスケール＋MediaBox 変更を一度に実行（v1.4+） |
+| 別の PDF を現在の PDF に重ねたい（スタンプ合成） | `doc.overlay_from(other)` で `other` の各ページを `self` の対応ページに Form XObject として重ね書き；フォント・画像・透過度も保持（v1.4+） |
+| ブックマーク（目次）をすべて削除したい | `doc.clear_outline()` でペンディング中のブックマークと読み込み済み PDF の `/Outlines` ツリーを一括削除（v1.4+） |
+| PDF にファイルを添付したい | `doc.attach_file(name, data, mime)` で任意ファイルを EmbeddedFiles として添付（FlateDecode 圧縮・名前順ソート済み）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
 | PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 全署名データを抽出（署名者・タイムスタンプ・フィールド名）、RSA PKCS#1 v1.5 暗号学的検証を実行、`is_valid: bool` 付き `SignatureInfo` を返す（`digital-signature` feature、v1.2.2+） |
 | PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |

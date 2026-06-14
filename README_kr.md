@@ -1,5 +1,7 @@
 # harumi
 
+> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+
 **텍스트 삽입·추출, 페이지 조작, 도형 그리기까지 — 순수 Rust PDF 조작 라이브러리.**  
 한국어/일본어/중국어(CJK) 폰트 완전 지원. C 의존성 없음. WASM 네이티브.
 
@@ -103,6 +105,10 @@ doc.save("searchable.pdf")?;
 | PDF 폼 필드 값을 읽고 싶다 | `doc.form_fields()` — `Vec<FormField>` 반환（이름, 종류, 현재 값） |
 | PDF 폼을 프로그래밍으로 채우고 싶다 | `doc.fill_form(&[("필드명", "값")])` — NeedAppearances 자동 설정 |
 | 페이지 크롭 박스와 인쇄 박스를 조작하고 싶다 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — `[x,y,w,h]` 형식으로 모든 박스 타입 지원 |
+| 페이지 콘텐츠를 스케일하고 싶다（예: A4 → A3） | `page.scale_page_content(sx, sy)` 기존 콘텐츠 앞에 `cm` 행렬 삽입；`resize_page_with_content(w, h)` 스케일링과 MediaBox 변경을 한 번에 처리（v1.4+） |
+| 다른 PDF를 현재 PDF에 오버레이하고 싶다（스탬프 합성） | `doc.overlay_from(other)` 로 `other`의 각 페이지를 `self`의 해당 페이지에 Form XObject로 겹쳐 쓰기；폰트, 이미지, 불투명도 보존（v1.4+） |
+| 모든 북마크/목차를 삭제하고 싶다 | `doc.clear_outline()` 으로 대기 중인 북마크와 이미 로드된 PDF의 `/Outlines` 트리를 일괄 삭제（v1.4+） |
+| PDF에 파일을 첨부하고 싶다 | `doc.attach_file(name, data, mime)` 로 임의 파일을 EmbeddedFiles로 첨부（FlateDecode 압축, 이름순 정렬）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
 | PDF 디지털 서명을 검증하고 싶다 | `doc.verify_signatures(&pdf_bytes)` — 서명 메타데이터（서명자, 타임스탬프, 필드명）추출；암호화 검증은 TODO（`digital-signature` feature） |
 | PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
 

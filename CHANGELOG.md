@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PageHandle::scale_page_content(scale_x, scale_y)`** — scales all existing page content
+  by inserting a `cm` (Concatenate Matrix) operator as a new leading content stream.
+  Useful for enlarging a page from A4 to A3 while keeping content proportional.
+  See also `resize_page_with_content` for the common "change page size + scale content" workflow.
+
+- **`PageHandle::resize_page_with_content(new_width, new_height)`** — resizes the page's
+  MediaBox and scales all existing content proportionally in one call.
+
+- **`Document::overlay_from(other)`** — overlays each page of `other` on top of the
+  corresponding page of `self` using a PDF Form XObject. Useful for stamping watermarks,
+  signatures, or full-page graphics from a second document. Pages in `self` beyond
+  `other`'s page count are left untouched.
+
+- **`Document::clear_outline()`** — removes all bookmarks/table-of-contents entries from
+  the document, including any not-yet-saved pending bookmarks and any `/Outlines` tree
+  already present in a loaded PDF.
+
+- **`Document::attach_file(filename, data, mime_type)`** — embeds an arbitrary file as a
+  PDF attachment (`/EmbeddedFiles`). The file is compressed with FlateDecode before
+  embedding.
+
+- **`Document::list_attachments()`** — lists all file attachments embedded in the document.
+  Returns `Vec<AttachmentInfo>` with filename, size, and optional MIME type.
+
+- **`AttachmentInfo`** — returned by `list_attachments()`. Fields: `filename: String`,
+  `size: usize`, `mime_type: Option<String>`.
+
+### Fixed
+
+- **`add_text_with_opacity` and `add_text_with_rotation` now appear on docs.rs** — these
+  methods were defined inside the `#[cfg(feature = "draw")]` impl block (because opacity
+  uses the `draw` feature's `ExtGStateRegistry`), so they were invisible when docs.rs
+  built with default features only. Added `[package.metadata.docs.rs]` to Cargo.toml
+  to build docs with all features enabled.
+
 ---
 
 ## [1.3.2] — 2026-06-14
@@ -387,7 +424,7 @@ the rest of the harumi API.
 ### Added
 
 - **`Document::extract_page_image`** (`image` feature) — extracts the embedded raster image from a
-  single-image scanned PDF page. Returns a `PageImage` with `format` (`Jpeg` or `Png`) and `data` bytes.
+  single-image scanned PDF page. Returns a `PageImage` with `format` (`Jpeg` or `Png`) and `bytes` bytes.
   Useful for round-tripping scanned PDFs: load with `from_file`, call `extract_page_image`, process the
   raw image, then re-embed with `add_image`.
 

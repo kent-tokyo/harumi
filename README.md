@@ -1,5 +1,7 @@
 # harumi
 
+> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+
 **Overlay text, extract content, merge/split pages, draw shapes — all in pure Rust.**  
 Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-ready.
 
@@ -98,6 +100,10 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to read PDF form field values | `doc.form_fields()` — returns `Vec<FormField>` with name, type, and current value |
 | Need to fill in a PDF form programmatically | `doc.fill_form(&[("FieldName", "value")])` — sets values and triggers NeedAppearances |
 | Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
+| Need to scale page content (e.g. A4 → A3) | `page.scale_page_content(sx, sy)` inserts a `cm` matrix before existing content; `resize_page_with_content(w, h)` scales + resizes MediaBox in one call (v1.4+) |
+| Need to overlay one PDF on top of another | `doc.overlay_from(other)` stamps each page of `other` onto the matching page of `self` as a Form XObject; fonts, images, and opacity are preserved (v1.4+) |
+| Need to remove all bookmarks / TOC | `doc.clear_outline()` removes both pending bookmarks and any existing `/Outlines` tree in a loaded PDF (v1.4+) |
+| Need to attach files to a PDF | `doc.attach_file(name, data, mime)` embeds any file as a PDF attachment (EmbeddedFiles, FlateDecode-compressed, sorted name tree); `doc.list_attachments()` → `Vec<AttachmentInfo>` (v1.4+) |
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
 | Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts all signature data (signer, timestamp, field name); performs RSA PKCS#1 v1.5 cryptographic verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
 | Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |

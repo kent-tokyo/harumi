@@ -1160,3 +1160,111 @@
 - [ ] **矩形領域 Redaction（完全除去）** — 対象ユーザー: 機密情報処理。Content Stream から対象領域のテキスト・画像を完全削除（難度: 大）
 - [ ] **真の署名検証（RSA/ECDSA）** — verify_signatures での暗号学的署名検証。PKCS#7署名を完全に検証する（難度: 大）
 - [ ] **RTL テキスト（右から左書き）** — 対象ユーザー: アラビア語・ヘブライ語。Unicode Bidi アルゴリズム対応が必要（難度: 大）
+
+---
+
+## Phase 29 — Stirling-PDF 対応: コンテンツスケール・PDF オーバーレイ・ブックマーク削除・ファイル添付 (完了) [v1.4.0]
+
+### 背景
+
+stirling-all-docs（Stirling-PDF の Rust 移植）が harumi 1.3.x を利用した際にブロックされた機能群への対応。
+P1〜P3 の要望を精査し、pure Rust の範囲で実装可能なものを v1.4.0 として実装。
+
+### 実装済み項目
+
+- [x] `[package.metadata.docs.rs]` を Cargo.toml に追加 → `draw` / `image` / `ocr` / `flow` / `html` / `digital-signature` 全フィーチャーで docs.rs をビルド
+  - 根本原因: `add_text_with_opacity` と `add_text_with_rotation` が `#[cfg(feature = "draw")]` impl ブロック内にあり、default features では docs.rs に表示されなかった
+
+- [x] **`PageHandle::scale_page_content(scale_x, scale_y)`**（P1-D）
+  - PDF `cm`（Concatenate Matrix）演算子を既存コンテンツストリームの先頭に新ストリームとして挿入
+  - `prepend_to_contents()` ヘルパー追加（`append_to_contents` の逆方向版）
+  - 正値・有限値チェック、finalized ガード
+
+- [x] **`PageHandle::resize_page_with_content(new_width, new_height)`**（P1-D 便利メソッド）
+  - 現サイズから比率を計算 → `scale_page_content` + `set_media_box` + CropBox 除去
+
+- [x] **`Document::overlay_from(other)`**（P2-A）
+  - other の全オブジェクトを renumber して self に取り込み（`merge_from` と同方式）
+  - 各ページの content bytes（decoded + 連結）・/Resources（親チェーン継承対応）・BBox を取得
+  - Form XObject を生成して self の対応ページの /Resources /XObject に登録
+  - `Do` 演算子を既存コンテンツの末尾に追加
+  - `inherited_media_box_raw()` / `inherited_resources()` ヘルパー追加
+
+- [x] **`Document::clear_outline()`**（P3-B partial）
+  - `pending_bookmarks` をクリア + カタログの `/Outlines` エントリを削除
+
+- [x] **`Document::attach_file(filename, data, mime_type)`**（P3-A）
+  - EmbeddedFile ストリーム（FlateDecode 圧縮、`/Params /Size` 記録）を生成
+  - Filespec dict（`/Type /Filespec`、`/F`、`/UF` UTF-16BE、`/EF`）を生成
+  - `/Catalog /Names /EmbeddedFiles /Names` 配列に追加（PDF spec に従い名前順にソート）
+
+- [x] **`Document::list_attachments()` → `Vec<AttachmentInfo>`**（P3-A）
+  - フラット `/Names` 配列を走査して `filename`・`size`・`mime_type` を返す
+
+- [x] **`AttachmentInfo` 構造体**（`#[non_exhaustive]`、`lib.rs` から再エクスポート）
+
+- [x] **CHANGELOG.md 修正**（P4-C）
+  - v0.4.1 の `data` フィールド記述 → `bytes` に修正
+
+- [x] **`FontHandle` doc comment 改善**（P4-B）
+  - `FontHandle is Copy` を明示的に記載
+
+- [x] **ヘルパー関数整理**
+  - `with_resources_dict_mut` / `add_xobject_to_resources` の `#[cfg]` ゲートを削除
+    （feature に依存しない lopdf 操作のみ。overlay_from から利用するために必要）
+
+### スコープ外（理由付き）
+
+| 要望 | スコープ外の理由 |
+|------|----------------|
+| PDF ラスタライズ（P1-C） | 完全な PDF レンダリングエンジンが必要。スキャン PDF なら既存 `extract_page_images` で代替可 |
+| フォーム visual flatten（P2-B） | Appearance stream のパースと content stream への変換が必要（PDF インタープリタ不在） |
+| N-up / ブックレット（P2-C） | `overlay_from` が安定したら次フェーズで検討可能 |
+| `page.size()` infallible 化（P4-A） | MediaBox が存在しない PDF は実在するため `Result` が正しい |
+
+### テスト追加 (`tests/overlay_scale_attach.rs` — 15 件)
+
+- [x] `scale_page_content_returns_ok`
+- [x] `scale_page_content_rejects_zero_scale`
+- [x] `scale_page_content_rejects_negative_scale`
+- [x] `scale_page_content_rejects_nan`
+- [x] `resize_page_with_content_changes_media_box`
+- [x] `overlay_from_produces_valid_pdf`（OVRL0 XObject + Do の存在を lopdf で検証）
+- [x] `overlay_from_inherited_resources`（/Pages ノードに /Resources がある構造でも動作確認）
+- [x] `overlay_from_pending_ops_returns_err`
+- [x] `clear_outline_removes_pending_bookmarks`
+- [x] `attach_and_list_single_file`
+- [x] `attach_multiple_files`
+- [x] `attach_files_sorted_in_names_array`（逆順追加でも /Names 配列が昇順ソートされることを確認）
+- [x] `attach_file_empty_filename_returns_err`
+- [x] `attach_file_without_mime_type`
+- [x] `list_attachments_on_clean_pdf_returns_empty`
+
+## テスト（Phase 29 完了時点 — 288件、デフォルト features）
+
+| スイート | ファイル | 件数 |
+|---|---|---|
+| ユニット | `src/` 各モジュール内 `#[cfg(test)]` | 44 |
+| インテグレーション | `tests/integration.rs` | 8 |
+| スモーク | `tests/smoke.rs` | 8 |
+| E2E | `tests/e2e_noto_jp.rs` | 6 |
+| draw/image/パス/回転 | `tests/draw_smoke.rs` | 18 |
+| ページ操作 | `tests/page_ops.rs` | 42 |
+| Document::new | `tests/document_new.rs` | 6 |
+| テキスト抽出 | `tests/extract_text.rs` | 22 |
+| メタデータ | `tests/metadata.rs` | 5 |
+| テキスト置換 | `tests/replace.rs` | 22 |
+| FlowDocument | `tests/flow.rs` | 11 |
+| HTML→PDF | `tests/html.rs` | 19 |
+| 画像抽出 | `tests/extract_image.rs` | 8 |
+| アノテーション/ブックマーク | `tests/annotations.rs` | 19 |
+| FlowDoc ヘッダ/フッタ | `tests/flow_hf.rs` | 10 |
+| AcroForm 作成 | `tests/acroform_create.rs` | 7 |
+| 暗号化（読込） | `tests/encryption.rs` | 13 |
+| 暗号化（書込） | `tests/write_encryption.rs` | 14 |
+| ページボックス | `tests/page_boxes.rs` | 8 |
+| TTC | `tests/e2e_ttc.rs` | 5 |
+| デジタル署名 | `tests/digital_signature_create.rs` | 4 |
+| セマンティックチャンク | `tests/chunk.rs` | 7 |
+| オーバーレイ/スケール/添付 | `tests/overlay_scale_attach.rs` | 15 |
+| ドキュメンテーション | `src/lib.rs`, `src/document.rs` | 24 |

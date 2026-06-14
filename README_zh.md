@@ -1,5 +1,7 @@
 # harumi
 
+> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+
 **纯 Rust 实现的 PDF 操作库 — 文本叠加、内容提取、页面操作、图形绘制一站搞定。**  
 完整支持中文/日文/韩文（CJK）字体。零 C 依赖。原生 WASM 支持。
 
@@ -101,6 +103,10 @@ doc.save("searchable.pdf")?;
 | 需要读取 PDF 表单字段值 | `doc.form_fields()` — 返回 `Vec<FormField>`（名称、类型、当前值） |
 | 需要以程序方式填写 PDF 表单 | `doc.fill_form(&[("字段名", "值")])` — 自动设置 NeedAppearances |
 | 需要操作页面裁切框和印刷框 | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — 所有框类型均以 `[x,y,w,h]` 格式处理 |
+| 需要缩放页面内容（例如 A4 → A3） | `page.scale_page_content(sx, sy)` 在现有内容前插入 `cm` 矩阵；`resize_page_with_content(w, h)` 一次性完成缩放和 MediaBox 调整（v1.4+） |
+| 需要将另一个 PDF 叠加到当前 PDF 上（印章合成） | `doc.overlay_from(other)` 将 `other` 的每页作为 Form XObject 叠加到 `self` 的对应页上；字体、图像和透明度均保留（v1.4+） |
+| 需要删除所有书签/目录 | `doc.clear_outline()` 同时删除待写入的书签和已加载 PDF 中的 `/Outlines` 树（v1.4+） |
+| 需要在 PDF 中附加文件 | `doc.attach_file(name, data, mime)` 将任意文件嵌入为 EmbeddedFiles 附件（FlateDecode 压缩、按名称排序）；`doc.list_attachments()` 返回 `Vec<AttachmentInfo>`（v1.4+） |
 | 需要验证 PDF 数字签名 | `doc.verify_signatures(&pdf_bytes)` — 提取签名元数据（签名者、时间戳、字段名）；密码学验证待做（`digital-signature` feature） |
 | 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
 
