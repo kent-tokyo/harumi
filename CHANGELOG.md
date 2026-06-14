@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] — 2026-06-14
+
 ### Added
 
 - **`PageHandle::scale_page_content(scale_x, scale_y)`** — scales all existing page content
