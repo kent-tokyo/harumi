@@ -11,6 +11,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.2] — 2026-06-14
+
+### Fixed
+
+- **`build_hmtx` advance_width wrong for "mono" glyphs** (`gid >= num_h_metrics`) —
+  the lsb-only section bytes were misread as advance_width and the next glyph's lsb
+  was misread as the current glyph's lsb. Fixed to read the last longHorMetric's
+  advance_width for mono glyphs and the correct per-glyph lsb offset.
+
+- **`hhea.numberOfHMetrics` undercount** — was capped with `.min(original_num_h_metrics)`.
+  Since `build_hmtx` writes all subset glyphs as full 4-byte longHorMetric entries, the
+  field must equal `gids_to_keep.len()`.
+
+- **`head.checkSumAdjustment` always 0** — the per-table and full-font checksums were
+  never computed. `assemble_font` now writes correct per-table checksums to the table
+  directory and sets `checkSumAdjustment = 0xB1B0AFBA − full_font_sum`. The original
+  font's non-zero checkSumAdjustment was also being copied into the subset, corrupting
+  the sum; it is now zeroed before assembly.
+
+- **Glyph data not 4-byte aligned** — TrueType requires each glyph's data to start on
+  a 4-byte boundary. `build_glyf` now pads each glyph with zero bytes to the next
+  4-byte boundary. The `loca` format auto-upgrades to long (format 1) if any offset
+  exceeds the 131 070-byte short-format limit, with `head.indexToLocFormat` updated
+  accordingly.
+
+- **`hhea` and `head` advisory metrics not updated after subsetting** —
+  `advanceWidthMax`, `minLeftSideBearing`, `minRightSideBearing`, and `xMaxExtent` in
+  `hhea`, and the font bounding box in `head`, are now recomputed from the rebuilt hmtx
+  and glyf tables.
+
+- **`char_to_gid` dropped second char when two chars share a glyph** — `char_to_gid`
+  was built by inverting `gid_to_char` (one char per GID), silently dropping any
+  Unicode codepoint that maps to the same glyph as an earlier codepoint. `SubsetResult`
+  now carries a pre-built `char_to_gid` mapping derived directly from all input chars,
+  so both codepoints correctly encode to the same new GID.
+
+- **`hhea`/`maxp` bounds checks too loose** — `hhea.len() >= 34` allowed reading bytes
+  34–35 with only 34 bytes present; corrected to `>= 36`. `maxp.len() >= 4` allowed
+  reading bytes 4–5 with only 4 bytes; corrected to `>= 6`.
+
+- **`head.indexToLocFormat` upgrade logic dead and incorrect** — the previous upgrade
+  check compared a long-format loca length against a short-format expected size,
+  triggering incorrectly for large subsets of long-format fonts. When it did trigger it
+  wrote only the high byte of the big-endian u16, producing 0x0100 (256) instead of
+  0x0001. Replaced with a correct check: upgrade only when the max glyph offset exceeds
+  the short-format limit (131 070 bytes).
+
+---
+
 ## [1.3.1] — 2026-06-14
 
 ### Fixed

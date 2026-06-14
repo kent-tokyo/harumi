@@ -11,6 +11,52 @@
 
 ---
 
+## [1.3.2] — 2026-06-14
+
+### 修正
+
+- **`build_hmtx` の "mono" グリフ（`gid >= num_h_metrics`）advance_width 読み誤り** —
+  lsb-only セクションの先頭バイトを advance_width として誤読し、次グリフの lsb を
+  現グリフの lsb として誤読していた。最後の longHorMetric の advance_width と
+  正しいオフセットの lsb を使うよう修正。
+
+- **`hhea.numberOfHMetrics` の過少設定** — `.min(original_num_h_metrics)` で制限していたが、
+  `build_hmtx` は全サブセットグリフを 4 バイト longHorMetric として書くため、
+  `gids_to_keep.len()` と等しくなければならない。
+
+- **`head.checkSumAdjustment` が常に 0** — テーブルごとのチェックサムとフォント全体の
+  チェックサムが未計算だった。`assemble_font` がテーブルディレクトリに各テーブルの
+  チェックサムを書き込み、`checkSumAdjustment = 0xB1B0AFBA - フォント全体の和` を設定
+  するよう修正。元フォントの非ゼロ値が `new_head` にコピーされて和の計算を乱していた
+  バグも修正（アセンブル前にゼロクリア）。
+
+- **グリフデータの 4 バイトアライメントなし** — TrueType 仕様はグリフを 4 バイト境界に
+  配置することを要求している。`build_glyf` が各グリフの後にゼロパディングを追加するよう
+  修正。オフセットが 131,070 バイトを超えた場合は `loca` 形式を long (format 1) に
+  自動アップグレードし、`head.indexToLocFormat` も更新。
+
+- **hhea と head のアドバイザリメトリクスが元フォントの値のまま** — `advanceWidthMax`、
+  `minLeftSideBearing`、`minRightSideBearing`、`xMaxExtent`（hhea）とフォント
+  バウンディングボックス（head）を再構築した hmtx と glyf テーブルから再計算するよう修正。
+
+- **2 つの文字が同じグリフを共有する場合に 2 つ目の文字が脱落** — `char_to_gid` を
+  `gid_to_char` の逆引きで構築していたため、同じグリフを共有する 2 つ目の Unicode
+  コードポイントがサイレントに脱落していた。`SubsetResult` に入力文字から直接構築した
+  `char_to_gid` フィールドを追加し、両コードポイントが正しく同じ new GID にマップされる
+  よう修正。
+
+- **`hhea`/`maxp` の境界チェックが 2 バイト短い** — `hhea.len() >= 34` で
+  インデックス 34-35 を読んでいた（`>= 36` に修正）。`maxp.len() >= 4` で
+  インデックス 4-5 を読んでいた（`>= 6` に修正）。
+
+- **`head.indexToLocFormat` アップグレードロジックが無効かつ誤っていた** — 以前の
+  チェックは long 形式 loca の長さを short 形式の期待値と比較し、large サブセットで
+  誤って発火。発火時は big-endian u16 の高バイトのみ書いて 0x0100 (256) という無効値を
+  生成していた。グリフオフセットの最大値が short 形式の限界（131,070 バイト）を超えた
+  場合のみアップグレードする正しいロジックに置き換え。
+
+---
+
 ## [1.3.1] — 2026-06-14
 
 ### 修正
