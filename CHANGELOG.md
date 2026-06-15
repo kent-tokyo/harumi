@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.6] — 2026-06-15
+
+### Changed
+
+- Japanese changelog (`CHANGELOG_ja.md`) now documents cross-`Tf` text matching,
+  `TranslationMode::InPlace`, `TranslateOptions::cover_color`, synthetic bold
+  rendering, and related harumi-ai features (previously documented only in English
+  under v1.4.5).
+
+---
+
 ## [1.5.5] — 2026-06-15
 
 ### Fixed (harumi)

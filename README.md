@@ -939,6 +939,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v1.5.3** | Fix Form XObject discovery via inherited `/Resources` (Chrome/Skia PDFs — parent-chain walk in `extract_text_from_xobjects`); `replace_text()` now rewrites Form XObject content streams so `harumi-ai` InPlace mode works on Chrome/Skia PDFs |
 | **v1.5.4** | Fix Type3 font support in text extraction (`collect_font_dict_entries` now includes `/Subtype /Type3`); fixes zero-output on Chrome/Skia PDFs that use only Type3 fonts |
 | **v1.5.5** | Fix Overlay CTM coordinate transform — `parse_content_stream` now tracks `q`/`Q`/`cm` and transforms `TextFragment` coordinates to page space; Chrome/Skia PDFs (scale + Y-flip CTM) now have correctly positioned overlay text |
+| **v1.5.6** | Japanese changelog updated to document cross-`Tf` text matching, `TranslationMode::InPlace`, `TranslateOptions::cover_color`, and synthetic bold (previously documented only in English under v1.4.5) |
 
 ---
 
