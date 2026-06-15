@@ -606,11 +606,11 @@ pub(crate) fn rewrite_content_stream(
                     cur_size = *size;
                 }
                 // Suppress intermediate Tf ops inside a cross-Tf match region.
-                if let Some(&(_co_idx, role)) = op_role.get(&op_idx) {
-                    if role == 1 {
-                        out.extend_from_slice(&bytes[last_copied..op.start]);
-                        last_copied = op.end;
-                    }
+                if let Some(&(_co_idx, role)) = op_role.get(&op_idx)
+                    && role == 1
+                {
+                    out.extend_from_slice(&bytes[last_copied..op.start]);
+                    last_copied = op.end;
                 }
             }
             // Suppress horizontal Td/TD ops that fall inside a cross-op match region.
