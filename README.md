@@ -79,7 +79,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to merge two PDFs into one | `merge_from` appends all pages from another document; content and fonts preserved |
 | Need to create a PDF from scratch (no existing file) | `Document::new(size)` creates a blank 1-page PDF; add pages with `insert_blank_page` |
 | Need to split a PDF into separate files | `extract_pages` returns a new `Document` with the specified pages in any order |
-| Need to extract text positions from an existing PDF | `extract_text_runs` decodes CID fonts and standard simple fonts (Type1, TrueType, WinAnsi, etc.) |
+| Need to extract text positions from an existing PDF | `extract_text_runs` decodes CID fonts and standard simple fonts (Type1, TrueType, Type3, WinAnsi, etc.) |
 | Need to read or write PDF metadata (title, author…) | `doc.metadata()` reads `/Info`; `doc.set_metadata(&meta)` writes it |
 | Need to replace text in an existing PDF (new font) | `page.replace_text(old, new, font)` rewrites the content stream in-place; returns the match count as `usize`; automatic font-switching and width compensation |
 | Need to replace text using the original font | `page.replace_text_preserve_font(old, new)` — no `FontHandle` needed; returns match count; validates glyphs eagerly (not at `save()`) |
@@ -153,7 +153,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | WASM support | Yes (verified) | Yes | Yes | Not documented |
 | **Text extraction** |
 | — CID fonts (ToUnicode CMap) | Yes | Yes ⭐ | Yes | Yes |
-| — Simple fonts (Type1/TrueType) | Yes | Yes | Yes | Yes |
+| — Simple fonts (Type1/TrueType/Type3) | Yes | Yes | Yes | Yes |
 | — Form XObject recursion | Yes (v1.5+) | Yes ⭐ | Yes | Unknown |
 | — Graphic state preservation | Yes (v1.5+) | Yes ⭐ | Yes | Unknown |
 | — `uni<XXXX>` glyph names | No (v1.3) | Yes ⭐ | Unknown | Unknown |

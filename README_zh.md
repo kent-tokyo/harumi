@@ -81,7 +81,7 @@ doc.save("searchable.pdf")?;
 | 需要将两个 PDF 合并为一个 | `merge_from` 将另一个文档的所有页面追加到末尾；保留内容和字体 |
 | 需要从零开始创建 PDF（无现有文件） | `Document::new(size)` 创建一个空白单页 PDF；使用 `insert_blank_page` 添加更多页面 |
 | 需要将 PDF 拆分为单独的文件 | `extract_pages` 以任意顺序返回包含指定页面的新 `Document` |
-| 需要从现有 PDF 中提取文本位置信息 | `extract_text_runs` 可解码 CID 字体和标准简单字体（Type1、TrueType、WinAnsi 等） |
+| 需要从现有 PDF 中提取文本位置信息 | `extract_text_runs` 可解码 CID 字体和标准简单字体（Type1、TrueType、Type3、WinAnsi 等） |
 | 需要读写 PDF 元数据（标题、作者等） | `doc.metadata()` 读取 `/Info`；`doc.set_metadata(&meta)` 写入 |
 | 需要在现有 PDF 中替换文本（新字体） | `page.replace_text(old, new, font)` 就地重写；返回匹配数 `usize`；自动字体切换和宽度补偿 |
 | 需要用原有字体替换文本 | `page.replace_text_preserve_font(old, new)` — 无需 `FontHandle`；返回匹配数；字形验证在调用时立即执行 |

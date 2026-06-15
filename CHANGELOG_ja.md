@@ -9,6 +9,16 @@
 
 ## [未リリース]
 
+### 修正 (harumi)
+
+- **Type3 フォントのテキスト抽出対応** (`src/extract.rs`) —
+  `collect_font_dict_entries()` の match 分岐が `Type0`・`Type1`・`MMType1`・`TrueType`
+  のみを処理し、`/Subtype /Type3` は `_ => continue` でスキップされてフォントマップに登録されなかった。
+  Chrome/Skia 生成 PDF（Sample.pdf の F34/F35/F36 等）はすべて Type3 フォントを使用するため、
+  `fonts` HashMap が空になり `TextFragment` が一件も生成されず、`harumi-ai` の翻訳出力がゼロになっていた。
+  Type3 は Type1/TrueType と同じ 1 バイト文字コード + `/ToUnicode` CMap 構造を持つため、
+  match arm に `| Some(b"Type3")` を追加して `collect_simple_font()` に流すだけで修正できた。
+
 ### 追加 (harumi)
 
 - **クロス `Tf` テキストマッチング（`replace_text`）** (`harumi/src/replace.rs`) —

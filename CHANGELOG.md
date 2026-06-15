@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (harumi)
+
+- **Type3 font support in text extraction** (`src/extract.rs`) —
+  `collect_font_dict_entries()` matched only `Type0`, `Type1`, `MMType1`, and
+  `TrueType` subtypes; `/Subtype /Type3` fonts fell through to `_ => continue`
+  and were never added to the font map.  Chrome/Skia-generated PDFs (e.g. fonts
+  F34/F35/F36 in Sample.pdf) use exclusively Type3 fonts, so the `fonts`
+  `HashMap` was empty and no `TextFragment`s were produced — causing
+  `harumi-ai` translation output to be zero.
+  Type3 fonts share the same 1-byte character-code scheme and `/ToUnicode` CMap
+  structure as Type1/TrueType, so routing them through `collect_simple_font()`
+  is sufficient.  A single `| Some(b"Type3")` added to the match arm fixes the
+  extraction path.
+
 ---
 
 ## [1.5.3] — 2026-06-15

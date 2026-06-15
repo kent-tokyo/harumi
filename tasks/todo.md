@@ -1609,3 +1609,17 @@ Chrome/Skia は PDF 仕様 §7.7.3 に従い `/Resources` を親 `/Pages` ノー
 | ユニット | `src/` 各モジュール内 `#[cfg(test)]` | 61 (+2 CID/XObject テスト) |
 | テキスト置換 | `tests/replace.rs` | 18 (+1 XObject replace テスト) |
 | 上記以外（v1.5.2 から変化なし） | — | 229 |
+
+---
+
+## バグ修正（v1.5.3 リリース後・未リリース）
+
+### P2: Type3 フォントをテキスト抽出でスキップしていた問題（完了）
+
+**根本原因**: `collect_font_dict_entries()` の match が `Type0`/`Type1`/`MMType1`/`TrueType` のみを処理し、`/Subtype /Type3` は `_ => continue` でスキップ。Chrome/Skia 生成 PDF（Sample.pdf の F34/F35/F36）はすべて Type3 のため `fonts` HashMap が空 → テキスト断片ゼロ → harumi-ai 翻訳出力ゼロ。
+
+**修正**: `src/extract.rs:862` の match arm に `| Some(b"Type3")` を追加し `collect_simple_font()` に流す。Type3 は Type1/TrueType と同じ 1 バイト文字コード + `/ToUnicode` CMap 構造を持つため同関数で正しく処理できる。
+
+- [x] `src/extract.rs` — match arm 1 行変更
+- [x] `cargo test --test extract_text` — 22 件パス
+- [x] `cargo clippy -- -D warnings` — 0 警告

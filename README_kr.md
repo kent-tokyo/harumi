@@ -83,7 +83,7 @@ doc.save("searchable.pdf")?;
 | 두 PDF를 하나로 합치고 싶다 | `merge_from` 으로 다른 문서의 모든 페이지를 끝에 추가; 콘텐츠와 폰트 보존 |
 | 기존 파일 없이 PDF를 처음부터 만들고 싶다 | `Document::new(size)` 로 빈 1페이지 PDF 생성; `insert_blank_page` 로 페이지 추가 |
 | PDF를 개별 파일로 분리하고 싶다 | `extract_pages` 로 지정한 페이지만 담은 새 `Document` 를 원하는 순서로 반환 |
-| 기존 PDF에서 텍스트 위치 정보를 추출하고 싶다 | `extract_text_runs` 로 CID 폰트 및 표준 단순 폰트（Type1, TrueType, WinAnsi 등）를 디코딩 |
+| 기존 PDF에서 텍스트 위치 정보를 추출하고 싶다 | `extract_text_runs` 로 CID 폰트 및 표준 단순 폰트（Type1, TrueType, Type3, WinAnsi 등）를 디코딩 |
 | PDF 메타데이터（제목, 저자 등）를 읽고 쓰고 싶다 | `doc.metadata()` 로 `/Info` 읽기, `doc.set_metadata(&meta)` 로 쓰기 |
 | 기존 PDF 텍스트를 새 폰트로 교체하고 싶다 | `page.replace_text(old, new, font)` — 매칭 건수를 `usize` 로 반환; 폰트 전환·폭 보상 자동 처리 |
 | 원래 폰트를 그대로 써서 텍스트를 교체하고 싶다 | `page.replace_text_preserve_font(old, new)` — `FontHandle` 불필요; 매칭 건수 반환; 글리프 검증을 호출 시점에 즉시 수행 |

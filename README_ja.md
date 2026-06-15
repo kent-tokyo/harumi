@@ -83,7 +83,7 @@ doc.save("searchable.pdf")?;
 | 2つのPDFを1つに結合したい | `merge_from` でもう一方のドキュメントの全ページを末尾に追加。コンテンツとフォントは保持される |
 | 既存ファイルなしでPDFをゼロから作成したい | `Document::new(size)` で白紙の1ページPDFを作成。ページ追加は `insert_blank_page` |
 | PDFを個別ファイルに分割したい | `extract_pages` で指定ページのみを含む新しい `Document` を任意の順序で取得 |
-| 既存PDFからテキストの位置情報を取り出したい | `extract_text_runs` でCIDフォントと標準シンプルフォント（Type1、TrueType、WinAnsiなど）をデコード |
+| 既存PDFからテキストの位置情報を取り出したい | `extract_text_runs` でCIDフォントと標準シンプルフォント（Type1、TrueType、Type3、WinAnsiなど）をデコード |
 | PDFのメタデータ（タイトル・著者など）を読み書きしたい | `doc.metadata()` で `/Info` を読み込み、`doc.set_metadata(&meta)` で書き込む |
 | 既存PDFのテキストを検索・置換したい（新フォント） | `page.replace_text(old, new, font)` でコンテントストリームをその場で書き換え。マッチ件数を `usize` で返す。フォント切替・幅補正も自動 |
 | 既存フォントで文字を置換したい | `page.replace_text_preserve_font(old, new)` — `FontHandle` 不要。マッチ件数を返す。グリフ検証はコール時に即時実行 |
@@ -157,7 +157,7 @@ doc.save("searchable.pdf")?;
 | WASM対応 | Yes（CI確認済み） | Yes | Yes | 未記載 |
 | **テキスト抽出** |
 | — CIDフォント（ToUnicode CMap） | Yes | Yes ⭐ | Yes | Yes |
-| — シンプルフォント（Type1/TrueType） | Yes | Yes | Yes | Yes |
+| — シンプルフォント（Type1/TrueType/Type3） | Yes | Yes | Yes | Yes |
 | — Form XObject 再帰 | Yes（v1.5+） | Yes ⭐ | Yes | 不明 |
 | — グラフィック状態継承 | Yes（v1.5+） | Yes ⭐ | Yes | 不明 |
 | — `uni<XXXX>` グリフ名 | No（v1.4で対応予定） | Yes ⭐ | 不明 | 不明 |
