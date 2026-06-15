@@ -859,7 +859,7 @@ fn collect_font_dict_entries(
                 Some(fi) => fi,
                 None => continue,
             },
-            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") => {
+            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") | Some(b"Type3") => {
                 collect_simple_font(fd, doc, base_font, is_bold, is_italic, font_family)
             }
             _ => continue,
