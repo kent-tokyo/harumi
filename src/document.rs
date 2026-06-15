@@ -2489,7 +2489,7 @@ impl Document {
                     });
                 }
 
-                // Rewrite streams and replace /Contents.
+                // Rewrite page content streams and replace /Contents.
                 let (new_content, fonts_used) =
                     crate::replace::rewrite_page_streams(&self.inner, item.page_id, &resolved);
                 let new_stream_id = self
@@ -2517,6 +2517,46 @@ impl Document {
                             &state.ef.pdf_name,
                             state.ef.type0_id,
                         )?;
+                    }
+                }
+
+                // Also rewrite Form XObject streams — Chrome/Skia PDFs store all text
+                // inside Form XObjects, not in the page content streams above.
+                let xobj_rewrites = crate::replace::rewrite_form_xobject_streams(
+                    &self.inner,
+                    item.page_id,
+                    &resolved,
+                );
+                for (xobj_id, new_xobj_content, xobj_fonts_used) in xobj_rewrites {
+                    // Update the XObject stream content (decompressed, no filter).
+                    if let Ok(obj) = self.inner.get_object_mut(xobj_id)
+                        && let Ok(stream) = obj.as_stream_mut()
+                    {
+                        stream.dict.remove(b"Filter");
+                        stream.dict.remove(b"DecodeParms");
+                        stream
+                            .dict
+                            .set("Length", Object::Integer(new_xobj_content.len() as i64));
+                        stream.content = new_xobj_content;
+                        stream.allows_compression = false;
+                    }
+                    // Register new fonts in the XObject's own /Resources/Font.
+                    let mut xobj_registered: std::collections::HashSet<Vec<u8>> =
+                        std::collections::HashSet::new();
+                    for (_, _, font_idx) in &item.ops {
+                        let state = embedded
+                            .get(font_idx)
+                            .ok_or(Error::InvalidFont(*font_idx))?;
+                        if xobj_fonts_used.contains(&state.ef.pdf_name)
+                            && xobj_registered.insert(state.ef.pdf_name.clone())
+                        {
+                            add_font_to_xobject_resources(
+                                &mut self.inner,
+                                xobj_id,
+                                &state.ef.pdf_name,
+                                state.ef.type0_id,
+                            )?;
+                        }
                     }
                 }
             }
@@ -5645,6 +5685,53 @@ fn add_font_to_resources(
                 let mut res_dict = Dictionary::new();
                 res_dict.set("Font", Object::Dictionary(font_dict));
                 page_dict.set("Resources", Object::Dictionary(res_dict));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Add a font to a Form XObject's own `/Resources/Font` dict.
+///
+/// The XObject's /Resources may be inline (Object::Dictionary in the stream dict) or
+/// indirect (Object::Reference pointing to a separate dict object); both are handled.
+fn add_font_to_xobject_resources(
+    doc: &mut lopdf::Document,
+    xobj_id: lopdf::ObjectId,
+    pdf_name: &[u8],
+    type0_id: lopdf::ObjectId,
+) -> Result<()> {
+    let font_ref = Object::Reference(type0_id);
+
+    // Determine whether /Resources is an indirect reference or inline.
+    let resources_ref_id: Option<lopdf::ObjectId> = {
+        let xobj_obj = doc.get_object(xobj_id)?;
+        let xobj_stream = xobj_obj.as_stream()?;
+        match xobj_stream.dict.get(b"Resources").ok() {
+            Some(Object::Reference(r)) => Some(*r),
+            _ => None,
+        }
+    };
+
+    if let Some(res_id) = resources_ref_id {
+        let res_dict = doc.get_object_mut(res_id)?.as_dict_mut()?;
+        ensure_font_entry(res_dict, pdf_name, font_ref);
+    } else {
+        let xobj_obj = doc.get_object_mut(xobj_id)?;
+        let xobj_stream = xobj_obj.as_stream_mut()?;
+        match xobj_stream.dict.get_mut(b"Resources") {
+            Ok(res_obj) => {
+                if let Ok(res_dict) = res_obj.as_dict_mut() {
+                    ensure_font_entry(res_dict, pdf_name, font_ref);
+                }
+            }
+            Err(_) => {
+                let mut font_dict = Dictionary::new();
+                font_dict.set(pdf_name, font_ref);
+                let mut res_dict = Dictionary::new();
+                res_dict.set("Font", Object::Dictionary(font_dict));
+                xobj_stream.dict.set("Resources", Object::Dictionary(res_dict));
             }
         }
     }

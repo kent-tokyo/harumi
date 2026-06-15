@@ -624,32 +624,10 @@ fn extract_text_from_xobjects(
     if depth > 5 {
         return;
     }
-    let page_dict = match doc.get_object(page_id).ok().and_then(|o| o.as_dict().ok()) {
-        Some(d) => d,
-        None => return,
-    };
-    let resources_obj = match page_dict.get(b"Resources").ok() {
-        Some(o) => o,
-        None => return,
-    };
-    let resources_dict = match resolve_dict(doc, resources_obj) {
-        Some(d) => d,
-        None => return,
-    };
-    let xobject_obj = match resources_dict.get(b"XObject").ok() {
-        Some(o) => o,
-        None => return,
-    };
-    let xobject_dict = match resolve_dict(doc, xobject_obj) {
-        Some(d) => d,
-        None => return,
-    };
-
-    // Collect XObject IDs first to avoid borrow-checker issues in the loop.
-    let xobj_ids: Vec<lopdf::ObjectId> = xobject_dict
-        .iter()
-        .filter_map(|(_, v)| if let Object::Reference(id) = v { Some(*id) } else { None })
-        .collect();
+    // Walk up /Parent chain to find /Resources/XObject (PDF §7.7.3 inheritance).
+    // Chrome/Skia PDFs commonly place /Resources on an ancestor /Pages node rather
+    // than on each page dict, so a direct page_dict.get(b"Resources") would miss them.
+    let xobj_ids = collect_inherited_xobject_ids(doc, page_id);
 
     for xobj_id in xobj_ids {
         let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
@@ -772,7 +750,7 @@ pub(crate) fn collect_fonts(
 
 /// Collect fonts from a resources dictionary directly.
 /// Used by both page-level and Form-XObject font collection.
-fn collect_fonts_from_resources(
+pub(crate) fn collect_fonts_from_resources(
     doc: &lopdf::Document,
     resources_dict: &Dictionary,
 ) -> HashMap<Vec<u8>, FontInfo> {
@@ -808,6 +786,40 @@ fn collect_fonts_inner(
         };
         current_id = *parent_id;
     }
+}
+
+/// Walk up /Parent chain and return XObject IDs from the first
+/// /Resources/XObject dict found (PDF spec §7.7.3 inheritance).
+pub(crate) fn collect_inherited_xobject_ids(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> Vec<ObjectId> {
+    let mut current_id = page_id;
+    while let Ok(obj) = doc.get_object(current_id) {
+        let Some(dict) = obj.as_dict().ok() else { break };
+        if let Ok(res_obj) = dict.get(b"Resources") {
+            let ids = resolve_dict(doc, res_obj)
+                .and_then(|res_dict| {
+                    res_dict.get(b"XObject").ok().and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
+                })
+                .map(|xobj_dict| {
+                    xobj_dict
+                        .iter()
+                        .filter_map(|(_, v)| {
+                            if let Object::Reference(id) = v { Some(*id) } else { None }
+                        })
+                        .collect::<Vec<_>>()
+                });
+            if let Some(ids) = ids {
+                return ids;
+            }
+            break; // /Resources found but no /XObject — stop climbing
+        }
+        let Ok(parent_ref) = dict.get(b"Parent") else { break };
+        let Object::Reference(parent_id) = parent_ref else { break };
+        current_id = *parent_id;
+    }
+    vec![]
 }
 
 fn collect_font_dict_entries(
@@ -2857,5 +2869,238 @@ mod tests {
         assert_eq!(groups.len(), 2, "expected 2 paragraphs, got {}", groups.len());
         assert!(groups[0].text.contains("L1") && groups[0].text.contains("L2"));
         assert!(groups[1].text.contains("L3"));
+    }
+
+    // Chrome/Skia PDFs put /Resources on a parent /Pages node rather than on each
+    // page dict.  extract_text_from_xobjects() must walk up the /Parent chain to find
+    // /Resources/XObject; without the fix it returns early and produces zero fragments.
+    #[test]
+    fn extract_xobjects_from_inherited_resources() {
+        use lopdf::{Document, Stream};
+
+        let mut doc = Document::new();
+
+        // Type1 font with no explicit /Encoding → StandardEncoding fallback.
+        // ASCII bytes H(72) e(101) l(108) l(108) o(111) map to "Hello".
+        let mut font_d = Dictionary::new();
+        font_d.set("Type", Object::Name(b"Font".to_vec()));
+        font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font_d));
+
+        // Form XObject with its own /Resources/Font and a text content stream.
+        let mut xobj_font_d = Dictionary::new();
+        xobj_font_d.set("F1", Object::Reference(font_id));
+        let mut xobj_res = Dictionary::new();
+        xobj_res.set("Font", Object::Dictionary(xobj_font_d));
+        let mut xobj_d = Dictionary::new();
+        xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
+        xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
+        xobj_d.set(
+            "BBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
+        xobj_d.set("Resources", Object::Dictionary(xobj_res));
+        let xobj_id = doc.add_object(Object::Stream(Stream::new(
+            xobj_d,
+            b"BT /F1 12 Tf (Hello) Tj ET".to_vec(),
+        )));
+
+        // Minimal page content stream — text lives in the XObject, not here.
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            b"q Q".to_vec(),
+        )));
+
+        // Page node with NO /Resources — Chrome/Skia style (inherits from Pages).
+        let mut page_d = Dictionary::new();
+        page_d.set("Type", Object::Name(b"Page".to_vec()));
+        page_d.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
+        page_d.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_d));
+
+        // Pages node: /Resources/XObject here (NOT on the page dict).
+        let mut xobj_dict = Dictionary::new();
+        xobj_dict.set("X1", Object::Reference(xobj_id));
+        let mut pages_res = Dictionary::new();
+        pages_res.set("XObject", Object::Dictionary(xobj_dict));
+        let mut pages_d = Dictionary::new();
+        pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_d.set("Count", Object::Integer(1));
+        pages_d.set("Resources", Object::Dictionary(pages_res));
+        let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+        // Wire up /Parent.
+        if let Ok(obj) = doc.get_object_mut(page_id) {
+            if let Ok(d) = obj.as_dict_mut() {
+                d.set("Parent", Object::Reference(pages_id));
+            }
+        }
+
+        // Catalog.
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(
+            !frags.is_empty(),
+            "expected text from XObject with inherited /Resources, got none"
+        );
+        assert!(
+            text.contains("Hello"),
+            "expected 'Hello' in extracted text, got: {text:?}"
+        );
+    }
+
+    // Validates the *real* Chrome/Skia decode path: Type0/CID font with Identity-H
+    // encoding, ToUnicode CMap, and 2-byte hex glyph IDs (<XXXX> Tj), all inside a
+    // Form XObject discovered via an inherited /Resources on the parent /Pages node.
+    //
+    // This is the path that matters for P1 (InPlace replace_text on Chrome/Skia PDFs).
+    // The previous test used Type1/literal strings — a completely different decode branch.
+    #[test]
+    fn extract_cid_xobject_inherited_resources() {
+        use lopdf::{Document, Stream};
+
+        // GID→Unicode mapping used in this test:
+        //   GID 0x0048 → 'H',  GID 0x0069 → 'i'
+        // Content stream will be <00480069> Tj  (2 CIDs, 4 hex bytes).
+        let cmap_bytes = b"/CIDInit /ProcSet findresource begin\n\
+             12 dict begin\n\
+             begincmap\n\
+             /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def\n\
+             /CMapName /Adobe-Identity-H def\n\
+             /CMapType 1 def\n\
+             2 beginbfchar\n\
+             <0048> <0048>\n\
+             <0069> <0069>\n\
+             endbfchar\n\
+             endcmap\n\
+             end end\n"
+            .to_vec();
+
+        let mut doc = Document::new();
+
+        // ToUnicode CMap stream.
+        let cmap_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), cmap_bytes)));
+
+        // CIDFontType2 (descendant font).
+        let mut cidfont_d = Dictionary::new();
+        cidfont_d.set("Type", Object::Name(b"Font".to_vec()));
+        cidfont_d.set("Subtype", Object::Name(b"CIDFontType2".to_vec()));
+        cidfont_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
+        {
+            let mut cidsys = Dictionary::new();
+            cidsys.set("Registry", Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal));
+            cidsys.set("Ordering", Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal));
+            cidsys.set("Supplement", Object::Integer(0));
+            cidfont_d.set("CIDSystemInfo", Object::Dictionary(cidsys));
+        }
+        cidfont_d.set("DW", Object::Integer(1000));
+        let cidfont_id = doc.add_object(Object::Dictionary(cidfont_d));
+
+        // Type0 font dict.
+        let mut font_d = Dictionary::new();
+        font_d.set("Type", Object::Name(b"Font".to_vec()));
+        font_d.set("Subtype", Object::Name(b"Type0".to_vec()));
+        font_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
+        font_d.set("Encoding", Object::Name(b"Identity-H".to_vec()));
+        font_d.set("DescendantFonts", Object::Array(vec![Object::Reference(cidfont_id)]));
+        font_d.set("ToUnicode", Object::Reference(cmap_id));
+        let font_id = doc.add_object(Object::Dictionary(font_d));
+
+        // Form XObject: /Resources/Font has F1, content stream uses 2-byte CID hex.
+        // <00480069> encodes GID 0x0048 ('H') and GID 0x0069 ('i').
+        let mut xobj_font_d = Dictionary::new();
+        xobj_font_d.set("F1", Object::Reference(font_id));
+        let mut xobj_res = Dictionary::new();
+        xobj_res.set("Font", Object::Dictionary(xobj_font_d));
+        let mut xobj_d = Dictionary::new();
+        xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
+        xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
+        xobj_d.set(
+            "BBox",
+            Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(595), Object::Integer(842),
+            ]),
+        );
+        xobj_d.set("Resources", Object::Dictionary(xobj_res));
+        let xobj_id = doc.add_object(Object::Stream(Stream::new(
+            xobj_d,
+            b"BT /F1 12 Tf <00480069> Tj ET".to_vec(),
+        )));
+
+        // Minimal page content stream.
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            b"q Q".to_vec(),
+        )));
+
+        // Page node with NO /Resources (inherits from Pages).
+        let mut page_d = Dictionary::new();
+        page_d.set("Type", Object::Name(b"Page".to_vec()));
+        page_d.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(595), Object::Integer(842),
+            ]),
+        );
+        page_d.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_d));
+
+        // Pages node: /Resources/XObject here, NOT on page dict.
+        let mut xobj_dict = Dictionary::new();
+        xobj_dict.set("X1", Object::Reference(xobj_id));
+        let mut pages_res = Dictionary::new();
+        pages_res.set("XObject", Object::Dictionary(xobj_dict));
+        let mut pages_d = Dictionary::new();
+        pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_d.set("Count", Object::Integer(1));
+        pages_d.set("Resources", Object::Dictionary(pages_res));
+        let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+        if let Ok(obj) = doc.get_object_mut(page_id) {
+            if let Ok(d) = obj.as_dict_mut() {
+                d.set("Parent", Object::Reference(pages_id));
+            }
+        }
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(
+            !frags.is_empty(),
+            "expected CID text from XObject with inherited /Resources, got none"
+        );
+        assert!(
+            text.contains("Hi"),
+            "expected 'Hi' from CID+hex decode, got: {text:?}"
+        );
     }
 }

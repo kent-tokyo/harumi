@@ -518,3 +518,156 @@ fn replace_text_resubset_with_wrap_single_line_fits() {
         .join("");
     assert!(all.contains("OK"), "expected 'OK' in output: {}", all);
 }
+
+// ---------------------------------------------------------------------------
+// P1: replace_text inside Form XObjects (Chrome/Skia style PDFs)
+// ---------------------------------------------------------------------------
+
+/// Build a synthetic Chrome/Skia style PDF:
+///   - /Resources (with /XObject) on the parent /Pages node, NOT on the page.
+///   - A Form XObject with its own /Resources/Font containing a CID font.
+///   - Content stream: `<00480069> Tj` (GID 0x0048→'H', 0x0069→'i') using Identity-H.
+/// Then calls `replace_text("Hi", "Bye", font)` on page 1 and verifies the replacement.
+#[test]
+fn replace_text_in_form_xobject_inherited_resources() {
+    use lopdf::{Object, Stream, StringFormat};
+
+    let noto = FONT;
+
+    // ---------- Build the synthetic lopdf Document ----------
+
+    let cmap_bytes = b"/CIDInit /ProcSet findresource begin\n\
+         12 dict begin\n\
+         begincmap\n\
+         /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def\n\
+         /CMapName /Adobe-Identity-H def\n\
+         /CMapType 1 def\n\
+         2 beginbfchar\n\
+         <0048> <0048>\n\
+         <0069> <0069>\n\
+         endbfchar\n\
+         endcmap\n\
+         end end\n"
+        .to_vec();
+
+    let mut ldoc = lopdf::Document::new();
+
+    let cmap_id = ldoc.add_object(Object::Stream(Stream::new(lopdf::Dictionary::new(), cmap_bytes)));
+
+    let mut cidfont_d = lopdf::Dictionary::new();
+    cidfont_d.set("Type", Object::Name(b"Font".to_vec()));
+    cidfont_d.set("Subtype", Object::Name(b"CIDFontType2".to_vec()));
+    cidfont_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
+    {
+        let mut cidsys = lopdf::Dictionary::new();
+        cidsys.set("Registry", Object::String(b"Adobe".to_vec(), StringFormat::Literal));
+        cidsys.set("Ordering", Object::String(b"Identity".to_vec(), StringFormat::Literal));
+        cidsys.set("Supplement", Object::Integer(0));
+        cidfont_d.set("CIDSystemInfo", Object::Dictionary(cidsys));
+    }
+    cidfont_d.set("DW", Object::Integer(1000));
+    let cidfont_id = ldoc.add_object(Object::Dictionary(cidfont_d));
+
+    let mut font_d = lopdf::Dictionary::new();
+    font_d.set("Type", Object::Name(b"Font".to_vec()));
+    font_d.set("Subtype", Object::Name(b"Type0".to_vec()));
+    font_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
+    font_d.set("Encoding", Object::Name(b"Identity-H".to_vec()));
+    font_d.set("DescendantFonts", Object::Array(vec![Object::Reference(cidfont_id)]));
+    font_d.set("ToUnicode", Object::Reference(cmap_id));
+    let existing_font_id = ldoc.add_object(Object::Dictionary(font_d));
+
+    let mut xobj_font_d = lopdf::Dictionary::new();
+    xobj_font_d.set("F1", Object::Reference(existing_font_id));
+    let mut xobj_res = lopdf::Dictionary::new();
+    xobj_res.set("Font", Object::Dictionary(xobj_font_d));
+    let mut xobj_d = lopdf::Dictionary::new();
+    xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
+    xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
+    xobj_d.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]),
+    );
+    xobj_d.set("Resources", Object::Dictionary(xobj_res));
+    let xobj_id = ldoc.add_object(Object::Stream(Stream::new(
+        xobj_d,
+        // GID 0x48='H', 0x69='i' — spells "Hi"
+        b"BT /F1 12 Tf <00480069> Tj ET".to_vec(),
+    )));
+
+    let content_id = ldoc.add_object(Object::Stream(Stream::new(
+        lopdf::Dictionary::new(),
+        b"q Q".to_vec(),
+    )));
+
+    let mut page_d = lopdf::Dictionary::new();
+    page_d.set("Type", Object::Name(b"Page".to_vec()));
+    page_d.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]),
+    );
+    page_d.set("Contents", Object::Reference(content_id));
+    let page_id = ldoc.add_object(Object::Dictionary(page_d));
+
+    let mut xobj_dict = lopdf::Dictionary::new();
+    xobj_dict.set("X1", Object::Reference(xobj_id));
+    let mut pages_res = lopdf::Dictionary::new();
+    pages_res.set("XObject", Object::Dictionary(xobj_dict));
+    let mut pages_d = lopdf::Dictionary::new();
+    pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+    pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages_d.set("Count", Object::Integer(1));
+    pages_d.set("Resources", Object::Dictionary(pages_res));
+    let pages_id = ldoc.add_object(Object::Dictionary(pages_d));
+
+    if let Ok(obj) = ldoc.get_object_mut(page_id) {
+        if let Ok(d) = obj.as_dict_mut() {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+    }
+
+    let mut catalog = lopdf::Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = ldoc.add_object(Object::Dictionary(catalog));
+    ldoc.trailer.set("Root", Object::Reference(catalog_id));
+
+    // Save and reload via harumi so we exercise the public Document API.
+    let mut raw = Vec::new();
+    ldoc.save_to(&mut raw).unwrap();
+
+    let mut doc = Document::from_bytes(&raw).unwrap();
+
+    // Verify extraction works (validates P0 on CID+hex path before attempting replace).
+    let before: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(before.contains("Hi"), "P0 extraction failed, got: {before:?}");
+
+    // Replace "Hi" → "Bye" with a new embedded font.
+    let font = doc.embed_font(noto).unwrap();
+    let count = doc.page(1).unwrap().replace_text("Hi", "Bye", font).unwrap();
+    assert!(count > 0, "replace_text returned 0 matches in XObject stream");
+
+    let out = doc.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    let after: String = check
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(!after.contains("Hi"), "old text still present after replace: {after:?}");
+    assert!(after.contains("Bye"), "new text not found after replace: {after:?}");
+}

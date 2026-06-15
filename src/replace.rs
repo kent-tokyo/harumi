@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::extract::{
-    FontInfo, collect_fonts, decode_hex_bytes, is_pdf_delimiter, is_pdf_whitespace,
-    page_content_streams, parse_literal_string,
+    FontInfo, collect_fonts, collect_fonts_from_resources, collect_inherited_xobject_ids,
+    decode_hex_bytes, is_pdf_delimiter, is_pdf_whitespace, page_content_streams,
+    parse_literal_string, resolve_dict,
 };
 use crate::font::FontHandle;
 
@@ -76,9 +77,92 @@ pub(crate) fn count_matches_in_page(
     let pattern_chars: Vec<char> = old_text.chars().collect();
     let plen = pattern_chars.len();
 
-    for bytes in &streams {
+    total += count_matches_in_raw_streams(
+        &streams.iter().map(|v| v.as_slice()).collect::<Vec<_>>(),
+        &existing_fonts,
+        old_text,
+        new_text,
+        &pattern_chars,
+        plen,
+    )?;
+
+    // Also scan Form XObject streams — Chrome/Skia PDFs place all text in XObjects
+    // referenced from inherited /Resources rather than in the page content streams.
+    total += count_matches_in_inherited_xobjects(doc, page_id, old_text, new_text, &pattern_chars, plen)?;
+
+    Ok(total)
+}
+
+/// Count pattern matches inside Form XObjects discovered via inherited resources.
+fn count_matches_in_inherited_xobjects(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    old_text: &str,
+    new_text: Option<&str>,
+    pattern_chars: &[char],
+    plen: usize,
+) -> crate::Result<usize> {
+    use lopdf::Object;
+    let mut total = 0usize;
+
+    for xobj_id in collect_inherited_xobject_ids(doc, page_id) {
+        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
+        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
+        let is_form = xobj_stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
+            == Some(b"Form");
+        if !is_form {
+            continue;
+        }
+        let content = if xobj_stream.dict.get(b"Filter").is_ok() {
+            let mut owned = xobj_stream.clone();
+            if owned.decompress().is_err() {
+                continue;
+            }
+            owned.content
+        } else {
+            xobj_stream.content.clone()
+        };
+        let xobj_fonts = xobj_stream
+            .dict
+            .get(b"Resources")
+            .ok()
+            .and_then(|res_ref| resolve_dict(doc, res_ref))
+            .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
+            .unwrap_or_default();
+        if xobj_fonts.is_empty() {
+            continue;
+        }
+        total += count_matches_in_raw_streams(
+            &[content.as_slice()],
+            &xobj_fonts,
+            old_text,
+            new_text,
+            pattern_chars,
+            plen,
+        )?;
+    }
+
+    Ok(total)
+}
+
+/// Count pattern matches in a slice of raw content stream bytes using the given font map.
+fn count_matches_in_raw_streams(
+    streams: &[&[u8]],
+    fonts: &HashMap<Vec<u8>, FontInfo>,
+    old_text: &str,
+    new_text: Option<&str>,
+    pattern_chars: &[char],
+    plen: usize,
+) -> crate::Result<usize> {
+    let mut total = 0usize;
+
+    for &bytes in streams {
         let ops = parse_ops(bytes);
-        let segments = collect_char_segments(&ops, &existing_fonts);
+        let segments = collect_char_segments(&ops, fonts);
 
         for seg in &segments {
             let text: String = seg.chars.iter().map(|e| e.ch).collect();
@@ -99,7 +183,7 @@ pub(crate) fn count_matches_in_page(
             let mut pos = 0usize;
             while let Some(byte_idx) = text[pos..].find(old_text) {
                 if let Some(new) = new_text {
-                    validate_chars_in_font(new, &seg.font_name, &existing_fonts)?;
+                    validate_chars_in_font(new, &seg.font_name, fonts)?;
                 }
                 total += 1;
                 pos += byte_idx + old_text.len();
@@ -110,7 +194,7 @@ pub(crate) fn count_matches_in_page(
         // Same-font matches are already counted above; the `first_font != last_font`
         // guard prevents double-counting.
         if plen > 0 {
-            let cross_segs = collect_cross_tf_segments(&ops, &existing_fonts);
+            let cross_segs = collect_cross_tf_segments(&ops, fonts);
             for seg in &cross_segs {
                 let text_chars: Vec<char> = seg.chars.iter().map(|e| e.ch).collect();
                 let mut pos = 0usize;
@@ -187,6 +271,72 @@ pub(crate) fn rewrite_page_streams(
         fonts_used.extend(used);
     }
     (out, fonts_used)
+}
+
+/// Rewrite Form XObject content streams referenced via the page's inherited /Resources.
+///
+/// Chrome/Skia PDFs place all text inside Form XObjects (invoked by `Do` from the main
+/// page stream) rather than in the page stream itself.  This function discovers those
+/// XObjects, rewrites each one's content stream with the given replacements, and returns
+/// `(xobj_id, new_content, fonts_used_in_that_xobj)` for every XObject that was modified.
+///
+/// The caller is responsible for:
+/// - Writing `new_content` back into the XObject stream object.
+/// - Registering any fonts in `fonts_used_in_that_xobj` inside the XObject's own
+///   `/Resources/Font` dictionary (not the page's resources).
+pub(crate) fn rewrite_form_xobject_streams(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    resolved: &[ResolvedReplacement],
+) -> Vec<(lopdf::ObjectId, Vec<u8>, std::collections::HashSet<Vec<u8>>)> {
+    use lopdf::Object;
+
+    let xobj_ids = collect_inherited_xobject_ids(doc, page_id);
+    let mut results = Vec::new();
+
+    for xobj_id in xobj_ids {
+        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
+        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
+
+        let is_form = xobj_stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
+            == Some(b"Form");
+        if !is_form {
+            continue;
+        }
+
+        let content = if xobj_stream.dict.get(b"Filter").is_ok() {
+            let mut owned = xobj_stream.clone();
+            if owned.decompress().is_err() {
+                continue;
+            }
+            owned.content
+        } else {
+            xobj_stream.content.clone()
+        };
+
+        let xobj_fonts = xobj_stream
+            .dict
+            .get(b"Resources")
+            .ok()
+            .and_then(|res_ref| resolve_dict(doc, res_ref))
+            .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
+            .unwrap_or_default();
+
+        if xobj_fonts.is_empty() {
+            continue;
+        }
+
+        let (new_content, fonts_used) = rewrite_content_stream(&content, resolved, &xobj_fonts);
+        if !fonts_used.is_empty() {
+            results.push((xobj_id, new_content, fonts_used));
+        }
+    }
+
+    results
 }
 
 /// Rewrite all content streams for a page using the font already embedded in the PDF.
