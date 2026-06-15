@@ -50,7 +50,7 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
     let primary_font = doc.embed_font(&options.font)?;
     let mut font_handles: Vec<Option<FontHandle>> =
         std::iter::once(Some(primary_font))
-            .chain(std::iter::repeat(None).take(options.font_fallbacks.len()))
+            .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
             .collect();
 
     let mut replaced = 0usize;
@@ -105,6 +105,7 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
                         "[harumi-ai] fallback page={} reason={} text={:?}",
                         page_num,
                         reason,
+                        // chars().take() is mandatory — byte slicing (&s[..60]) panics on CJK text.
                         line.text.chars().take(40).collect::<String>()
                     );
                 }
@@ -159,4 +160,93 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
     );
 
     doc.save_to_bytes().map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_colon_prefix;
+
+    // ── text truncation safety ────────────────────────────────────────────────
+
+    #[test]
+    fn truncation_char_safe_cjk() {
+        // 21 Japanese chars = 63 bytes; byte 60 is inside the 21st char.
+        // The old code `&s[..s.len().min(60)]` would panic here.
+        let s = "化学物質名称有害性情報環境有害性区分等化学";
+        assert_eq!(s.len(), 63);
+        let truncated: String = s.chars().take(40).collect();
+        // 21 chars fit within take(40) — full string is preserved
+        assert_eq!(truncated, s);
+    }
+
+    #[test]
+    fn truncation_char_safe_long_cjk() {
+        // 50 CJK chars (150 bytes) — truncated to first 40 chars
+        let s: String = "あ".repeat(50);
+        assert_eq!(s.len(), 150);
+        let truncated: String = s.chars().take(40).collect();
+        assert_eq!(truncated.chars().count(), 40);
+        assert_eq!(truncated.len(), 120); // 40 × 3 bytes
+    }
+
+    #[test]
+    fn truncation_char_safe_ascii() {
+        let s = "Safety Data Sheet";
+        let truncated: String = s.chars().take(40).collect();
+        assert_eq!(truncated, s);
+    }
+
+    #[test]
+    fn truncation_char_safe_mixed() {
+        // Mixed ASCII + CJK: "ABC" + 20 Japanese chars
+        let s = format!("ABC{}", "化".repeat(20));
+        assert_eq!(s.len(), 3 + 60); // 63 bytes total
+        // byte 60 = 3 (ASCII) + 57 = inside 20th Japanese char
+        let truncated: String = s.chars().take(40).collect();
+        assert_eq!(truncated.chars().count(), 23); // 3 + 20
+        assert_eq!(truncated, s);
+    }
+
+    // ── strip_colon_prefix ────────────────────────────────────────────────────
+
+    #[test]
+    fn strip_fullwidth_colon_prefix() {
+        let input = "： 関東化学株式会社";
+        let result = strip_colon_prefix(input);
+        assert_eq!(result, Some("関東化学株式会社"));
+    }
+
+    #[test]
+    fn strip_halfwidth_colon_prefix() {
+        let result = strip_colon_prefix(": value");
+        assert_eq!(result, Some("value"));
+    }
+
+    #[test]
+    fn strip_colon_prefix_no_prefix_returns_none() {
+        assert!(strip_colon_prefix("化学物質名称").is_none());
+        assert!(strip_colon_prefix("").is_none());
+    }
+
+    #[test]
+    fn strip_colon_prefix_colon_only() {
+        // A colon with nothing after it → empty result
+        let result = strip_colon_prefix("：");
+        assert_eq!(result, Some(""));
+    }
+
+    #[test]
+    fn strip_colon_prefix_with_leading_whitespace() {
+        let result = strip_colon_prefix("  ： value");
+        assert_eq!(result, Some("value"));
+    }
+
+    #[test]
+    fn strip_colon_prefix_cjk_value_no_panic() {
+        // Japanese value with >20 chars after the colon (>60 bytes)
+        let value = "化学物質名称有害性情報環境有害性区分等化学";
+        let input = format!("：{value}");
+        let result = strip_colon_prefix(&input);
+        assert_eq!(result, Some(&value[..]));
+    }
 }

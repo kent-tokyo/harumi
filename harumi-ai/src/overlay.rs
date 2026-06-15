@@ -253,7 +253,7 @@ pub(crate) fn truncate_to_fit(text: &str, face: &Face, font_size: f32, max_width
     let mut lo = 0usize;
     let mut hi = chars.len();
     while lo < hi {
-        let mid = (lo + hi + 1) / 2;
+        let mid = (lo + hi).div_ceil(2);
         let s: String = chars[..mid].iter().collect();
         if measure_text_width(&s, face, font_size) <= budget { lo = mid; } else { hi = mid - 1; }
     }
@@ -513,7 +513,7 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
     let primary_font = doc.embed_font(&options.font)?;
     let mut font_handles: Vec<Option<FontHandle>> =
         std::iter::once(Some(primary_font))
-            .chain(std::iter::repeat(None).take(options.font_fallbacks.len()))
+            .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
             .collect();
 
     let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
