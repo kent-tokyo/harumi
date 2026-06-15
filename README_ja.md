@@ -92,7 +92,7 @@ doc.save("searchable.pdf")?;
 | 塗りと枠線を同時に描画したい | `add_ellipse` / `add_polygon` / `add_path` で `filled=true` かつ `stroke_width>0` — PDF `B` 演算子を使用 |
 | 開放・閉鎖パスを統一APIで描画したい | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | テキストを回転させたい（透かし・斜めスタンプ） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
-| 複数の `Tj` 演算子にまたがるテキストを置換したい | `replace_text` / `replace_text_preserve_font` — クロス演算子マッチングに対応 |
+| 複数の `Tj` 演算子またはフォントランにまたがるテキストを置換したい | `replace_text` / `replace_text_preserve_font` — クロス演算子 **および** クロス `Tf` マッチングに対応 |
 | スキャン PDF から埋め込み画像を取り出したい | `extract_page_image` で JPEG または PNG バイト列を取得（`image` feature）。スキャン PDF 専用 |
 | PDF にクリッカブルな URL リンクを付けたい | `add_link_url([x, y, w, h], url)` — 不可視 URI アノテーション。任意のビューアでクリックすると URL が開く |
 | PDF 内ページへの内部ナビゲーションリンクが必要 | `add_link_internal([x, y, w, h], target_page)` — 同一ドキュメント内の指定ページへジャンプ |
@@ -370,7 +370,7 @@ let n = doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-同一フォントコンテキスト内（同一 `Tf` / `BT`〜`ET` ブロック）の連続する `Tj`/`TJ` 演算子にまたがるテキストにもマッチします（クロス演算子マッチング）。位置変更演算子（`Td`, `Tm`）を挟む場合は対象外です。
+同一 BT/ET ブロック内の連続する `Tj`/`TJ` 演算子にまたがるテキストにもマッチします（クロス演算子マッチング）。さらに、`Tf` フォント切替演算子をまたぐマッチにも対応しています（クロス `Tf` マッチング）。日本語 PDF では1つの視覚的な行が複数のフォントラン（本文漢字を `F1`、括弧文字を `F2`）に分かれていることが多く、このようなケースも正しくマッチします。垂直方向の `Td` または `Tm`（新しい視覚的な行）を挟む場合は対象外です。
 
 ### 元フォントをそのまま使ってテキストを置換
 

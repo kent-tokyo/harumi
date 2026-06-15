@@ -73,6 +73,9 @@ pub(crate) fn count_matches_in_page(
     let streams = page_content_streams(doc, page_id);
     let mut total = 0usize;
 
+    let pattern_chars: Vec<char> = old_text.chars().collect();
+    let plen = pattern_chars.len();
+
     for bytes in &streams {
         let ops = parse_ops(bytes);
         let segments = collect_char_segments(&ops, &existing_fonts);
@@ -100,6 +103,30 @@ pub(crate) fn count_matches_in_page(
                 }
                 total += 1;
                 pos += byte_idx + old_text.len();
+            }
+        }
+
+        // Cross-Tf pass: count matches that span a font boundary.
+        // Same-font matches are already counted above; the `first_font != last_font`
+        // guard prevents double-counting.
+        if plen > 0 {
+            let cross_segs = collect_cross_tf_segments(&ops, &existing_fonts);
+            for seg in &cross_segs {
+                let text_chars: Vec<char> = seg.chars.iter().map(|e| e.ch).collect();
+                let mut pos = 0usize;
+                while pos + plen <= text_chars.len() {
+                    if text_chars[pos..pos + plen] == pattern_chars[..] {
+                        let char_end = pos + plen;
+                        let first_font = &seg.chars[pos].font_name;
+                        let last_font = &seg.chars[char_end - 1].font_name;
+                        if first_font != last_font {
+                            total += 1;
+                        }
+                        pos = char_end;
+                    } else {
+                        pos += 1;
+                    }
+                }
             }
         }
     }
@@ -578,6 +605,13 @@ pub(crate) fn rewrite_content_stream(
                     cur_font = name.clone();
                     cur_size = *size;
                 }
+                // Suppress intermediate Tf ops inside a cross-Tf match region.
+                if let Some(&(_co_idx, role)) = op_role.get(&op_idx) {
+                    if role == 1 {
+                        out.extend_from_slice(&bytes[last_copied..op.start]);
+                        last_copied = op.end;
+                    }
+                }
             }
             // Suppress horizontal Td/TD ops that fall inside a cross-op match region.
             // These are per-character advance operators common in Japanese PDFs.
@@ -1046,6 +1080,7 @@ pub(crate) struct CharEntry {
     pub ch: char,
     pub op_idx: usize,
     pub raw_bytes: Vec<u8>,
+    pub font_name: Vec<u8>,
 }
 
 /// A text segment within a BT/ET block sharing the same font and size.
@@ -1093,6 +1128,7 @@ fn push_chars_from_bytes(
                         ch,
                         op_idx,
                         raw_bytes: chunk.to_vec(),
+                        font_name: font_name.to_vec(),
                     });
                 }
             }
@@ -1104,6 +1140,7 @@ fn push_chars_from_bytes(
                     ch,
                     op_idx,
                     raw_bytes: vec![b],
+                    font_name: font_name.to_vec(),
                 });
             }
         }
@@ -1152,6 +1189,106 @@ pub(crate) fn collect_char_segments(
                     }
                     cur_font = name.clone();
                     cur_size = *size;
+                }
+            }
+            b"Tj" if in_bt => {
+                if let Some(Operand::Str(str_bytes)) = op.operands.first() {
+                    push_chars_from_bytes(
+                        &mut cur_chars,
+                        str_bytes,
+                        op_idx,
+                        &cur_font,
+                        existing_fonts,
+                    );
+                }
+            }
+            b"TJ" if in_bt => {
+                if let Some(Operand::Array(arr)) = op.operands.first() {
+                    for elem in arr {
+                        if let ArrElem::Str(b) = elem {
+                            push_chars_from_bytes(
+                                &mut cur_chars,
+                                b,
+                                op_idx,
+                                &cur_font,
+                                existing_fonts,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    segments
+}
+
+/// Collect chars across Tf boundaries within each BT/ET block.
+/// Unlike `collect_char_segments`, this function does NOT reset on `Tf` —
+/// it merges all chars in a visual line into one segment regardless of font switches.
+/// Breaks on: ET, Tm (absolute position reset), vertical Td/TD (|ty| >= 0.01).
+/// Segment `font_name` = last active font (used for restore after replacement).
+/// Segment `font_size` = first Tf's size in the segment (used for replacement instruction).
+fn collect_cross_tf_segments(
+    ops: &[Op],
+    existing_fonts: &HashMap<Vec<u8>, FontInfo>,
+) -> Vec<CharSegment> {
+    let mut segments: Vec<CharSegment> = Vec::new();
+    let mut in_bt = false;
+    let mut cur_font: Vec<u8> = Vec::new();
+    let mut cur_size: f32 = 12.0;
+    let mut seg_first_size: f32 = 12.0;
+    let mut cur_chars: Vec<CharEntry> = Vec::new();
+
+    macro_rules! flush_seg {
+        () => {
+            if !cur_chars.is_empty() {
+                segments.push(CharSegment {
+                    chars: std::mem::take(&mut cur_chars),
+                    font_name: cur_font.clone(),
+                    font_size: seg_first_size,
+                });
+            }
+        };
+    }
+
+    for (op_idx, op) in ops.iter().enumerate() {
+        match op.keyword.as_slice() {
+            b"BT" => {
+                flush_seg!();
+                in_bt = true;
+                cur_chars.clear();
+                cur_font.clear();
+                seg_first_size = 12.0;
+            }
+            b"ET" => {
+                flush_seg!();
+                in_bt = false;
+            }
+            b"Tf" if in_bt => {
+                if let (Some(Operand::Name(name)), Some(Operand::Num(size))) =
+                    (op.operands.first(), op.operands.get(1))
+                {
+                    if cur_chars.is_empty() {
+                        seg_first_size = *size;
+                    }
+                    cur_font = name.clone();
+                    cur_size = *size;
+                }
+            }
+            b"Tm" if in_bt => {
+                flush_seg!();
+                cur_font.clear();
+                seg_first_size = 12.0;
+            }
+            b"Td" | b"TD" if in_bt => {
+                let is_vertical = match (op.operands.first(), op.operands.get(1)) {
+                    (Some(Operand::Num(_)), Some(Operand::Num(ty))) => ty.abs() >= 0.01,
+                    _ => false,
+                };
+                if is_vertical {
+                    flush_seg!();
+                    seg_first_size = cur_size;
                 }
             }
             b"Tj" if in_bt => {
@@ -1288,13 +1425,132 @@ fn find_cross_op_matches_inner(
     result
 }
 
+/// Find cross-Tf matches: like `find_cross_op_matches_inner` but uses merged cross-Tf segments
+/// and allows Tf operators in the intermediate-op whitelist.
+/// Only emits matches where the op range spans at least one Tf (same-font cases are
+/// already handled by `find_cross_op_matches_inner` and must not be double-counted).
+fn find_cross_tf_matches_inner(
+    ops: &[Op],
+    old_texts: &[&str],
+    existing_fonts: &HashMap<Vec<u8>, FontInfo>,
+) -> Vec<CrossOpMatch> {
+    let mut result = Vec::new();
+    let segments = collect_cross_tf_segments(ops, existing_fonts);
+
+    for seg in &segments {
+        let text_chars: Vec<char> = seg.chars.iter().map(|e| e.ch).collect();
+        // Use segment font as fallback for width calculation when per-char font is missing.
+        let fi_fallback = existing_fonts.get(&seg.font_name);
+
+        for (r_idx, &old_text) in old_texts.iter().enumerate() {
+            let pattern_chars: Vec<char> = old_text.chars().collect();
+            let plen = pattern_chars.len();
+            if plen == 0 {
+                continue;
+            }
+
+            let mut pos = 0usize;
+            while pos + plen <= text_chars.len() {
+                if text_chars[pos..pos + plen] == pattern_chars[..] {
+                    let char_end = pos + plen;
+                    let first_op = seg.chars[pos].op_idx;
+                    let last_op = seg.chars[char_end - 1].op_idx;
+
+                    if first_op != last_op {
+                        // Only claim matches that genuinely cross a Tf boundary.
+                        // Same-font cross-op matches are handled by find_cross_op_matches_inner.
+                        let has_tf = ops[first_op..=last_op]
+                            .iter()
+                            .any(|o| o.keyword == b"Tf");
+                        if !has_tf {
+                            pos = char_end;
+                            continue;
+                        }
+
+                        let all_text = ops[first_op + 1..last_op]
+                            .iter()
+                            .all(|o| match o.keyword.as_slice() {
+                                b"Tj" | b"TJ" => true,
+                                b"Tf" => true,
+                                b"Td" | b"TD" => match (
+                                    o.operands.first(),
+                                    o.operands.get(1),
+                                ) {
+                                    (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
+                                        ty.abs() < 0.01
+                                    }
+                                    _ => false,
+                                },
+                                _ => false,
+                            });
+
+                        if all_text {
+                            let prefix_raw: Vec<u8> = seg.chars[..pos]
+                                .iter()
+                                .filter(|e| e.op_idx == first_op)
+                                .flat_map(|e| e.raw_bytes.iter().copied())
+                                .collect();
+
+                            let suffix_raw: Vec<u8> = seg.chars[char_end..]
+                                .iter()
+                                .filter(|e| e.op_idx == last_op)
+                                .flat_map(|e| e.raw_bytes.iter().copied())
+                                .collect();
+
+                            // Use per-char font for accurate width; fall back to segment font.
+                            let orig_width: f32 = seg.chars[pos..char_end]
+                                .iter()
+                                .map(|e| {
+                                    let fi = existing_fonts
+                                        .get(&e.font_name)
+                                        .or(fi_fallback)
+                                        .expect("font must exist");
+                                    let gid =
+                                        if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
+                                            u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
+                                        } else if !e.raw_bytes.is_empty() {
+                                            e.raw_bytes[0] as u16
+                                        } else {
+                                            0
+                                        };
+                                    fi.advance_width(gid) as f32 / 1000.0
+                                })
+                                .sum();
+
+                            // Restore to the font active at the last matched character.
+                            let restore_font = seg.chars[char_end - 1].font_name.clone();
+
+                            result.push(CrossOpMatch {
+                                replacement_idx: r_idx,
+                                first_op,
+                                last_op,
+                                prefix_raw,
+                                suffix_raw,
+                                orig_width,
+                                font_size: seg.font_size,
+                                font_name: restore_font,
+                            });
+                        }
+                    }
+                    pos = char_end;
+                } else {
+                    pos += 1;
+                }
+            }
+        }
+    }
+    result
+}
+
 fn find_cross_op_matches(
     ops: &[Op],
     replacements: &[ResolvedReplacement],
     existing_fonts: &HashMap<Vec<u8>, FontInfo>,
 ) -> Vec<CrossOpMatch> {
     let old_texts: Vec<&str> = replacements.iter().map(|r| r.old_text.as_str()).collect();
-    find_cross_op_matches_inner(ops, &old_texts, existing_fonts)
+    let mut result = find_cross_op_matches_inner(ops, &old_texts, existing_fonts);
+    result.extend(find_cross_tf_matches_inner(ops, &old_texts, existing_fonts));
+    result
 }
 
 fn find_cross_op_matches_preserve(
@@ -1497,6 +1753,38 @@ fn parse_tj_array(bytes: &[u8]) -> (Vec<ArrElem>, usize) {
     }
 
     (elems, i)
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+/// Classify why `old_text` was not matched in any content stream of the page.
+/// Used by harumi-ai for debug logging in the InPlace fallback branch.
+pub(crate) fn diagnose_match_failure(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    old_text: &str,
+) -> &'static str {
+    let existing_fonts = collect_fonts(doc, page_id);
+    for bytes in page_content_streams(doc, page_id).iter() {
+        let ops = parse_ops(bytes);
+        // Merged view (cross-Tf): text found here means Req1 did not fire.
+        for seg in collect_cross_tf_segments(&ops, &existing_fonts) {
+            let text: String = seg.chars.iter().map(|e| e.ch).collect();
+            if text.contains(old_text) {
+                return "cross-Tf";
+            }
+        }
+        // Same-font view: text found but blocked by vertical-Td or Tm.
+        for seg in collect_char_segments(&ops, &existing_fonts) {
+            let text: String = seg.chars.iter().map(|e| e.ch).collect();
+            if text.contains(old_text) {
+                return "vertical-Td-or-Tm";
+            }
+        }
+    }
+    "text-not-in-stream"
 }
 
 // ---------------------------------------------------------------------------

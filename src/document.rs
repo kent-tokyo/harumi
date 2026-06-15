@@ -3413,6 +3413,13 @@ impl<'doc> PageHandle<'doc> {
         Ok(count)
     }
 
+    /// Returns a short diagnostic string explaining why `old_text` could not be matched
+    /// in this page's content streams.  Intended for debug logging only.
+    /// Possible return values: `"cross-Tf"`, `"vertical-Td-or-Tm"`, `"text-not-in-stream"`.
+    pub fn diagnose_replace_failure(&self, old_text: &str) -> &'static str {
+        crate::replace::diagnose_match_failure(&self.doc.inner, self.page_id, old_text)
+    }
+
     /// Replaces all occurrences of `old_text` in this page's existing content streams
     /// with `new_text`, reusing the font already embedded in the PDF at that position.
     ///

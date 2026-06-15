@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (harumi)
+
+- **Cross-Tf (cross-font) text matching in `replace_text`** (`harumi/src/replace.rs`) —
+  `replace_text` / `can_replace_text` now match text that spans `Tf` (font-change) operators
+  within the same BT/ET block.  Japanese PDFs frequently encode a single visual line across
+  multiple font runs (e.g. body Kanji in `F1`, bracket characters in `F2`), so the old
+  single-segment matching missed these lines entirely.  New helpers:
+  `collect_cross_tf_segments()` merges characters across `Tf` without splitting; the
+  existing `find_cross_op_matches_inner()` whitelist is extended with `b"Tf" => true`;
+  `find_cross_tf_matches_inner()` emits matches only when the op range contains at least
+  one `Tf` (no double-counting with same-font matches); and `rewrite_content_stream()`
+  suppresses intermediate `Tf` ops inside a match region the same way it already
+  suppressed intermediate `Td` ops.  `Tm` operators always break the merged segment
+  (absolute position reset = new visual line).  `CharEntry` gains a `font_name` field so
+  per-character advance widths are computed from the correct font in the cross-Tf case.
+
+- **`PageHandle::diagnose_replace_failure(old_text) -> &'static str`** — public helper
+  that classifies why `replace_text` returned 0 for a given string.  Returns one of
+  `"cross-Tf"` (text found in merged view but not in per-font segments — should not
+  appear after this release), `"vertical-Td-or-Tm"` (text found in a single-font segment
+  but a line break interrupted the op range), or `"text-not-in-stream"` (text not present
+  in any segment at all).  Intended for debug logging in harumi-ai fallback branches.
+
 ### Added (harumi-ai)
 
 - **Per-character PDF support for InPlace mode** (`harumi/src/replace.rs`) — `find_cross_op_matches_inner()`
@@ -17,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now matched and the intermediate `Td` operators are suppressed in the rewritten stream.
   Width compensation uses `Tz` (horizontal scale) when 70%–130% of the original advance, falling back
   to `Td` otherwise.  Both `rewrite_content_stream` and `rewrite_stream_preserve_font` updated.
+
+- **InPlace fallback debug logging** (`harumi-ai/src/inplace.rs`) — in debug builds
+  (`cfg!(debug_assertions)`), each line that falls back to overlay now emits an
+  `[harumi-ai] fallback page=N reason=R text=…` line to stderr, where `R` is the reason
+  returned by `PageHandle::diagnose_replace_failure`.  Zero overhead in release builds.
 
 - **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — new translation
   mode that rewrites PDF content streams directly via `harumi::PageHandle::replace_text()`. The

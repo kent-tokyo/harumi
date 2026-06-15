@@ -88,7 +88,7 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need fill + stroke on same shape | pass `filled=true` and `stroke_width>0` to `add_ellipse` / `add_polygon` / `add_path` — uses PDF `B` operator |
 | Need open or closed path (polyline + polygon unified) | `add_path(points, closed, color, filled, stroke_width, opacity)` (`draw` feature) |
 | Need rotated text (watermarks, stamps at an angle) | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
-| Need to replace text spanning multiple Tj operators | `replace_text` / `replace_text_preserve_font` — cross-operator matching supported |
+| Need to replace text spanning multiple Tj operators or font runs | `replace_text` / `replace_text_preserve_font` — cross-operator **and** cross-Tf matching supported |
 | Need to extract an embedded image from a scanned PDF | `extract_page_image` returns JPEG or PNG bytes (`image` feature); scanned PDFs only |
 | Need clickable URL links in a PDF | `add_link_url([x, y, w, h], url)` — invisible URI annotation; click opens the URL in any viewer |
 | Need internal navigation links (TOC) | `add_link_internal([x, y, w, h], target_page)` — jumps to a page within the same document |
@@ -362,7 +362,7 @@ let n = doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-Matches text that spans consecutive `Tj`/`TJ` operators within the same font context (cross-operator matching). Only splits across positional operators (`Td`, `Tm`) are not matched.
+Matches text that spans consecutive `Tj`/`TJ` operators within the same BT/ET block (cross-operator matching), including across `Tf` font-change operators (cross-Tf matching). Japanese PDFs that encode a single visual line across multiple font runs — e.g. body Kanji in one font and bracket characters in another — are matched correctly. Only splits across vertical `Td` or `Tm` (new visual line) are not matched.
 
 ### Replace text using the original embedded font
 

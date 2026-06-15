@@ -92,7 +92,7 @@ doc.save("searchable.pdf")?;
 | 채우기와 외곽선을 동시에 그리고 싶다 | `add_ellipse` / `add_polygon` / `add_path`에서 `filled=true`와 `stroke_width>0` 동시 사용 — PDF `B` 연산자 |
 | 열린/닫힌 경로를 통합 API로 그리고 싶다 | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | 텍스트를 회전하고 싶다（워터마크, 대각선 스탬프） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
-| 여러 `Tj` 연산자에 걸친 텍스트를 치환하고 싶다 | `replace_text` / `replace_text_preserve_font` — 크로스 연산자 매칭 지원 |
+| 여러 `Tj` 연산자 또는 폰트 런에 걸친 텍스트를 치환하고 싶다 | `replace_text` / `replace_text_preserve_font` — 크로스 연산자 **및** 크로스 `Tf` 매칭 지원 |
 | 스캔 PDF에서 임베드된 이미지를 추출하고 싶다 | `extract_page_image` 로 JPEG 또는 PNG 바이트 반환（`image` feature）; 스캔 PDF 전용 |
 | PDF에 클릭 가능한 URL 링크를 넣고 싶다 | `add_link_url([x, y, w, h], url)` — 보이지 않는 URI 어노테이션; 클릭하면 어떤 뷰어에서도 URL을 열어줌 |
 | 내부 페이지 이동 링크（목차）가 필요하다 | `add_link_internal([x, y, w, h], target_page)` — 같은 문서 내 페이지로 이동 |
@@ -302,7 +302,7 @@ doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-동일한 글꼴 컨텍스트（동일 `Tf` / `BT`〜`ET` 블록）내 연속된 `Tj`/`TJ` 연산자에 걸쳐 있는 텍스트도 매칭됩니다（크로스 연산자 매칭）. 위치 연산자（`Td`, `Tm`）가 사이에 있는 경우는 대상 외입니다.
+동일 BT/ET 블록 내 연속된 `Tj`/`TJ` 연산자에 걸쳐 있는 텍스트도 매칭됩니다（크로스 연산자 매칭）. 또한 `Tf` 폰트 전환 연산자를 가로지르는 매칭도 지원합니다（크로스 `Tf` 매칭）. 일본어 PDF에서는 하나의 시각적 줄이 여러 폰트 런（본문 한자를 `F1`, 괄호 문자를 `F2`）으로 나뉘는 경우가 많은데, 이러한 케이스도 올바르게 매칭됩니다. 수직 방향의 `Td` 또는 `Tm`（새로운 시각적 줄）이 사이에 있는 경우는 대상 외입니다.
 
 ### 기존 임베드 폰트를 사용하여 텍스트 교체
 

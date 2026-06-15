@@ -387,3 +387,22 @@ PDF 仕様 §7.9.6 では名前ツリーの `/Names` 配列のキーを昇順ソ
 
 ### `pdf_text_string()` は `Object` を返す（`Vec<u8>` ではない）
 既存の `pdf_text_string(s: &str) -> Object` ヘルパーは ASCII なら `Literal`、非 ASCII なら UTF-16BE+BOM の `Object::String(...)` を返す完成した Object を返す。これを `Object::String(pdf_text_string(filename), ...)` のように二重ラップしようとするとコンパイルエラー（型不一致）になる。正しい使い方: `fs_dict.set("UF", pdf_text_string(filename))` のように Object のまま渡す。
+
+## クロス Tf テキストマッチングの実装教訓（Phase 34）
+
+### 日本語 PDF の1行がなぜ複数フォントランに分かれるか
+PDF の1つの視覚的な行内に `Tf` 演算子が多発する。例: 本文漢字に `F1`、括弧・約物に `F2`（文字コード体系が異なる専用フォント）。overlay 抽出は `"化学品及び（SDS）"` を1行として返すが、`collect_char_segments()` は `Tf` のたびにセグメントを分割するため、`count_matches_in_page()` はどのセグメントにも完全な文字列を見つけられず 0 を返す。これが GHS PDF での 14% 止まりの根本原因。
+
+### クロス Tf マッチングの設計パターン
+既存の「サンプ演算子クロスマッチ（`Td` またぎ）」と同様のパターンを `Tf` に対しても適用する:
+1. **収集**: `collect_cross_tf_segments()` — `Tf` をまたいで文字を統合収集（`Td` による縦方向移動 / `Tm` のみで分割）
+2. **マッチ**: `find_cross_tf_matches_inner()` — `all_text` ホワイトリストに `b"Tf" => true` を追加
+3. **二重カウント防止**: `has_tf` ガードで Tf を含まない op 範囲を除外（同一フォントのクロス演算子マッチは既存の `find_cross_op_matches_inner()` が処理するため）
+4. **リストア**: `CrossOpMatch.font_name` に最後のマッチ文字のフォント名を設定（emit 時に `/restore_font size Tf` として出力する対象）
+5. **中間 Tf 抑制**: `rewrite_content_stream()` の `b"Tf" if in_bt =>` アームに `op_role` チェックを追加し、role==1（中間 op）の `Tf` を `Td` と同様に削除する
+
+### `CharEntry` に `font_name` フィールドが必要な理由
+クロス Tf セグメントでは1つのセグメント内に複数フォントの文字が混在する。`orig_width`（幅補正計算に使用）を per-char の正しいフォントで計算するために、各 `CharEntry` がどのフォントに属するかを保持する必要がある。`push_chars_from_bytes()` はすでに `font_name: &[u8]` を受け取っているため、`CharEntry` にフィールドを追加するだけでよい。
+
+### マクロで Rust のボローチェッカー問題を回避する
+`collect_cross_tf_segments()` では「フラッシュ（push + take）」を複数箇所で呼ぶ必要がある。クロージャだと `cur_chars`（可変ボロー）と `cur_font`（不変ボロー）を同時に保持できずコンパイルエラーになる。`macro_rules! flush_seg!()` でインライン展開することで解決できる。Rust でコレクションとその参照を同時に扱うクロージャはボローチェッカーに引っかかりやすいため、このパターンを覚えておくこと。

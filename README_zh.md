@@ -90,7 +90,7 @@ doc.save("searchable.pdf")?;
 | 需要同时填充和描边 | `add_ellipse` / `add_polygon` / `add_path` 中 `filled=true` 且 `stroke_width>0`，使用 PDF `B` 算子 |
 | 需要统一的开/闭路径 API | `add_path(points, closed, color, filled, stroke_width, opacity)`（`draw` feature） |
 | 需要旋转文字（水印、斜向印章） | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
-| 需要跨多个 `Tj` 算子的文本替换 | `replace_text` / `replace_text_preserve_font` — 支持跨算子匹配 |
+| 需要跨多个 `Tj` 算子或字体段的文本替换 | `replace_text` / `replace_text_preserve_font` — 支持跨算子匹配 **和** 跨 `Tf` 字体切换匹配 |
 | 需要从扫描版 PDF 中提取嵌入图像 | `extract_page_image` 返回 JPEG 或 PNG 字节（`image` feature）；仅限扫描版 PDF |
 | 需要在 PDF 中添加可点击的 URL 链接 | `add_link_url([x, y, w, h], url)` — 不可见 URI 注释；在任意查看器中点击即可打开链接 |
 | 需要内部导航链接（目录） | `add_link_internal([x, y, w, h], target_page)` — 跳转到同一文档内的指定页面 |
@@ -301,7 +301,7 @@ doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
 doc.save("translated.pdf")?;
 ```
 
-支持匹配同一字体上下文（同一 `Tf` / `BT`~`ET` 块）内连续 `Tj`/`TJ` 算子中的跨算子文本。位置算子（`Td`、`Tm`）之间的情况不匹配。
+支持匹配同一 BT/ET 块内连续 `Tj`/`TJ` 算子中的跨算子文本，以及跨 `Tf` 字体切换算子的匹配（跨字体匹配）。日文 PDF 中一个视觉行经常跨多个字体段（正文汉字使用 `F1`，括号字符使用 `F2`），这种情况现在也能正确匹配。垂直 `Td` 或 `Tm`（新视觉行）之间的情况不匹配。
 
 ### 使用原始嵌入字体替换文本
 

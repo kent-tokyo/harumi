@@ -55,6 +55,15 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
                 // Fall back to overlay: cover the original text with a
                 // rectangle, then draw the translation on top.
                 fallback += 1;
+                if cfg!(debug_assertions) {
+                    let reason = doc.page(page_num)?.diagnose_replace_failure(&line.text);
+                    eprintln!(
+                        "[harumi-ai] fallback page={} reason={} text={:?}",
+                        page_num,
+                        reason,
+                        &line.text[..line.text.len().min(60)]
+                    );
+                }
                 let x = line.x - 1.0;
                 let below = line.font_size.max(global_body_fs) * descender_ratio;
                 let y = line.y - below;

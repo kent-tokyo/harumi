@@ -9,6 +9,26 @@
 
 ## [未リリース]
 
+### 追加 (harumi)
+
+- **クロス `Tf` テキストマッチング（`replace_text`）** (`harumi/src/replace.rs`) —
+  `replace_text` / `can_replace_text` が同一 BT/ET ブロック内の `Tf`（フォント切替）演算子を
+  またいでテキストをマッチできるようになった。日本語 PDF では1行の視覚的なテキストが複数の
+  フォントラン（本文漢字を `F1`、括弧文字を `F2` など）に分かれていることが多く、従来の
+  シングルセグメントマッチではこれらがすべて fallback していた。新ヘルパー：
+  `collect_cross_tf_segments()`（`Tf` をまたいで文字を統合収集）、
+  `find_cross_tf_matches_inner()`（Tf を含む op 範囲のみ emit してサンプ演算子マッチと
+  二重カウントしない）、`rewrite_content_stream()` の `Tf` 中間演算子抑制。
+  `Tm` 演算子は常にセグメントを分割（絶対位置リセット = 新視覚行）。
+  `CharEntry` に `font_name` フィールドを追加し、クロス `Tf` 時に各文字の幅を正しいフォントで
+  計算できるようにした。
+
+- **`PageHandle::diagnose_replace_failure(old_text) -> &'static str`** —
+  `replace_text` が 0 を返したときの原因を分類するデバッグ向けヘルパー。
+  `"cross-Tf"`（統合ビューにテキストが見つかるが per-font セグメントには存在しない）、
+  `"vertical-Td-or-Tm"`（単一フォントセグメントには存在するが行ブレーク演算子で op 範囲が
+  断ち切られた）、`"text-not-in-stream"`（どのセグメントにも存在しない）を返す。
+
 ### 追加 (harumi-ai)
 
 - **per-char PDF 対応（InPlace モード向け）** (`harumi/src/replace.rs`) — `find_cross_op_matches_inner()`
@@ -16,6 +36,11 @@
   `(A)Tj 12 0 Td (B)Tj …` パターンがマッチ可能になり、中間 `Td` は書き換え後のストリームから
   除去される。幅補正は 70%〜130% の場合 `Tz`（水平スケール）を使用し、それ以外は `Td`
   にフォールバック。`rewrite_content_stream` と `rewrite_stream_preserve_font` 両方を更新。
+
+- **InPlace fallback デバッグログ** (`harumi-ai/src/inplace.rs`) — debug ビルド
+  （`cfg!(debug_assertions)`）では、overlay にフォールバックした行ごとに
+  `[harumi-ai] fallback page=N reason=R text=…` を stderr に出力する。
+  `R` は `PageHandle::diagnose_replace_failure` が返す理由。リリースビルドではゼロコスト。
 
 - **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — コンテンツ
   ストリーム直接置換による新翻訳モード。`harumi::PageHandle::replace_text()` を使って
