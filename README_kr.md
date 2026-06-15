@@ -791,6 +791,8 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.5.1** | `harumi-ai` v0.1.0 첫 crates.io 출시; InPlace 디버그 로그의 CJK 바이트 슬라이스 패닉 수정; Clippy lint 수정（`repeat_n`、`div_ceil`） |
 | **v1.5.2** | 조상 Pages 노드의 폰트 상속 수정（`collect_fonts_inner` 부모 체인 탐색）; LLM 미이스케이프 따옴표 JSON 수복; 기본 `max_tokens` 4096→16000 |
 | **v1.5.3** | 상속된 `/Resources`에서 Form XObject 발견 수정（Chrome/Skia PDF — `extract_text_from_xobjects` 부모 체인 탐색）; `replace_text()`가 Form XObject 콘텐츠 스트림도 재작성하여 `harumi-ai` InPlace 모드가 Chrome/Skia PDF에서 동작 |
+| **v1.5.4** | Type3 폰트 텍스트 추출 지원（`collect_font_dict_entries`에 `/Subtype /Type3` 추가）; Type3 폰트만 사용하는 Chrome/Skia PDF의 번역 출력 제로 문제 수정 |
+| **v1.5.5** | Overlay CTM 좌표 변환 수정 — `parse_content_stream`이 `q`/`Q`/`cm`을 추적하여 `TextFragment` 좌표를 페이지 공간으로 변환; Chrome/Skia PDF（스케일 + Y축 반전 CTM）의 overlay 텍스트 위치가 정확히 배치됨 |
 
 ---
 

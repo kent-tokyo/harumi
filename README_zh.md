@@ -790,6 +790,8 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.1** | `harumi-ai` v0.1.0 首次 crates.io 发布；修复 InPlace 调试日志中的 CJK 字节切片 panic；Clippy lint 修复（`repeat_n`、`div_ceil`） |
 | **v1.5.2** | 修复来自祖先 Pages 节点的字体继承（`collect_fonts_inner` 父链遍历）；JSON 修复 LLM 未转义引号；默认 `max_tokens` 4096→16000 |
 | **v1.5.3** | 修复继承 `/Resources` 中的 Form XObject 发现（Chrome/Skia PDF — `extract_text_from_xobjects` 父链遍历）；`replace_text()` 现支持改写 Form XObject 内容流，`harumi-ai` InPlace 模式在 Chrome/Skia PDF 上正常工作 |
+| **v1.5.4** | 修复 Type3 字体文本提取（`collect_font_dict_entries` 新增 `/Subtype /Type3`）；修复仅使用 Type3 字体的 Chrome/Skia PDF 翻译输出为零的问题 |
+| **v1.5.5** | 修复 Overlay CTM 坐标变换 — `parse_content_stream` 现追踪 `q`/`Q`/`cm` 并将 `TextFragment` 坐标转换到页面空间；Chrome/Skia PDF（缩放 + Y 轴翻转 CTM）的 overlay 文本位置现已正确 |
 
 ---
 

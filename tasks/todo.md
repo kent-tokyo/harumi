@@ -1612,14 +1612,48 @@ Chrome/Skia は PDF 仕様 §7.7.3 に従い `/Resources` を親 `/Pages` ノー
 
 ---
 
-## バグ修正（v1.5.3 リリース後・未リリース）
+## バグ修正（v1.5.4）— 2026-06-15
 
-### P2: Type3 フォントをテキスト抽出でスキップしていた問題（完了）
+### Type3 フォントをテキスト抽出でスキップしていた問題（完了）
 
 **根本原因**: `collect_font_dict_entries()` の match が `Type0`/`Type1`/`MMType1`/`TrueType` のみを処理し、`/Subtype /Type3` は `_ => continue` でスキップ。Chrome/Skia 生成 PDF（Sample.pdf の F34/F35/F36）はすべて Type3 のため `fonts` HashMap が空 → テキスト断片ゼロ → harumi-ai 翻訳出力ゼロ。
 
 **修正**: `src/extract.rs:862` の match arm に `| Some(b"Type3")` を追加し `collect_simple_font()` に流す。Type3 は Type1/TrueType と同じ 1 バイト文字コード + `/ToUnicode` CMap 構造を持つため同関数で正しく処理できる。
 
 - [x] `src/extract.rs` — match arm 1 行変更
-- [x] `cargo test --test extract_text` — 22 件パス
-- [x] `cargo clippy -- -D warnings` — 0 警告
+- [x] ユニットテスト 2 件追加
+- [x] `cargo test` — 28 件パス
+- [x] `cargo clippy --all-features` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.4 公開済み
+
+## バグ修正（v1.5.5）— 2026-06-15
+
+### Overlay CTM 座標変換バグ修正（完了）
+
+**根本原因**: Chrome/Skia 生成 PDF はページコンテンツストリームの先頭で
+`q → 0.24 0 0 -0.24 0 841.92 cm → Do → Q` という変換を確立する。
+`parse_content_stream()` が `q`/`Q`/`cm` 演算子を無視していたため、`TextFragment` の
+座標が XObject のローカル空間（例: x=500, y=3000）のままになっていた。Overlay モードが
+この生座標をページ空間として使用するため、翻訳テキストが極小・上下反転・左上隅に集中。
+
+**アドバイザーが指摘した重要バグ**: 最初の実装では `ctm_stack.first()` を
+`state.ctm` に保存していた。これは `q`/`Q` の外側（identity）を返すため、
+`q → cm → Do → Q` パターンでは常に identity CTM になっていた。
+正しい修正: `Do` 演算子を検出した時点の `ctm_stack.last()` を `state.ctm` に保存し、
+Form XObject 抽出時にその CTM を適用する。
+
+- [x] `src/extract.rs` — CTM ヘルパー関数追加（`multiply_ctm` / `apply_ctm` / `ctm_scale` / `read_matrix`）
+- [x] `ParseCarryState` に `ctm: [f32; 6]` フィールド追加
+- [x] `parse_content_stream()` に `q`/`Q`/`cm`/`Do` アーム追加、`Tj`/`TJ` で CTM 変換適用
+- [x] `extract_text_from_xobjects()` で `carry.ctm` と XObject `/Matrix` を合成
+- [x] ユニットテスト 2 件追加（`ctm_transforms_coordinates_to_page_space` / `ctm_at_do_captured_in_state`）
+- [x] `cargo test` — 30 件パス（新テスト含む）
+- [x] `cargo clippy --all-features` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.5 公開済み
+
+### 残課題（P1: Type3 InPlace 置換）
+
+- [ ] InPlace モードで Type3 フォントのテキスト置換が失敗する原因を特定
+  - デバッグビルドで `[harumi-ai] fallback reason=` ログを確認
+  - 原因候補: `"vertical-Td-or-Tm"`（文字ごとの Td 位置指定）、`"text-not-in-stream"`、`"cross-Tf"`
+  - P0 の Overlay CTM 修正で視覚品質は改善済み。P1 は追加改善として優先度低

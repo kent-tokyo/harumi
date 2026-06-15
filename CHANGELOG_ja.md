@@ -9,16 +9,6 @@
 
 ## [未リリース]
 
-### 修正 (harumi)
-
-- **Type3 フォントのテキスト抽出対応** (`src/extract.rs`) —
-  `collect_font_dict_entries()` の match 分岐が `Type0`・`Type1`・`MMType1`・`TrueType`
-  のみを処理し、`/Subtype /Type3` は `_ => continue` でスキップされてフォントマップに登録されなかった。
-  Chrome/Skia 生成 PDF（Sample.pdf の F34/F35/F36 等）はすべて Type3 フォントを使用するため、
-  `fonts` HashMap が空になり `TextFragment` が一件も生成されず、`harumi-ai` の翻訳出力がゼロになっていた。
-  Type3 は Type1/TrueType と同じ 1 バイト文字コード + `/ToUnicode` CMap 構造を持つため、
-  match arm に `| Some(b"Type3")` を追加して `collect_simple_font()` に流すだけで修正できた。
-
 ### 追加 (harumi)
 
 - **クロス `Tf` テキストマッチング（`replace_text`）** (`harumi/src/replace.rs`) —
@@ -68,6 +58,39 @@
 - **見出し・太字行への合成太字レンダリング** (`harumi-ai/src/overlay.rs`) — `is_heading ||
   is_bold` の翻訳行を `add_text_styled(bold=true)` で出力するよう変更。PDF render mode 2
   (fill+stroke、`stroke_width ≈ font_size × 0.04`) を使用するため追加フォント不要。
+
+---
+
+## [1.5.5] — 2026-06-15
+
+### 修正 (harumi)
+
+- **Overlay CTM 座標変換** (`src/extract.rs`) —
+  `parse_content_stream()` が `q`/`Q`/`cm` グラフィクス状態演算子を追跡し、内部 CTM
+  スタックを維持するよう変更。テキスト座標は `Tj`/`TJ` 演算子での発行時に現在の CTM を
+  適用してページ空間へ変換される。`Do` 演算子を検出した時点の CTM を `ParseCarryState.ctm`
+  に記録し、`extract_text_from_xobjects()` に渡すことで、各 Form XObject の `/Matrix` との
+  合成 CTM を使ってテキスト座標をページ空間に変換する。
+
+  Chrome/Skia 生成 PDF はページコンテンツストリームの冒頭で
+  `q → 0.24 0 0 -0.24 0 841.92 cm → Do → Q` という変換を確立する。この修正以前は
+  `TextFragment` 座標が XObject のローカル空間のまま（例: x=500, y=3000）だったため、
+  Overlay モードが変換前の生座標を PDF ページ空間として使用し、翻訳テキストが極小・上下反転・
+  左上隅に集中するという問題が発生していた。
+
+---
+
+## [1.5.4] — 2026-06-15
+
+### 修正 (harumi)
+
+- **Type3 フォントのテキスト抽出対応** (`src/extract.rs`) —
+  `collect_font_dict_entries()` の match 分岐が `Type0`・`Type1`・`MMType1`・`TrueType`
+  のみを処理し、`/Subtype /Type3` は `_ => continue` でスキップされてフォントマップに登録されなかった。
+  Chrome/Skia 生成 PDF（Sample.pdf の F34/F35/F36 等）はすべて Type3 フォントを使用するため、
+  `fonts` HashMap が空になり `TextFragment` が一件も生成されず、`harumi-ai` の翻訳出力がゼロになっていた。
+  Type3 は Type1/TrueType と同じ 1 バイト文字コード + `/ToUnicode` CMap 構造を持つため、
+  match arm に `| Some(b"Type3")` を追加して `collect_simple_font()` に流すだけで修正できた。
 
 ---
 
