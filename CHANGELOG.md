@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (harumi-ai)
+
+- **`TranslateOptions::cover_color`** (`harumi-ai/src/pdf_translator.rs`) — optional RGB cover
+  color for overlay mode (default: `None` = white `[1.0, 1.0, 1.0]`). Useful when the source
+  PDF has a non-white background (safety signs, coloured headers). Also exposed via
+  `TranslateOptionsBuilder::cover_color()`.
+
+### Changed (harumi-ai)
+
+- **Synthetic bold for headings/bold lines** (`harumi-ai/src/overlay.rs`) — translated text on
+  lines where `is_heading || is_bold` is now rendered with `add_text_styled(bold=true)`, which
+  uses PDF render mode 2 (fill+stroke, `stroke_width ≈ font_size × 0.04`). No extra font file
+  required.
+
 ---
 
 ## [1.4.3] — 2026-06-15

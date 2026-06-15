@@ -54,6 +54,12 @@ pub struct TranslateOptions {
     pub pages_per_batch: usize,
     /// Translation output mode (default: `Overlay`).
     pub mode: TranslationMode,
+    /// Background cover color for overlay mode (default: `None` = white `[1.0, 1.0, 1.0]`).
+    ///
+    /// In overlay mode, a filled rectangle is drawn over the original text before
+    /// placing the translation. Set this when the source PDF has a non-white background
+    /// (e.g. safety signs, coloured headers) so the cover matches the background.
+    pub cover_color: Option<[f32; 3]>,
 }
 
 impl TranslateOptions {
@@ -72,6 +78,7 @@ impl TranslateOptions {
             concurrency: 4,
             pages_per_batch: 1,
             mode: TranslationMode::default(),
+            cover_color: None,
         }
     }
 
@@ -93,6 +100,7 @@ pub struct TranslateOptionsBuilder {
     concurrency: Option<usize>,
     pages_per_batch: Option<usize>,
     mode: Option<TranslationMode>,
+    cover_color: Option<[f32; 3]>,
 }
 
 impl TranslateOptionsBuilder {
@@ -144,6 +152,14 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Background cover color for overlay mode (default: `None` = white).
+    ///
+    /// Provide an RGB triple where each component is in `0.0..=1.0`.
+    pub fn cover_color(mut self, color: [f32; 3]) -> Self {
+        self.cover_color = Some(color);
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -159,6 +175,7 @@ impl TranslateOptionsBuilder {
             concurrency: self.concurrency.unwrap_or(4),
             pages_per_batch: self.pages_per_batch.unwrap_or(1),
             mode: self.mode.unwrap_or_default(),
+            cover_color: self.cover_color,
         }
     }
 }

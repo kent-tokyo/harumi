@@ -420,6 +420,8 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
     let mut doc = Document::from_bytes(pdf_bytes)?;
     let font = doc.embed_font(&options.font)?;
 
+    let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
+
     // Compute descender depth from the actual font (once, reused per line).
     let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
         .clamp(0.05, 0.35);
@@ -428,9 +430,9 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
         let page_num = overlay_page.page_num;
         let translated_texts = page_translations.get(&page_num);
 
-        // First pass: white rectangles over original text.
+        // First pass: cover rectangles over original text.
         for &rect in &overlay_page.invisible_rects {
-            doc.page(page_num)?.add_rect(rect, [1.0f32, 1.0, 1.0], 1.0)?;
+            doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
         for line in &overlay_page.lines {
             let x = line.x - 1.0;
@@ -441,7 +443,7 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
             let w = (line.right - x + 2.0).max(10.0);
             // Height: use per-line spacing, not a global fixed multiplier.
             let h = line.line_height + below;
-            doc.page(page_num)?.add_rect([x, y, w, h], [1.0f32, 1.0, 1.0], 1.0)?;
+            doc.page(page_num)?.add_rect([x, y, w, h], cover_color, 1.0)?;
         }
 
         // Second pass: translated (and corrected) text.
@@ -454,9 +456,11 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
                 let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
                 let avail_w = (line.col_right - line.x).max(50.0);
                 let scaled = fit_font_size(text, &face, desired, avail_w).max(desired * 0.95);
+                // Synthetic bold for headings and originally-bold lines.
+                let bold = line.is_heading || line.is_bold;
                 // Place translated text at the original baseline Y (no arbitrary shift).
-                doc.page(page_num)?.add_text(
-                    text, font, [line.x, line.y], scaled, [0.0f32, 0.0, 0.0],
+                doc.page(page_num)?.add_text_styled(
+                    text, font, [line.x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
                 )?;
             }
         }

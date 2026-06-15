@@ -9,6 +9,19 @@
 
 ## [未リリース]
 
+### 追加 (harumi-ai)
+
+- **`TranslateOptions::cover_color`** (`harumi-ai/src/pdf_translator.rs`) — Overlay モードの
+  被覆矩形色を指定する optional RGB フィールド（デフォルト: `None` = 白 `[1.0, 1.0, 1.0]`）。
+  安全標識や色付きヘッダーなど、背景が白でない PDF での翻訳精度向上に利用可能。
+  `TranslateOptionsBuilder::cover_color()` でも設定可能。
+
+### 変更 (harumi-ai)
+
+- **見出し・太字行への合成太字レンダリング** (`harumi-ai/src/overlay.rs`) — `is_heading ||
+  is_bold` の翻訳行を `add_text_styled(bold=true)` で出力するよう変更。PDF render mode 2
+  (fill+stroke、`stroke_width ≈ font_size × 0.04`) を使用するため追加フォント不要。
+
 ---
 
 ## [1.4.3] — 2026-06-15
