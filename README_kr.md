@@ -109,6 +109,8 @@ doc.save("searchable.pdf")?;
 | 다른 PDF를 현재 PDF에 오버레이하고 싶다（스탬프 합성） | `doc.overlay_from(other)` 로 `other`의 각 페이지를 `self`의 해당 페이지에 Form XObject로 겹쳐 쓰기；폰트, 이미지, 불투명도 보존（v1.4+） |
 | 모든 북마크/목차를 삭제하고 싶다 | `doc.clear_outline()` 으로 대기 중인 북마크와 이미 로드된 PDF의 `/Outlines` 트리를 일괄 삭제（v1.4+） |
 | PDF에 파일을 첨부하고 싶다 | `doc.attach_file(name, data, mime)` 로 임의 파일을 EmbeddedFiles로 첨부（FlateDecode 압축, 이름순 정렬）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
+| 추출한 텍스트에서 굵기/기울임/폰트 이름을 얻고 싶다 | `TextFragment::is_bold`・`is_italic`・`font_family`・`base_font` — PostScript `/BaseFont` 이름에서 파싱（v1.4.1+） |
+| 추출한 텍스트에서 단 레이아웃을 감지하고 싶다 | `detect_text_columns(&frags, page_width)` — X 밀도 히스토그램으로 빈 간격을 감지해 `Vec<ColumnZone>` 반환（v1.4.1+） |
 | PDF 디지털 서명을 검증하고 싶다 | `doc.verify_signatures(&pdf_bytes)` — 서명 메타데이터（서명자, 타임스탬프, 필드명）추출；암호화 검증은 TODO（`digital-signature` feature） |
 | PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
 
@@ -287,7 +289,7 @@ for fragment in &runs {
 }
 ```
 
-harumi가 생성한 PDF（Identity-H CID 폰트）뿐 아니라 임의의 기존 PDF도 지원합니다. Type1·TrueType 등 표준 단순 폰트（WinAnsiEncoding, MacRomanEncoding, StandardEncoding, `/Differences` 딕셔너리）도 디코딩합니다.
+harumi가 생성한 PDF（Identity-H CID 폰트）뿐 아니라 임의의 기존 PDF도 지원합니다. Type1·TrueType 등 표준 단순 폰트（WinAnsiEncoding, MacRomanEncoding, StandardEncoding, `/Differences` 딕셔너리）도 디코딩합니다. 각 `TextFragment`는 `text`、`x`/`y`、`width`、`font_size`、**`font_name`**、**`color`**、**`invisible`** 외에 **`is_bold`**・**`is_italic`**・**`font_family`**・**`base_font`**（PostScript `/BaseFont` 이름에서 파싱）를 포함합니다。
 
 ### 기존 PDF에서 텍스트 바꾸기
 
@@ -778,6 +780,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v0.6** | 암호화 PDF 읽기（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）; 마크업 주석（하이라이트·밑줄·취소선·메모）; AcroForm `form_fields()` / `fill_form()`; AGL 테이블 +116 항목; Identity-H 텍스트 추출 폴백 |
 | **v0.7** *（현재）* | `set_encryption` — 암호화된 PDF 저장; `add_squiggly` — 물결 밑줄 주석; 페이지 박스 전체 지원（크롭·트림·블리드·미디어 박스 읽기/쓰기） |
 | **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; MCP `pdf_replace_text` 레이아웃 유지 번역 워크플로와 비 Identity `CIDToGIDMap` 진단; `cargo semver-checks` CI |
+| **v1.4.1** | `TextFragment` 폰트 속성（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` 단 레이아웃 추론 |
 
 ---
 

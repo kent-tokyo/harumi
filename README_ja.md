@@ -109,6 +109,8 @@ doc.save("searchable.pdf")?;
 | 別の PDF を現在の PDF に重ねたい（スタンプ合成） | `doc.overlay_from(other)` で `other` の各ページを `self` の対応ページに Form XObject として重ね書き；フォント・画像・透過度も保持（v1.4+） |
 | ブックマーク（目次）をすべて削除したい | `doc.clear_outline()` でペンディング中のブックマークと読み込み済み PDF の `/Outlines` ツリーを一括削除（v1.4+） |
 | PDF にファイルを添付したい | `doc.attach_file(name, data, mime)` で任意ファイルを EmbeddedFiles として添付（FlateDecode 圧縮・名前順ソート済み）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
+| 抽出テキストから太字・斜体・フォント名を取得したい | `TextFragment::is_bold`・`is_italic`・`font_family`・`base_font` — PostScript `/BaseFont` 名から解析（v1.4.1+） |
+| 抽出テキストから段組レイアウトを検出したい | `detect_text_columns(&frags, page_width)` — X密度ヒストグラムで空白ギャップを検出し `Vec<ColumnZone>` を返す（v1.4.1+） |
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
 | PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 全署名データを抽出（署名者・タイムスタンプ・フィールド名）、RSA PKCS#1 v1.5 暗号学的検証を実行、`is_valid: bool` 付き `SignatureInfo` を返す（`digital-signature` feature、v1.2.2+） |
 | PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |
@@ -352,7 +354,7 @@ for frag in &runs {
 }
 ```
 
-各 `TextFragment` が持つフィールド：`text`、`x`/`y`（PDF ポイント座標）、`width`、`font_size`、**`font_name`**（PDF リソース名。例：`"HR0"`）、**`color`**（RGB フィル `[f32; 3]`）、**`invisible`**（OCR `Tr 3` テキストの場合 `true`）。
+各 `TextFragment` が持つフィールド：`text`、`x`/`y`（PDF ポイント座標）、`width`、`font_size`、**`font_name`**（PDF リソース名。例：`"HR0"`）、**`color`**（RGB フィル `[f32; 3]`）、**`invisible`**（OCR `Tr 3` テキストの場合 `true`）、**`is_bold`**・**`is_italic`**・**`font_family`**・**`base_font`**（PostScript `/BaseFont` 名から解析）。
 
 harumi が出力したPDF（Identity-H CIDフォント）だけでなく、任意の既存PDFにも対応。Type1・TrueTypeなど標準シンプルフォント（WinAnsiEncoding・MacRomanEncoding・StandardEncoding・`/Differences` 辞書）も解析できます。
 
@@ -895,7 +897,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v0.6** | 暗号化 PDF 読み込み（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；マークアップ注釈（ハイライト・下線・取り消し線・付箋）；AcroForm `form_fields()` / `fill_form()`；AGL テーブル +116 エントリ（中欧文字・合字・euro）；Identity-H テキスト抽出フォールバック |
 | **v0.7** *(current)* | `set_encryption` — パスワード保護付き PDF の書き出し；`add_squiggly` — 波線下線注釈；ページボックス全種対応（`crop_box`・`trim_box`・`bleed_box`・`media_box` 読み書き） |
 | **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；MCP `pdf_replace_text` のレイアウト保持翻訳ワークフローと非Identity `CIDToGIDMap` 診断；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
-| **Next** | AES-256 書き込み暗号化 |
+| **v1.4.1** | `TextFragment` フォント属性（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` による段組レイアウト推定 |
 
 ---
 

@@ -1268,3 +1268,30 @@ P1〜P3 の要望を精査し、pure Rust の範囲で実装可能なものを v
 | セマンティックチャンク | `tests/chunk.rs` | 7 |
 | オーバーレイ/スケール/添付 | `tests/overlay_scale_attach.rs` | 15 |
 | ドキュメンテーション | `src/lib.rs`, `src/document.rs` | 24 |
+
+## Phase 30 — TextFragment フォント属性 + detect_text_columns (完了) [v1.4.1]
+
+### TextFragment フィールド追加 (`src/extract.rs`)
+
+- [x] `TextFragment::is_bold: bool` — PostScript フォント名から Bold/Heavy/Black/Semibold/Demibold/Extrabold キーワードで検出
+- [x] `TextFragment::is_italic: bool` — Italic/Oblique/Slanted キーワードで検出
+- [x] `TextFragment::font_family: String` — サブセットプレフィックス（`"ABCDEF+"`）とスタイルサフィックスを除いた基本ファミリー名
+- [x] `TextFragment::base_font: String` — サブセットプレフィックスのみ除いた PostScript 完全名（例: `"Helvetica-BoldOblique"`）
+- [x] `parse_font_attributes()` ヘルパー追加（PostScript 名 → (base_font, is_bold, is_italic, font_family) タプル）
+- [x] `FontInfo` に同フィールドを追加し `collect_type0_font` / `collect_simple_font` で設定
+- [x] `decode_chars_to_fragment` でフラグメントに転記
+
+### detect_text_columns + ColumnZone (`src/extract.rs`, `src/lib.rs`)
+
+- [x] `ColumnZone { x_start: f32, x_end: f32 }` 構造体（`#[non_exhaustive]`）
+- [x] `detect_text_columns(fragments: &[TextFragment], page_width: f32) -> Vec<ColumnZone>`
+  - 1pt 幅のバケツに X 密度ヒストグラムを構築
+  - 15pt 以上の連続空白ギャップを段区切りとして検出
+  - 単一段（ギャップなし）の場合はページ幅全体の `ColumnZone` 1件を返す
+- [x] `src/lib.rs` から `detect_text_columns` / `ColumnZone` を再エクスポート
+
+### ドキュメント更新
+
+- [x] CHANGELOG.md に v1.4.1 セクション追加
+- [x] README.md（英・日・中・韓）の "What you get" テーブルと Roadmap に追記
+- [x] Cargo.toml バージョン 1.4.0 → 1.4.1

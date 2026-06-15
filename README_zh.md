@@ -107,6 +107,8 @@ doc.save("searchable.pdf")?;
 | 需要将另一个 PDF 叠加到当前 PDF 上（印章合成） | `doc.overlay_from(other)` 将 `other` 的每页作为 Form XObject 叠加到 `self` 的对应页上；字体、图像和透明度均保留（v1.4+） |
 | 需要删除所有书签/目录 | `doc.clear_outline()` 同时删除待写入的书签和已加载 PDF 中的 `/Outlines` 树（v1.4+） |
 | 需要在 PDF 中附加文件 | `doc.attach_file(name, data, mime)` 将任意文件嵌入为 EmbeddedFiles 附件（FlateDecode 压缩、按名称排序）；`doc.list_attachments()` 返回 `Vec<AttachmentInfo>`（v1.4+） |
+| 需要从提取的文本中获取粗体/斜体/字体名称 | `TextFragment::is_bold`、`is_italic`、`font_family`、`base_font` — 从 PostScript `/BaseFont` 名称解析（v1.4.1+） |
+| 需要从提取的文本中检测分栏布局 | `detect_text_columns(&frags, page_width)` — X 密度直方图检测空白间距，返回 `Vec<ColumnZone>`（v1.4.1+） |
 | 需要验证 PDF 数字签名 | `doc.verify_signatures(&pdf_bytes)` — 提取签名元数据（签名者、时间戳、字段名）；密码学验证待做（`digital-signature` feature） |
 | 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
 
@@ -286,7 +288,7 @@ for fragment in &runs {
 }
 ```
 
-不仅适用于 harumi 生成的 PDF（Identity-H CID 字体），也适用于任意现有 PDF。支持标准简单字体（Type1、TrueType）及 WinAnsiEncoding、MacRomanEncoding、StandardEncoding 或 `/Differences` 编码字典。
+不仅适用于 harumi 生成的 PDF（Identity-H CID 字体），也适用于任意现有 PDF。支持标准简单字体（Type1、TrueType）及 WinAnsiEncoding、MacRomanEncoding、StandardEncoding 或 `/Differences` 编码字典。每个 `TextFragment` 包含 `text`、`x`/`y`、`width`、`font_size`、**`font_name`**、**`color`**、**`invisible`**，以及 **`is_bold`**、**`is_italic`**、**`font_family`**、**`base_font`**（从 PostScript `/BaseFont` 名称解析）。
 
 ### 替换现有 PDF 中的文本
 
@@ -777,6 +779,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v0.6** | 加密 PDF 读取（`from_file_with_password` / `is_encrypted` / `Error::WrongPassword`）；标记注释（高亮、下划线、删除线、便利贴）；AcroForm `form_fields()` / `fill_form()`；AGL 表格 +116 条目；Identity-H 文字提取回退 |
 | **v0.7** *（当前）* | `set_encryption` — 写入密码保护 PDF；`add_squiggly` — 波浪下划线注释；页面框全类型支持（裁切框、修边框、出血框、媒体框读写） |
 | **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；MCP `pdf_replace_text` 保持版面的翻译流程和非 Identity `CIDToGIDMap` 诊断；`cargo semver-checks` CI |
+| **v1.4.1** | `TextFragment` 字体属性（`is_bold`、`is_italic`、`font_family`、`base_font`）；`detect_text_columns` + `ColumnZone` 用于分栏布局推断 |
 
 ---
 

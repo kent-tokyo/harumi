@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.1] — 2026-06-15
+
+### Added
+
+- **`TextFragment::is_bold`** — `true` when the font name indicates a bold weight
+  (keywords: Bold, Heavy, Black, Semibold, Demibold, Extrabold).
+
+- **`TextFragment::is_italic`** — `true` when the font name indicates italic or oblique
+  style (keywords: Italic, Oblique, Slanted).
+
+- **`TextFragment::font_family`** — font family name derived from the PostScript
+  `/BaseFont` entry, with subset prefix (e.g. `"ABCDEF+"`) and style suffixes stripped.
+  Empty string when no `/BaseFont` is present.
+
+- **`TextFragment::base_font`** — full PostScript base font name (subset prefix stripped).
+  Examples: `"Helvetica-BoldOblique"`, `"NotoSansJP-Regular"`.
+  Empty string when no `/BaseFont` is present.
+
+- **`detect_text_columns(fragments, page_width) -> Vec<ColumnZone>`** — infers column
+  layout from an X-density histogram of text fragments. Gaps of at least 15 pt with no
+  text are treated as column separators. Returns one `ColumnZone` per detected column.
+
+- **`ColumnZone`** — struct with `x_start: f32` and `x_end: f32` (PDF-point coordinates)
+  returned by `detect_text_columns`.
+
+---
+
 ## [1.4.0] — 2026-06-14
 
 ### Added

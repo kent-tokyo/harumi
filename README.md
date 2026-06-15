@@ -104,6 +104,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to overlay one PDF on top of another | `doc.overlay_from(other)` stamps each page of `other` onto the matching page of `self` as a Form XObject; fonts, images, and opacity are preserved (v1.4+) |
 | Need to remove all bookmarks / TOC | `doc.clear_outline()` removes both pending bookmarks and any existing `/Outlines` tree in a loaded PDF (v1.4+) |
 | Need to attach files to a PDF | `doc.attach_file(name, data, mime)` embeds any file as a PDF attachment (EmbeddedFiles, FlateDecode-compressed, sorted name tree); `doc.list_attachments()` → `Vec<AttachmentInfo>` (v1.4+) |
+| Need bold/italic/font-family from extracted text | `TextFragment::is_bold`, `is_italic`, `font_family`, `base_font` — parsed from the PostScript `/BaseFont` name (v1.4.1+) |
+| Need to detect column layout from extracted text | `detect_text_columns(&frags, page_width)` — X-density histogram splits text into `Vec<ColumnZone>` by gap detection (v1.4.1+) |
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
 | Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts all signature data (signer, timestamp, field name); performs RSA PKCS#1 v1.5 cryptographic verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
 | Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |
@@ -343,7 +345,7 @@ for frag in &runs {
 }
 ```
 
-Each `TextFragment` carries: `text`, `x`/`y` (PDF-point coordinates), `width`, `font_size`, **`font_name`** (PDF resource name e.g. `"HR0"`), **`color`** (RGB fill `[f32; 3]`), and **`invisible`** (`true` for OCR `Tr 3` text).
+Each `TextFragment` carries: `text`, `x`/`y` (PDF-point coordinates), `width`, `font_size`, **`font_name`** (PDF resource name e.g. `"HR0"`), **`color`** (RGB fill `[f32; 3]`), **`invisible`** (`true` for OCR `Tr 3` text), **`is_bold`**, **`is_italic`**, **`font_family`**, and **`base_font`** (parsed from the PostScript `/BaseFont` name).
 
 Works on arbitrary PDFs — Identity-H CID fonts (harumi output) and standard simple fonts (Type1, TrueType) with WinAnsiEncoding, MacRomanEncoding, StandardEncoding, or `/Differences` encoding dicts.
 
@@ -923,7 +925,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v0.6** | `from_file_with_password` / `from_bytes_with_password` / `is_encrypted` / `Error::WrongPassword`; markup annotations (highlight, underline, strikeout, sticky-note); AcroForm `form_fields()` / `fill_form()`; AGL table +116 entries (Central EU, ligatures, euro); Identity-H text extraction fallback |
 | **v0.7** *(current)* | `set_encryption` — write password-protected PDFs; `add_squiggly` — wavy underline annotation; full page-box API (`crop_box`, `trim_box`, `bleed_box`, `media_box` read/write) |
 | **v0.8** | `replace_text_resubset` — expand font subset at replacement time (any language); MCP `pdf_replace_text` layout-preserving translation workflow and non-Identity `CIDToGIDMap` diagnostics; `InlineSpan` bold/italic/color in `FlowDocument` + HTML `<strong>`/`<em>`/`<span>` inline styles; nested `/Pages` tree inherited-attribute fix; TTC E2E tests; `wasm-pack test --node` CI; `cargo semver-checks` CI |
-| **Next** | AES-256 write encryption |
+| **v1.4.1** | `TextFragment` font attributes (`is_bold`, `is_italic`, `font_family`, `base_font`); `detect_text_columns` + `ColumnZone` for column-layout inference |
 
 ---
 
