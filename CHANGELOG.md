@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.3] — 2026-06-15
+
 ### Changed (harumi-ai)
 
 - **Per-line font size in overlay mode** (`harumi-ai/src/overlay.rs`) — replaced the

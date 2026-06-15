@@ -9,6 +9,10 @@
 
 ## [未リリース]
 
+---
+
+## [1.4.3] — 2026-06-15
+
 ### 変更 (harumi-ai)
 
 - **Overlay モードの per-line フォントサイズ** (`harumi-ai/src/overlay.rs`) —
