@@ -610,10 +610,9 @@ pub(crate) fn extract_text_runs_from_page(
 
 /// Recursively extract text from Form XObjects referenced in the page resources.
 ///
-/// `depth` guards against infinite recursion (limit: 5 levels).  Coordinate
-/// transformation via the XObject `/Matrix` is not applied; text coordinates
-/// are emitted in the XObject's own coordinate system, which for most
-/// header/footer XObjects matches the parent page coordinates.
+/// `depth` guards against infinite recursion (limit: 5 levels).  Text coordinates
+/// are transformed to page space by composing `carry.ctm` (the page-level CTM from
+/// the content stream) with each XObject's `/Matrix`.
 fn extract_text_from_xobjects(
     doc: &lopdf::Document,
     page_id: ObjectId,
@@ -624,6 +623,9 @@ fn extract_text_from_xobjects(
     if depth > 5 {
         return;
     }
+    // Save the parent CTM so we can restore it after each XObject.
+    let parent_ctm = carry.ctm;
+
     // Walk up /Parent chain to find /Resources/XObject (PDF §7.7.3 inheritance).
     // Chrome/Skia PDFs commonly place /Resources on an ancestor /Pages node rather
     // than on each page dict, so a direct page_dict.get(b"Resources") would miss them.
@@ -656,8 +658,15 @@ fn extract_text_from_xobjects(
             .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
             .unwrap_or_else(|| collect_fonts(doc, page_id));
 
+        // Compose page CTM with the XObject's own /Matrix to get the effective
+        // transform for text inside this XObject.
+        let xobj_matrix = read_matrix(&xobj_stream.dict);
+        carry.ctm = multiply_ctm(parent_ctm, xobj_matrix);
+
         parse_content_stream(&content, &xobj_fonts, carry, out);
     }
+
+    carry.ctm = parent_ctm;
 }
 
 // ---------------------------------------------------------------------------
@@ -2232,6 +2241,59 @@ pub(crate) fn is_pdf_delimiter(b: u8) -> bool {
 // Step 4: State machine over token stream
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CTM (Current Transformation Matrix) helpers
+// ---------------------------------------------------------------------------
+
+const IDENTITY_CTM: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// Compose two 2-D affine transforms: result = a × b.
+/// Matrix layout: [a, b, c, d, e, f] represents the column-major form
+/// | a  c  e |
+/// | b  d  f |
+/// | 0  0  1 |
+fn multiply_ctm(a: [f32; 6], b: [f32; 6]) -> [f32; 6] {
+    [
+        a[0] * b[0] + a[2] * b[1],
+        a[1] * b[0] + a[3] * b[1],
+        a[0] * b[2] + a[2] * b[3],
+        a[1] * b[2] + a[3] * b[3],
+        a[0] * b[4] + a[2] * b[5] + a[4],
+        a[1] * b[4] + a[3] * b[5] + a[5],
+    ]
+}
+
+/// Transform a point from local space to page space under a CTM.
+fn apply_ctm(m: [f32; 6], x: f32, y: f32) -> (f32, f32) {
+    (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
+}
+
+/// Uniform scale factor for lengths (width, font_size) under a CTM.
+/// Uses the X-column norm sqrt(a² + b²).
+fn ctm_scale(m: [f32; 6]) -> f32 {
+    (m[0] * m[0] + m[1] * m[1]).sqrt()
+}
+
+/// Read a /Matrix array from an XObject or Form dict; returns identity if absent or malformed.
+fn read_matrix(dict: &lopdf::Dictionary) -> [f32; 6] {
+    dict.get(b"Matrix")
+        .ok()
+        .and_then(|o| o.as_array().ok())
+        .and_then(|arr| {
+            if arr.len() < 6 {
+                return None;
+            }
+            let mut m = [0f32; 6];
+            for (i, v) in arr[..6].iter().enumerate() {
+                m[i] = v.as_float().ok()?;
+            }
+            Some(m)
+        })
+        .unwrap_or(IDENTITY_CTM)
+}
+
+// ---------------------------------------------------------------------------
+
 /// Graphics state carried across multiple content streams on the same page.
 ///
 /// Per the PDF spec, the graphics state (colour, render mode, etc.) persists
@@ -2240,11 +2302,13 @@ pub(crate) fn is_pdf_delimiter(b: u8) -> bool {
 struct ParseCarryState {
     cur_color: [f32; 3],
     cur_render_mode: u8,
+    /// Accumulated CTM from the page content stream, passed into XObject extraction.
+    ctm: [f32; 6],
 }
 
 impl Default for ParseCarryState {
     fn default() -> Self {
-        Self { cur_color: [0.0, 0.0, 0.0], cur_render_mode: 0 }
+        Self { cur_color: [0.0, 0.0, 0.0], cur_render_mode: 0, ctm: IDENTITY_CTM }
     }
 }
 
@@ -2262,6 +2326,9 @@ fn parse_content_stream(
     let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
+    // CTM stack: initialized from the caller-supplied CTM (state.ctm).
+    // q pushes a copy, Q pops, cm multiplies the top.
+    let mut ctm_stack: Vec<[f32; 6]> = vec![state.ctm];
 
     for token in tokens {
         match token {
@@ -2343,50 +2410,106 @@ fn parse_content_stream(
                     }
                     stack.clear();
                 }
+                b"q" => {
+                    ctm_stack.push(*ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+                    stack.clear();
+                }
+                b"Q" => {
+                    if ctm_stack.len() > 1 {
+                        ctm_stack.pop();
+                    }
+                    stack.clear();
+                }
+                b"Do" => {
+                    // Record the CTM that is active at this invocation so that
+                    // extract_text_from_xobjects() can apply it when parsing the XObject.
+                    // For Chrome/Skia PDFs: q → cm → Do → Q, so the active CTM here is
+                    // the scaled/flipped matrix, not the identity base.
+                    state.ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                    stack.clear();
+                }
+                b"cm" => {
+                    // Stack layout (bottom→top): a b c d e f  then  cm
+                    let fv = stack.pop();
+                    let ev = stack.pop();
+                    let dv = stack.pop();
+                    let cv = stack.pop();
+                    let bv = stack.pop();
+                    let av = stack.pop();
+                    if let (
+                        Some(Token::Number(f)),
+                        Some(Token::Number(e)),
+                        Some(Token::Number(d)),
+                        Some(Token::Number(c)),
+                        Some(Token::Number(b)),
+                        Some(Token::Number(a)),
+                    ) = (fv, ev, dv, cv, bv, av)
+                    {
+                        let mat = [a, b, c, d, e, f];
+                        let top = ctm_stack.last_mut().unwrap();
+                        *top = multiply_ctm(*top, mat);
+                    }
+                    stack.clear();
+                }
                 b"Tj" if in_bt => {
                     let bytes_opt = match stack.pop() {
                         Some(Token::HexStr(b)) => Some(b),
                         Some(Token::LitStr(b)) => Some(b),
                         _ => None,
                     };
-                    if let Some(char_bytes) = bytes_opt
-                        && let Some(frag) = decode_chars_to_fragment(
+                    if let Some(char_bytes) = bytes_opt {
+                        let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                        let (px, py) = apply_ctm(ctm, x, y);
+                        let scale = ctm_scale(ctm);
+                        if let Some(frag) = decode_chars_to_fragment(
                             &char_bytes,
                             &font_name,
-                            font_size,
-                            x,
-                            y,
+                            font_size * scale,
+                            px,
+                            py,
                             fonts,
                             state.cur_color,
                             state.cur_render_mode,
-                        )
-                    {
-                        x += frag.width;
-                        out.push(frag);
+                        ) {
+                            // frag.width is page-space; advance local x cursor by local width.
+                            let local_advance =
+                                if scale > 0.0 { frag.width / scale } else { frag.width };
+                            x += local_advance;
+                            out.push(frag);
+                        }
                     }
                     stack.clear();
                 }
                 b"TJ" if in_bt => {
                     if let Some(Token::Array(items)) = stack.pop() {
-                        let mut cur_x = x;
+                        let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                        let scale = ctm_scale(ctm);
+                        let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
                                 Token::HexStr(ref b) | Token::LitStr(ref b) => {
+                                    let (px, py) = apply_ctm(ctm, cur_x, y);
                                     if let Some(frag) = decode_chars_to_fragment(
                                         b,
                                         &font_name,
-                                        font_size,
-                                        cur_x,
-                                        y,
+                                        font_size * scale,
+                                        px,
+                                        py,
                                         fonts,
                                         state.cur_color,
                                         state.cur_render_mode,
                                     ) {
-                                        cur_x += frag.width;
+                                        let local_advance = if scale > 0.0 {
+                                            frag.width / scale
+                                        } else {
+                                            frag.width
+                                        };
+                                        cur_x += local_advance;
                                         out.push(frag);
                                     }
                                 }
                                 Token::Number(kern) => {
+                                    // Kerning is in local-space units.
                                     cur_x -= kern / 1000.0 * font_size;
                                 }
                                 _ => {}
@@ -3102,5 +3225,88 @@ mod tests {
             text.contains("Hi"),
             "expected 'Hi' from CID+hex decode, got: {text:?}"
         );
+    }
+
+    // Verify that a non-identity CTM established by q/cm/Q is correctly applied to
+    // TextFragment coordinates.  Chrome/Skia PDFs use this pattern:
+    //
+    //   q
+    //   0.24 0 0 -0.24 0 841 cm   ← scale + Y-flip
+    //   BT /F1 100 Tf 100 200 Td (A) Tj ET
+    //   Q
+    //
+    // Expected page coords: x_page = 0.24*100 = 24, y_page = -0.24*200 + 841 = 793.
+    // Expected font_size in page space: 100 * 0.24 = 24.
+    #[test]
+    fn ctm_transforms_coordinates_to_page_space() {
+        // Minimal font map: "F1" is a Type1 font with a single-byte 0x41 → 'A' mapping.
+        let mut to_unicode = BTreeMap::new();
+        to_unicode.insert(0x41u16, 'A');
+        let mut fonts = HashMap::new();
+        fonts.insert(b"F1".to_vec(), FontInfo {
+            to_unicode,
+            dw: 1000,
+            w_runs: vec![WidthRun { start_gid: 0x41, widths: vec![600] }],
+            bytes_per_char: 1,
+            identity_fallback: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        });
+
+        // Content stream: q → cm (0.24 scale + Y-flip) → BT/Tj/ET → Q
+        let stream = b"q\n\
+            0.24 0 0 -0.24 0 841 cm\n\
+            BT\n\
+            /F1 100 Tf\n\
+            100 200 Td\n\
+            (A) Tj\n\
+            ET\n\
+            Q\n";
+
+        let mut state = ParseCarryState::default();
+        let mut frags: Vec<TextFragment> = Vec::new();
+        parse_content_stream(stream, &fonts, &mut state, &mut frags);
+
+        assert_eq!(frags.len(), 1, "expected one TextFragment");
+        let f = &frags[0];
+        let eps = 0.5;
+        assert!(
+            (f.x - 24.0).abs() < eps,
+            "x should be ~24 (0.24*100), got {}",
+            f.x
+        );
+        assert!(
+            (f.y - 793.0).abs() < eps,
+            "y should be ~793 (-0.24*200 + 841), got {}",
+            f.y
+        );
+        assert!(
+            (f.font_size - 24.0).abs() < eps,
+            "font_size should be ~24 (100*0.24), got {}",
+            f.font_size
+        );
+    }
+
+    // Verify that the CTM captured at Do time is forwarded to state.ctm so that
+    // extract_text_from_xobjects() can use it.  Chrome/Skia pattern:
+    //   q
+    //   0.24 0 0 -0.24 0 841 cm
+    //   /Fm0 Do
+    //   Q
+    // After parse_content_stream, state.ctm must be the scaled+flipped matrix.
+    #[test]
+    fn ctm_at_do_captured_in_state() {
+        let fonts: HashMap<Vec<u8>, FontInfo> = HashMap::new();
+        let stream = b"q\n0.24 0 0 -0.24 0 841 cm\n/Fm0 Do\nQ\n";
+        let mut state = ParseCarryState::default();
+        let mut frags: Vec<TextFragment> = Vec::new();
+        parse_content_stream(stream, &fonts, &mut state, &mut frags);
+
+        let eps = 1e-5f32;
+        assert!((state.ctm[0] - 0.24).abs() < eps, "ctm[0] should be 0.24, got {}", state.ctm[0]);
+        assert!((state.ctm[3] - -0.24).abs() < eps, "ctm[3] should be -0.24, got {}", state.ctm[3]);
+        assert!((state.ctm[5] - 841.0).abs() < eps, "ctm[5] should be 841, got {}", state.ctm[5]);
     }
 }

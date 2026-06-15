@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.5] — 2026-06-15
+
+### Fixed (harumi)
+
+- **Overlay CTM coordinate transform** (`src/extract.rs`) —
+  `parse_content_stream()` now tracks `q`/`Q`/`cm` graphics-state operators and
+  maintains an internal CTM stack.  Text coordinates are transformed to page space
+  at emission time via `apply_ctm()`.  The CTM that is active at each `Do` operator
+  is captured in `ParseCarryState.ctm` and forwarded to
+  `extract_text_from_xobjects()`, which composes it with each Form XObject's own
+  `/Matrix` before parsing the XObject's content stream.
+
+  Chrome/Skia PDFs open with `q → 0.24 0 0 -0.24 0 841.92 cm → Do → Q` at the top
+  of the page content stream.  Before this fix, `TextFragment` coordinates were in
+  the XObject's local space (e.g. x=500, y=3000) rather than page space (x=120,
+  y=121).  Overlay mode used the raw local coordinates, causing translated text to
+  appear tiny, inverted, and clustered in the top-left corner of the page.
+
+---
+
 ## [1.5.4] — 2026-06-15
 
 ### Fixed (harumi)
