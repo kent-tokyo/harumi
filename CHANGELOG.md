@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.1] — 2026-06-15
+
+### Fixed (harumi-ai)
+
+- **CJK byte-slice panic in InPlace debug log** (`harumi-ai/src/inplace.rs`) —
+  debug logging truncated `line.text` by byte index (`&s[..s.len().min(60)]`), which panicked
+  when a Japanese/Chinese/Korean string had byte offset 60 inside a multi-byte UTF-8 character
+  (e.g. the kana `く`).  Fixed by switching to `chars().take(60).collect::<String>()`.
+  Added 10 unit tests to guard against regression.
+
+### Changed (harumi-ai)
+
+- `repeat().take()` → `std::iter::repeat_n()` in `inplace.rs` and `overlay.rs` (Clippy lint).
+- Manual `div_ceil` arithmetic replaced with `div_ceil()` in `overlay.rs` (Clippy lint).
+
+---
+
 ## [1.5.0] — 2026-06-15
 
 ### Added (harumi)

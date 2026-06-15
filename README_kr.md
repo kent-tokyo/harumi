@@ -381,7 +381,7 @@ doc.save("report_with_meta.pdf")?;
 ### 도형 그리기（`draw` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["draw"] }
+harumi = { version = "1", features = ["draw"] }
 ```
 
 ```rust
@@ -404,7 +404,7 @@ doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?
 ### 이미지 삽입（`image` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["image"] }
+harumi = { version = "1", features = ["image"] }
 ```
 
 ```rust
@@ -438,7 +438,7 @@ println!("{}×{} 픽셀", img.width, img.height);
 ### 자동 페이지 나누기 구조화 문서 생성（`flow` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["flow"] }
+harumi = { version = "1", features = ["flow"] }
 ```
 
 ```rust
@@ -598,7 +598,7 @@ doc.save("report.pdf")?;
 ### HTML → PDF 변환（`html` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["html"] }
+harumi = { version = "1", features = ["html"] }
 ```
 
 ```rust
@@ -691,7 +691,7 @@ doc.add_bookmark("섹션 제목", page, y)?;  // 플랫 아웃라인 항목 추�
 좌표는 **PDF 포인트** (1pt = 1/72인치) 단위이며, 원점은 페이지 **좌하단**입니다:
 
 ```toml
-harumi = { version = "0.5", features = ["ocr"] }
+harumi = { version = "1", features = ["ocr"] }
 ```
 
 ### 기능 플래그
@@ -788,6 +788,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.4.1** | `TextFragment` 폰트 속성（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` 단 레이아웃 추론 |
 | **v1.4.2** | `harumi-ai` overlay 모드 정확도 향상：행별 흰색 사각형 크기（높이·너비·디센더 피복）、정확한 기준선 Y 배치、`detect_text_columns` 다단 지원、굵기 기반 제목 감지、NaN 안전 읽기 순서 정렬 |
 | **v1.5.0** | `group_text_fragments` — `TextFragment`을 행/단락 `TextGroup`으로 병합; `font_covers_char` — cmap 커버리지 조회; Form XObject 재귀 텍스트 추출 (`Do` 연산자); 다중 CS 간 그래픽 상태 보존; `harumi-ai`: `OverflowStrategy`(Shrink/Truncate), `font_fallbacks` 다중 폰트 렌더링, `on_progress` 콜백; `extract_table_cells` — 테이블 행/열 감지（휴리스틱） |
+| **v1.5.1** | `harumi-ai` v0.1.0 첫 crates.io 출시; InPlace 디버그 로그의 CJK 바이트 슬라이스 패닉 수정; Clippy lint 수정（`repeat_n`、`div_ceil`） |
 
 ---
 

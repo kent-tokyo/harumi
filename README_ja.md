@@ -449,7 +449,7 @@ doc.save("report_with_meta.pdf")?;
 ### 図形描画（`draw` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["draw"] }
+harumi = { version = "1", features = ["draw"] }
 ```
 
 ```rust
@@ -503,7 +503,7 @@ doc.page(1)?.add_text_with_rotation(
 ### 画像埋め込み（`image` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["image"] }
+harumi = { version = "1", features = ["image"] }
 ```
 
 ```rust
@@ -541,7 +541,7 @@ println!("{}×{} ピクセル", img.width, img.height);
 ### 自動改ページ付き構造化ドキュメントの生成（`flow` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["flow"] }
+harumi = { version = "1", features = ["flow"] }
 ```
 
 ```rust
@@ -704,7 +704,7 @@ doc.save("report.pdf")?;
 ### HTML→PDF変換（`html` feature）
 
 ```toml
-harumi = { version = "0.5", features = ["html"] }
+harumi = { version = "1", features = ["html"] }
 ```
 
 ```rust
@@ -808,7 +808,7 @@ doc.add_bookmark("セクションタイトル", page, y)?;  // フラットな�
 座標は **PDFポイント**（1pt = 1/72インチ）で、原点はページ**左下**です。Tesseract / hOCR など左上原点のピクセル座標を使う場合は `ocr` featureのヘルパーを使ってください：
 
 ```toml
-harumi = { version = "0.5", features = ["ocr"] }
+harumi = { version = "1", features = ["ocr"] }
 ```
 
 ### Feature flags
@@ -905,6 +905,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.4.1** | `TextFragment` フォント属性（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` による段組レイアウト推定 |
 | **v1.4.2** | `harumi-ai` Overlay モード精度向上：per-line 白矩形サイジング（高さ・幅・ディセンダー被覆）、ベースライン Y 座標の正確な配置、`detect_text_columns` による複数段組対応、太字による見出し検出、NaN 安全な読み取り順ソート |
 | **v1.5.0** | `group_text_fragments` — `TextFragment` を行/段落単位の `TextGroup` へ統合；`font_covers_char` — cmap カバレッジ判定；Form XObject 再帰テキスト抽出（`Do` 演算子対応）；複数 CS 間グラフィック状態継承；`harumi-ai`: `OverflowStrategy`（Shrink/Truncate）、`font_fallbacks` 複数フォント描画、`on_progress` コールバック；`extract_table_cells` — テーブル行/列検出（ヒューリスティック） |
+| **v1.5.1** | `harumi-ai` v0.1.0 初回 crates.io 公開；InPlace デバッグログの CJK バイトスライスパニック修正；Clippy lint 修正（`repeat_n`、`div_ceil`） |
 
 ---
 

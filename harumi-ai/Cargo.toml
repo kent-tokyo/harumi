@@ -11,7 +11,7 @@ keywords = ["pdf", "translation", "ai", "llm", "cjk"]
 categories = ["text-processing"]
 
 [dependencies]
-harumi = { path = "..", features = ["draw"] }
+harumi = { path = "..", version = "1.5", features = ["draw"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "sync"] }
 futures = "0.3"

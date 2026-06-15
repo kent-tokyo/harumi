@@ -201,7 +201,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "1.1"
+harumi = "1.5"
 ```
 
 ### Getting Fonts for CJK Support
@@ -444,7 +444,7 @@ doc.save("report_with_meta.pdf")?;
 ### Draw shapes (`draw` feature)
 
 ```toml
-harumi = { version = "0.5", features = ["draw"] }
+harumi = { version = "1", features = ["draw"] }
 ```
 
 ```rust
@@ -500,7 +500,7 @@ doc.page(1)?.add_text_with_rotation(
 ### Embed images (`image` feature)
 
 ```toml
-harumi = { version = "0.5", features = ["image"] }
+harumi = { version = "1", features = ["image"] }
 ```
 
 ```rust
@@ -538,7 +538,7 @@ println!("{}×{} pixels", img.width, img.height);
 ### Build a structured document with auto-pagination (`flow` feature)
 
 ```toml
-harumi = { version = "0.5", features = ["flow"] }
+harumi = { version = "1", features = ["flow"] }
 ```
 
 ```rust
@@ -701,7 +701,7 @@ doc.save("report.pdf")?;
 ### Convert HTML to PDF (`html` feature)
 
 ```toml
-harumi = { version = "0.5", features = ["html"] }
+harumi = { version = "1", features = ["html"] }
 ```
 
 ```rust
@@ -835,7 +835,7 @@ doc.set_encryption(user_pw, owner_pw)?; // encrypt on next save()
 Coordinates are in **PDF points** (1 pt = 1/72 inch), origin at the **bottom-left** of the page. If your OCR engine (e.g. Tesseract / hOCR) gives pixel coordinates from the top-left, use the `ocr` feature helper:
 
 ```toml
-harumi = { version = "0.5", features = ["ocr"] }
+harumi = { version = "1", features = ["ocr"] }
 ```
 
 ### Feature flags
@@ -934,6 +934,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v1.4.1** | `TextFragment` font attributes (`is_bold`, `is_italic`, `font_family`, `base_font`); `detect_text_columns` + `ColumnZone` for column-layout inference |
 | **v1.4.2** | `harumi-ai` overlay mode accuracy: per-line white-rect sizing (height, width, descender coverage), exact baseline Y placement, multi-column layout via `detect_text_columns`, bold-based heading detection, NaN-safe reading-order sort |
 | **v1.5.0** | `group_text_fragments` — merge `TextFragment`s into line/paragraph `TextGroup`s; `font_covers_char` — cmap coverage check; Form XObject recursive text extraction (`Do` operator); cross-content-stream graphics state preservation; `extract_table_cells` — heuristic table row/col detection; `harumi-ai`: `OverflowStrategy` (Shrink/Truncate), `font_fallbacks` multi-font rendering per character, `on_progress` translation callback |
+| **v1.5.1** | `harumi-ai` v0.1.0 first crates.io release; fix CJK byte-slice panic in InPlace debug log; Clippy lint cleanups (`repeat_n`, `div_ceil`) |
 
 ---
 
