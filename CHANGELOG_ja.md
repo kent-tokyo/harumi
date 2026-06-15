@@ -11,6 +11,12 @@
 
 ### 追加 (harumi-ai)
 
+- **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — コンテンツ
+  ストリーム直接置換による新翻訳モード。`harumi::PageHandle::replace_text()` を使って
+  `Tj`/`TJ` 演算子を in-place で書き換えるため、原文がストリームから消去される。白矩形は
+  不要。マッチしない行（1文字ずつ Td+Tj のスキャン PDF 等）は自動的にその行のみ
+  overlay にフォールバック。`opts.mode = TranslationMode::InPlace` で有効化。
+
 - **`TranslateOptions::cover_color`** (`harumi-ai/src/pdf_translator.rs`) — Overlay モードの
   被覆矩形色を指定する optional RGB フィールド（デフォルト: `None` = 白 `[1.0, 1.0, 1.0]`）。
   安全標識や色付きヘッダーなど、背景が白でない PDF での翻訳精度向上に利用可能。

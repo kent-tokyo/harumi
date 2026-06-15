@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (harumi-ai)
 
+- **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — new translation
+  mode that rewrites PDF content streams directly via `harumi::PageHandle::replace_text()`. The
+  original `Tj`/`TJ` operators are replaced in-place so the source text is eliminated from the
+  stream; white cover rectangles are not needed. Lines where no match is found (e.g. per-character
+  Japanese PDFs with `Td` between each `Tj`) fall back automatically to the overlay approach for
+  that line only.  Enable with `opts.mode = TranslationMode::InPlace`.
+
 - **`TranslateOptions::cover_color`** (`harumi-ai/src/pdf_translator.rs`) — optional RGB cover
   color for overlay mode (default: `None` = white `[1.0, 1.0, 1.0]`). Useful when the source
   PDF has a non-white background (safety signs, coloured headers). Also exposed via

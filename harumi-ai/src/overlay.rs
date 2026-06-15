@@ -16,33 +16,33 @@ use crate::{
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-struct OverlayLine {
-    pub x: f32,
-    pub y: f32,
+pub(crate) struct OverlayLine {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
     /// Actual right edge of the text run (x + width of rightmost fragment).
-    pub right: f32,
+    pub(crate) right: f32,
     /// Right boundary of the column this line belongs to (used for avail_w).
-    pub col_right: f32,
-    pub line_height: f32,
-    pub is_heading: bool,
+    pub(crate) col_right: f32,
+    pub(crate) line_height: f32,
+    pub(crate) is_heading: bool,
     #[allow(dead_code)]
-    pub is_bold: bool,
+    pub(crate) is_bold: bool,
     #[allow(dead_code)]
-    pub page_width: f32,
-    pub text: String,
+    pub(crate) page_width: f32,
+    pub(crate) text: String,
     /// Original fragment texts (individual Tj runs) for text-layer blanking.
     #[allow(dead_code)]
-    pub fragment_texts: Vec<String>,
+    pub(crate) fragment_texts: Vec<String>,
     /// Font size of the original text (PDF points), derived from TextFragment.font_size.
-    pub font_size: f32,
+    pub(crate) font_size: f32,
 }
 
-struct OverlayPage {
-    pub page_num: u32,
-    pub lines: Vec<OverlayLine>,
-    pub body_font_size: f32,
+pub(crate) struct OverlayPage {
+    pub(crate) page_num: u32,
+    pub(crate) lines: Vec<OverlayLine>,
+    pub(crate) body_font_size: f32,
     /// Bboxes of invisible (render-mode-3) text fragments to also white-out.
-    pub invisible_rects: Vec<[f32; 4]>,
+    pub(crate) invisible_rects: Vec<[f32; 4]>,
 }
 
 // ── Extraction helpers ────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
 
 // ── Extraction ────────────────────────────────────────────────────────────────
 
-fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
+pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
     let page_count = doc.page_count();
     let mut pages = Vec::new();
 
@@ -196,14 +196,14 @@ fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
 // ── Font sizing ───────────────────────────────────────────────────────────────
 
 /// Measure total advance width of `text` at `font_size` using the given face.
-fn measure_text_width(text: &str, face: &Face, font_size: f32) -> f32 {
+pub(crate) fn measure_text_width(text: &str, face: &Face, font_size: f32) -> f32 {
     text.chars()
         .filter_map(|ch| harumi::glyph_advance_pt(face, ch, font_size))
         .sum()
 }
 
 /// Scale down font_size so text fits within max_width. Minimum 6pt.
-fn fit_font_size(text: &str, face: &Face, desired_size: f32, max_width: f32) -> f32 {
+pub(crate) fn fit_font_size(text: &str, face: &Face, desired_size: f32, max_width: f32) -> f32 {
     if max_width <= 0.0 { return desired_size; }
     let total_w = measure_text_width(text, face, desired_size);
     if total_w <= max_width || total_w == 0.0 { return desired_size; }
@@ -282,9 +282,14 @@ async fn evaluate_layout(
     Ok(corrections)
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+// ── Shared extract + translate helper ────────────────────────────────────────
 
-pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
+/// Phases 1 and 2 shared between Overlay and InPlace modes.
+/// Returns (overlay_pages, page_translations, global_body_fs).
+pub(crate) async fn extract_and_translate(
+    pdf_bytes: &[u8],
+    options: &TranslateOptions,
+) -> Result<(Vec<OverlayPage>, HashMap<u32, Vec<String>>, f32)> {
     // ── Phase 1: Extract positioned lines ────────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
     let overlay_pages = extract_overlay_pages(&mut doc)?;
@@ -369,6 +374,19 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
     for (page_num, texts) in results {
         page_translations.insert(page_num, texts);
     }
+
+    Ok((overlay_pages, page_translations, global_body_fs))
+}
+
+// ── Main entry point ──────────────────────────────────────────────────────────
+
+pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
+    let (overlay_pages, mut page_translations, global_body_fs) =
+        extract_and_translate(pdf_bytes, &options).await?;
+
+    let translator = Arc::clone(&options.translator);
+    let target_lang = options.target_lang.clone();
+    let source_lang = options.source_lang.clone();
 
     // ── Phase 3: AI layout evaluation — compare original vs. translated ───────
     let face = Face::parse(&options.font, 0)

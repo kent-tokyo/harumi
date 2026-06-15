@@ -19,6 +19,12 @@ pub enum TranslationMode {
     /// Build a brand-new PDF from scratch. All original layout, images, and
     /// graphics are discarded; only text is preserved.
     NewDocument,
+    /// Rewrite the PDF content streams in-place: `Tj`/`TJ` operators are
+    /// replaced directly, so the original text is eliminated from the stream.
+    /// Lines where no match is found (e.g. per-character Japanese PDFs with
+    /// `Td` between each `Tj`) fall back automatically to the `Overlay`
+    /// approach for that line only.
+    InPlace,
 }
 
 /// Options for [`translate_pdf`].
@@ -198,6 +204,7 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
     match options.mode {
         TranslationMode::NewDocument => translate_pdf_new_document(pdf_bytes, options).await,
         TranslationMode::Overlay => crate::overlay::translate_pdf_overlay(pdf_bytes, options).await,
+        TranslationMode::InPlace => crate::inplace::translate_pdf_inplace(pdf_bytes, options).await,
     }
 }
 

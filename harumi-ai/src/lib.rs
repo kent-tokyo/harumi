@@ -30,6 +30,7 @@
 mod error;
 mod extractor;
 mod builder;
+mod inplace;
 mod layout;
 mod overlay;
 mod pdf_translator;

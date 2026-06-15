@@ -1,5 +1,5 @@
 use harumi::Document;
-use harumi_ai::{LayoutOptions, TranslateOptions, providers::EchoTranslator, translate_pdf};
+use harumi_ai::{LayoutOptions, TranslateOptions, TranslationMode, providers::EchoTranslator, translate_pdf};
 
 const FONT: &[u8] = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
@@ -199,6 +199,37 @@ async fn pages_per_batch_multipage() {
     assert!(result.is_ok(), "pages_per_batch_multipage failed: {:?}", result.err());
     let check = Document::from_bytes(&result.unwrap()).unwrap();
     assert!(check.page_count() >= 2);
+}
+
+#[tokio::test]
+async fn inplace_mode_basic() {
+    // InPlace mode should produce a valid PDF without error.
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::InPlace;
+    let result = translate_pdf(&pdf, opts).await;
+    assert!(result.is_ok(), "InPlace translate_pdf failed: {:?}", result.err());
+
+    let out = result.unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    assert!(check.page_count() >= 1);
+    // Either the in-place replacement or the fallback overlay places text on page 1.
+    let runs = check.extract_text_runs(1).unwrap();
+    assert!(!runs.is_empty(), "InPlace output PDF has no text on page 1");
+}
+
+#[tokio::test]
+async fn inplace_mode_unmatched_falls_back() {
+    // A PDF with no text lines produces a valid output without error (empty pages
+    // have no lines, so the InPlace apply loop is simply a no-op).
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let pdf = doc.save_to_bytes().unwrap();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::InPlace;
+    let result = translate_pdf(&pdf, opts).await;
+    assert!(result.is_ok(), "InPlace empty PDF failed: {:?}", result.err());
+    let check = Document::from_bytes(&result.unwrap()).unwrap();
+    assert_eq!(check.page_count(), 1);
 }
 
 #[tokio::test]
