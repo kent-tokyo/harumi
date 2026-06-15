@@ -935,6 +935,8 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v1.4.2** | `harumi-ai` overlay mode accuracy: per-line white-rect sizing (height, width, descender coverage), exact baseline Y placement, multi-column layout via `detect_text_columns`, bold-based heading detection, NaN-safe reading-order sort |
 | **v1.5.0** | `group_text_fragments` — merge `TextFragment`s into line/paragraph `TextGroup`s; `font_covers_char` — cmap coverage check; Form XObject recursive text extraction (`Do` operator); cross-content-stream graphics state preservation; `extract_table_cells` — heuristic table row/col detection; `harumi-ai`: `OverflowStrategy` (Shrink/Truncate), `font_fallbacks` multi-font rendering per character, `on_progress` translation callback |
 | **v1.5.1** | `harumi-ai` v0.1.0 first crates.io release; fix CJK byte-slice panic in InPlace debug log; Clippy lint cleanups (`repeat_n`, `div_ceil`) |
+| **v1.5.2** | Fix font inheritance from ancestor Pages nodes (`collect_fonts_inner` parent-chain walk); JSON repair for LLM unescaped quotes; raise default `max_tokens` 4096→16000 |
+| **v1.5.3** | Fix Form XObject discovery via inherited `/Resources` (Chrome/Skia PDFs — parent-chain walk in `extract_text_from_xobjects`); `replace_text()` now rewrites Form XObject content streams so `harumi-ai` InPlace mode works on Chrome/Skia PDFs |
 
 ---
 

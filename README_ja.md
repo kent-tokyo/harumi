@@ -906,6 +906,8 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.4.2** | `harumi-ai` Overlay モード精度向上：per-line 白矩形サイジング（高さ・幅・ディセンダー被覆）、ベースライン Y 座標の正確な配置、`detect_text_columns` による複数段組対応、太字による見出し検出、NaN 安全な読み取り順ソート |
 | **v1.5.0** | `group_text_fragments` — `TextFragment` を行/段落単位の `TextGroup` へ統合；`font_covers_char` — cmap カバレッジ判定；Form XObject 再帰テキスト抽出（`Do` 演算子対応）；複数 CS 間グラフィック状態継承；`harumi-ai`: `OverflowStrategy`（Shrink/Truncate）、`font_fallbacks` 複数フォント描画、`on_progress` コールバック；`extract_table_cells` — テーブル行/列検出（ヒューリスティック） |
 | **v1.5.1** | `harumi-ai` v0.1.0 初回 crates.io 公開；InPlace デバッグログの CJK バイトスライスパニック修正；Clippy lint 修正（`repeat_n`、`div_ceil`） |
+| **v1.5.2** | 祖先 Pages ノードからのフォント継承修正（`collect_fonts_inner` 親チェーン走査）；LLM 出力のエスケープなし JSON 修復；デフォルト `max_tokens` 4096→16000 引き上げ |
+| **v1.5.3** | 継承 `/Resources` 経由の Form XObject 発見を修正（Chrome/Skia PDF — `extract_text_from_xobjects` 親チェーン走査）；`replace_text()` が Form XObject コンテンツストリームも書き換えるよう対応し `harumi-ai` InPlace モードが Chrome/Skia PDF で動作 |
 
 ---
 

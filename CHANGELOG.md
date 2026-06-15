@@ -11,6 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.3] — 2026-06-15
+
+### Fixed (harumi)
+
+- **Form XObject discovery via inherited `/Resources`** (`src/extract.rs`) —
+  `extract_text_from_xobjects()` previously looked only at the page dict's own
+  `/Resources` key; when it was absent (Chrome/Skia places `/Resources` on a
+  parent `/Pages` node per PDF §7.7.3), the function returned early and produced
+  zero text fragments.  A new `collect_inherited_xobject_ids()` helper walks the
+  `/Parent` chain to find `/Resources/XObject`, matching the fix applied to
+  `collect_fonts_inner()` in v1.5.2.  Chrome/Skia-generated PDFs now have their
+  text correctly extracted via the Overlay fallback path.
+
+- **`replace_text()` now rewrites Form XObject content streams** (`src/replace.rs`,
+  `src/document.rs`) — `count_matches_in_page()` and `rewrite_page_streams()` only
+  scanned the page's `/Contents` streams.  Text in Form XObjects (the common structure
+  in Chrome/Skia PDFs) was never found, so `replace_text()` always returned 0 and
+  `harumi-ai` InPlace mode fell back to Overlay for every line.
+  - `count_matches_in_page()` refactored into `count_matches_in_raw_streams()` (shared
+    helper, ReDoS guard + cross-Tf pass) and extended to also search XObject streams via
+    `count_matches_in_inherited_xobjects()`.
+  - `rewrite_form_xobject_streams()` discovers Form XObjects from inherited resources,
+    rewrites each one's content with the new font encoding, and returns the modified
+    `(xobj_id, new_content, fonts_used)` triples.
+  - `add_font_to_xobject_resources()` registers the new font in the XObject's own
+    `/Resources/Font` dict (inline or indirect), keeping XObject resources self-contained.
+  - `finalize()` Replace pass calls `rewrite_form_xobject_streams()` after
+    `rewrite_page_streams()`, updates XObject stream content in-place (removes `/Filter`,
+    sets `/Length`), and registers the new font per XObject.
+
+### Tests
+
+- `extract_xobjects_from_inherited_resources` — Type1 font + inherited `/Resources/XObject`
+  (validates the P0 parent-chain walk).
+- `extract_cid_xobject_inherited_resources` — Type0/CID font + Identity-H + ToUnicode CMap
+  + `<XXXX> Tj` hex glyph IDs inside an inherited XObject (validates the actual Chrome/Skia
+  decode path that was previously untested).
+- `replace_text_in_form_xobject_inherited_resources` — end-to-end round-trip: build a
+  synthetic Chrome/Skia style PDF (Type0/CID + inherited `/Resources/XObject`), call
+  `replace_text("Hi", "Bye", font)`, save and reload, assert text was replaced.
+
+---
+
 ## [1.5.2] — 2026-06-15
 
 ### Fixed (harumi)

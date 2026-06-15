@@ -788,6 +788,8 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.4.2** | `harumi-ai` overlay 模式精度提升：逐行白色矩形尺寸（高度、宽度、下行深度覆盖）、精确基线 Y 坐标、`detect_text_columns` 多栏支持、基于粗体的标题检测、NaN 安全读取顺序排序 |
 | **v1.5.0** | `group_text_fragments` — 将 `TextFragment` 合并为行/段落 `TextGroup`；`font_covers_char` — 查询 cmap 覆盖范围；Form XObject 递归文本提取（`Do` 运算符）；跨内容流图形状态继承；`harumi-ai`: `OverflowStrategy`（Shrink/Truncate）、`font_fallbacks` 多字体渲染、`on_progress` 回调；`extract_table_cells` — 表格行/列检测（启发式） |
 | **v1.5.1** | `harumi-ai` v0.1.0 首次 crates.io 发布；修复 InPlace 调试日志中的 CJK 字节切片 panic；Clippy lint 修复（`repeat_n`、`div_ceil`） |
+| **v1.5.2** | 修复来自祖先 Pages 节点的字体继承（`collect_fonts_inner` 父链遍历）；JSON 修复 LLM 未转义引号；默认 `max_tokens` 4096→16000 |
+| **v1.5.3** | 修复继承 `/Resources` 中的 Form XObject 发现（Chrome/Skia PDF — `extract_text_from_xobjects` 父链遍历）；`replace_text()` 现支持改写 Form XObject 内容流，`harumi-ai` InPlace 模式在 Chrome/Skia PDF 上正常工作 |
 
 ---
 
