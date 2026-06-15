@@ -51,6 +51,20 @@ pub struct TextFragment {
     pub color: [f32; 3],
     /// `true` if the text render mode is 3 (invisible / OCR search layer).
     pub invisible: bool,
+    /// `true` when the font name indicates a bold weight
+    /// (keywords: Bold, Heavy, Black, Semibold, Demibold, Extrabold).
+    pub is_bold: bool,
+    /// `true` when the font name indicates italic or oblique style
+    /// (keywords: Italic, Oblique, Slanted).
+    pub is_italic: bool,
+    /// Font family name derived from the PostScript `/BaseFont` entry,
+    /// with subset prefix (e.g. `"ABCDEF+"`) and style suffixes stripped.
+    /// Empty string when no `/BaseFont` is present in the font dictionary.
+    pub font_family: String,
+    /// Full PostScript base font name (subset prefix stripped).
+    /// Examples: `"Helvetica-BoldOblique"`, `"NotoSansJP-Regular"`.
+    /// Empty string when no `/BaseFont` is present in the font dictionary.
+    pub base_font: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +80,10 @@ pub(crate) struct FontInfo {
     /// For Type0 fonts with Identity-H/V encoding and no ToUnicode: treat the 2-byte GID
     /// directly as a Unicode scalar value (char::from_u32). Best-effort heuristic.
     pub(crate) identity_fallback: bool,
+    pub(crate) base_font: String,
+    pub(crate) is_bold: bool,
+    pub(crate) is_italic: bool,
+    pub(crate) font_family: String,
 }
 
 pub(crate) struct WidthRun {
@@ -140,6 +158,113 @@ pub fn sort_by_reading_order(fragments: &mut [TextFragment]) {
             (false, false) => Ordering::Equal,
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Column detection
+// ---------------------------------------------------------------------------
+
+/// A horizontal text zone returned by [`detect_text_columns`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnZone {
+    /// Left edge of the column in PDF points.
+    pub x_start: f32,
+    /// Right edge of the column in PDF points.
+    pub x_end: f32,
+}
+
+/// Estimate column layout from a set of text fragments.
+///
+/// Builds an X-density histogram (5 pt buckets), then identifies empty gaps
+/// of at least 15 pt as column separators.  Returns one [`ColumnZone`] per
+/// detected column, ordered left to right.
+///
+/// When no clear gap exists (single-column page), returns one zone spanning
+/// `[0, page_width]`.  Returns an empty slice when `fragments` is empty or
+/// `page_width` is non-positive.
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::{Document, detect_text_columns};
+/// # fn main() -> harumi::Result<()> {
+/// let mut doc = Document::from_file("two_column.pdf")?;
+/// let (w, _h) = doc.page(1)?.size()?;
+/// let frags = doc.extract_text_runs(1)?;
+/// let cols = detect_text_columns(&frags, w);
+/// println!("{} column(s)", cols.len());
+/// # Ok(())
+/// # }
+/// ```
+pub fn detect_text_columns(fragments: &[TextFragment], page_width: f32) -> Vec<ColumnZone> {
+    const BUCKET_PT: f32 = 5.0;
+    const MIN_GAP_PT: f32 = 15.0;
+
+    if fragments.is_empty() || page_width <= 0.0 {
+        return vec![];
+    }
+
+    let n = (page_width / BUCKET_PT).ceil() as usize + 1;
+    let mut occupied = vec![false; n];
+
+    for frag in fragments {
+        if frag.invisible {
+            continue;
+        }
+        let lo = (frag.x / BUCKET_PT).floor() as usize;
+        let hi = ((frag.x + frag.width.max(0.0)) / BUCKET_PT).ceil() as usize;
+        let hi = hi.min(n - 1);
+        for bucket in occupied.iter_mut().take(hi + 1).skip(lo) {
+            *bucket = true;
+        }
+    }
+
+    let min_gap_buckets = (MIN_GAP_PT / BUCKET_PT).ceil() as usize;
+
+    // Collect empty runs wide enough to count as column separators.
+    let mut gaps: Vec<(usize, usize)> = Vec::new();
+    let mut gap_start: Option<usize> = None;
+    for (i, &occ) in occupied.iter().enumerate() {
+        if !occ {
+            if gap_start.is_none() {
+                gap_start = Some(i);
+            }
+        } else if let Some(gs) = gap_start.take()
+            && i - gs >= min_gap_buckets
+        {
+            gaps.push((gs, i));
+        }
+    }
+    if let Some(gs) = gap_start
+        && n - gs >= min_gap_buckets
+    {
+        gaps.push((gs, n));
+    }
+
+    if gaps.is_empty() {
+        return vec![ColumnZone { x_start: 0.0, x_end: page_width }];
+    }
+
+    // Column zones are the occupied ranges between (and around) the gaps.
+    let mut zones = Vec::new();
+    let mut col_start = 0usize;
+    for (gap_s, gap_e) in &gaps {
+        if col_start < *gap_s {
+            zones.push(ColumnZone {
+                x_start: col_start as f32 * BUCKET_PT,
+                x_end: *gap_s as f32 * BUCKET_PT,
+            });
+        }
+        col_start = *gap_e;
+    }
+    if col_start < n {
+        zones.push(ColumnZone {
+            x_start: col_start as f32 * BUCKET_PT,
+            x_end: page_width,
+        });
+    }
+
+    zones
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +351,21 @@ pub(crate) fn resolve_dict<'a>(
     }
 }
 
+/// Parse PostScript font name into (base_font, is_bold, is_italic, font_family).
+///
+/// Strips subset prefixes like "ABCDEF+" before analysis.
+/// Family is extracted as the portion before the first "-" or ",".
+fn parse_font_attributes(raw: &str) -> (String, bool, bool, String) {
+    let name = raw.split('+').next_back().unwrap_or(raw);
+    let lower = name.to_lowercase();
+    let is_bold = ["bold", "heavy", "black", "semibold", "demibold", "extrabold"]
+        .iter()
+        .any(|kw| lower.contains(kw));
+    let is_italic = ["italic", "oblique", "slanted"].iter().any(|kw| lower.contains(kw));
+    let family = name.split(['-', ',']).next().unwrap_or(name).to_string();
+    (name.to_string(), is_bold, is_italic, family)
+}
+
 pub(crate) fn collect_fonts(
     doc: &lopdf::Document,
     page_id: ObjectId,
@@ -262,12 +402,24 @@ fn collect_fonts_inner(
             }
         });
 
+        let raw_base_font = fd
+            .get(b"BaseFont")
+            .ok()
+            .and_then(|o| match o {
+                Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let (base_font, is_bold, is_italic, font_family) = parse_font_attributes(&raw_base_font);
+
         let font_info = match subtype {
-            Some(b"Type0") => match collect_type0_font(fd, doc) {
+            Some(b"Type0") => match collect_type0_font(fd, doc, base_font, is_bold, is_italic, font_family) {
                 Some(fi) => fi,
                 None => continue,
             },
-            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") => collect_simple_font(fd, doc),
+            Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") => {
+                collect_simple_font(fd, doc, base_font, is_bold, is_italic, font_family)
+            }
             _ => continue,
         };
 
@@ -277,7 +429,14 @@ fn collect_fonts_inner(
     Some(fonts)
 }
 
-fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo> {
+fn collect_type0_font(
+    fd: &Dictionary,
+    doc: &lopdf::Document,
+    base_font: String,
+    is_bold: bool,
+    is_italic: bool,
+    font_family: String,
+) -> Option<FontInfo> {
     let to_unicode = try_parse_to_unicode(fd, doc).unwrap_or_default();
     // When ToUnicode is absent and the encoding is Identity-H/V, fall back to treating
     // the 2-byte character code directly as a Unicode scalar (best-effort).
@@ -323,6 +482,10 @@ fn collect_type0_font(fd: &Dictionary, doc: &lopdf::Document) -> Option<FontInfo
         w_runs,
         bytes_per_char: 2,
         identity_fallback,
+        base_font,
+        is_bold,
+        is_italic,
+        font_family,
     })
 }
 
@@ -336,7 +499,14 @@ fn is_identity_cmap(fd: &Dictionary) -> bool {
     }
 }
 
-fn collect_simple_font(fd: &Dictionary, doc: &lopdf::Document) -> FontInfo {
+fn collect_simple_font(
+    fd: &Dictionary,
+    doc: &lopdf::Document,
+    base_font: String,
+    is_bold: bool,
+    is_italic: bool,
+    font_family: String,
+) -> FontInfo {
     let to_unicode = if let Some(map) = try_parse_to_unicode(fd, doc) {
         map
     } else {
@@ -350,6 +520,10 @@ fn collect_simple_font(fd: &Dictionary, doc: &lopdf::Document) -> FontInfo {
         w_runs,
         bytes_per_char: 1,
         identity_fallback: false,
+        base_font,
+        is_bold,
+        is_italic,
+        font_family,
     }
 }
 
@@ -1844,6 +2018,10 @@ fn decode_chars_to_fragment(
         font_name: String::from_utf8_lossy(font_name).into_owned(),
         color,
         invisible: render_mode == 3,
+        is_bold: font_info.is_bold,
+        is_italic: font_info.is_italic,
+        font_family: font_info.font_family.clone(),
+        base_font: font_info.base_font.clone(),
     })
 }
 
@@ -1985,6 +2163,10 @@ mod tests {
             }],
             bytes_per_char: 2,
             identity_fallback: false,
+            base_font: String::new(),
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
         };
         assert_eq!(info.advance_width(5), 600);
         assert_eq!(info.advance_width(0), 1000);
@@ -2028,5 +2210,101 @@ mod tests {
         assert_eq!(map.get(&0x41), Some(&'A'));
         assert_eq!(map.get(&0x80), Some(&'€'));
         assert!(!map.contains_key(&0x7F)); // undefined slot not included
+    }
+
+    #[test]
+    fn parse_font_attributes_cases() {
+        // Plain family
+        let (name, bold, italic, family) = parse_font_attributes("Helvetica");
+        assert_eq!(name, "Helvetica");
+        assert!(!bold);
+        assert!(!italic);
+        assert_eq!(family, "Helvetica");
+
+        // Bold + subset prefix
+        let (name, bold, italic, family) = parse_font_attributes("ABCDEF+Helvetica-Bold");
+        assert_eq!(name, "Helvetica-Bold");
+        assert!(bold);
+        assert!(!italic);
+        assert_eq!(family, "Helvetica");
+
+        // BoldItalic
+        let (name, bold, italic, family) = parse_font_attributes("TimesNewRoman-BoldItalic");
+        assert_eq!(name, "TimesNewRoman-BoldItalic");
+        assert!(bold);
+        assert!(italic);
+        assert_eq!(family, "TimesNewRoman");
+
+        // Oblique style
+        let (_name, bold, italic, _family) = parse_font_attributes("Arial-Oblique");
+        assert!(!bold);
+        assert!(italic);
+
+        // Heavy weight
+        let (_name, bold, _italic, _family) = parse_font_attributes("Futura-Heavy");
+        assert!(bold);
+    }
+
+    #[test]
+    fn detect_text_columns_single() {
+        // Single-column page: all text on the left half
+        let frags = vec![TextFragment {
+            text: "Hello".into(),
+            x: 50.0,
+            y: 700.0,
+            width: 100.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: "F1".into(),
+            color: [0.0; 3],
+            invisible: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        }];
+        let zones = detect_text_columns(&frags, 595.0);
+        assert_eq!(zones.len(), 1);
+
+        // Empty input → empty
+        assert!(detect_text_columns(&[], 595.0).is_empty());
+    }
+
+    #[test]
+    fn detect_text_columns_two_columns() {
+        // Two fragments with a 100pt gap between them
+        let left = TextFragment {
+            text: "Left".into(),
+            x: 50.0,
+            y: 700.0,
+            width: 150.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: "F1".into(),
+            color: [0.0; 3],
+            invisible: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        };
+        let right = TextFragment {
+            text: "Right".into(),
+            x: 350.0,
+            y: 700.0,
+            width: 150.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: "F1".into(),
+            color: [0.0; 3],
+            invisible: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        };
+        let zones = detect_text_columns(&[left, right], 595.0);
+        assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
+        assert!(zones[0].x_start < zones[1].x_start);
     }
 }

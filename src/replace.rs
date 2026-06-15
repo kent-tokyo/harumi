@@ -1447,6 +1447,10 @@ mod tests {
             w_runs: vec![],
             bytes_per_char,
             identity_fallback: false,
+            base_font: String::new(),
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
         }
     }
 

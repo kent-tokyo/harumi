@@ -109,7 +109,7 @@ pub use document::{
     wrap_paragraph,
 };
 pub use error::{Error, Result};
-pub use extract::{TextFragment, sort_by_reading_order};
+pub use extract::{ColumnZone, TextFragment, detect_text_columns, sort_by_reading_order};
 pub use font::FontHandle;
 
 #[cfg(feature = "image")]
