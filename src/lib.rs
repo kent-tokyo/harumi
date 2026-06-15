@@ -105,11 +105,14 @@ pub(crate) mod pdf_incremental;
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     AttachmentInfo, Color, Document, FieldType, FormField, PageHandle, PdfMetadata,
-    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, glyph_advance_pt,
-    wrap_paragraph,
+    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, font_covers_char,
+    glyph_advance_pt, wrap_paragraph,
 };
 pub use error::{Error, Result};
-pub use extract::{ColumnZone, TextFragment, detect_text_columns, sort_by_reading_order};
+pub use extract::{
+    ColumnZone, GroupingStrategy, TableCell, TextFragment, TextGroup,
+    detect_text_columns, extract_table_cells, group_text_fragments, sort_by_reading_order,
+};
 pub use font::FontHandle;
 
 #[cfg(feature = "image")]

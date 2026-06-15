@@ -113,6 +113,9 @@ doc.save("searchable.pdf")?;
 | PDF にファイルを添付したい | `doc.attach_file(name, data, mime)` で任意ファイルを EmbeddedFiles として添付（FlateDecode 圧縮・名前順ソート済み）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
 | 抽出テキストから太字・斜体・フォント名を取得したい | `TextFragment::is_bold`・`is_italic`・`font_family`・`base_font` — PostScript `/BaseFont` 名から解析（v1.4.1+） |
 | 抽出テキストから段組レイアウトを検出したい | `detect_text_columns(&frags, page_width)` — X密度ヒストグラムで空白ギャップを検出し `Vec<ColumnZone>` を返す（v1.4.1+） |
+| 抽出テキストを行・段落単位でグループ化したい | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` — 隣接フラグメントを `TextGroup` へ統合。`Paragraph` は段落境界まで結合、`Line` は同一行のみ結合。翻訳モデルへの入力品質向上に活用（v1.5+） |
+| フォントが特定の文字をカバーするか確認したい | `font_covers_char(font_bytes, ch) -> bool` — ttf-parser 経由で cmap を検索。フォールバックフォント選択に利用（v1.5+） |
+| テーブル形式 PDF からセル単位でテキストを取得したい | `extract_table_cells(&frags, page_width, page_height)` — `detect_text_columns` で列を、Y座標クラスタリングで行を検出し `Vec<TableCell>` を返す。各セルに `row`/`col`（0始まり）・`text`・バウンディングボックスを付与。罫線なし PDF はヒューリスティック（v1.5+） |
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
 | PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 全署名データを抽出（署名者・タイムスタンプ・フィールド名）、RSA PKCS#1 v1.5 暗号学的検証を実行、`is_valid: bool` 付き `SignatureInfo` を返す（`digital-signature` feature、v1.2.2+） |
 | PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |
@@ -155,8 +158,8 @@ doc.save("searchable.pdf")?;
 | **テキスト抽出** |
 | — CIDフォント（ToUnicode CMap） | Yes | Yes ⭐ | Yes | Yes |
 | — シンプルフォント（Type1/TrueType） | Yes | Yes | Yes | Yes |
-| — Form XObject 再帰 | No（v1.4で対応予定） | Yes ⭐ | Yes | 不明 |
-| — グラフィック状態継承 | No（v1.4で対応予定） | Yes ⭐ | Yes | 不明 |
+| — Form XObject 再帰 | Yes（v1.5+） | Yes ⭐ | Yes | 不明 |
+| — グラフィック状態継承 | Yes（v1.5+） | Yes ⭐ | Yes | 不明 |
 | — `uni<XXXX>` グリフ名 | No（v1.4で対応予定） | Yes ⭐ | 不明 | 不明 |
 | — 読み取り順 / XY-Cut | No | Yes ⭐ | Yes | 不明 |
 | — RTL / BiDi対応 | No | Yes ⭐ | 不明 | 不明 |
@@ -901,6 +904,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；MCP `pdf_replace_text` のレイアウト保持翻訳ワークフローと非Identity `CIDToGIDMap` 診断；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
 | **v1.4.1** | `TextFragment` フォント属性（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` による段組レイアウト推定 |
 | **v1.4.2** | `harumi-ai` Overlay モード精度向上：per-line 白矩形サイジング（高さ・幅・ディセンダー被覆）、ベースライン Y 座標の正確な配置、`detect_text_columns` による複数段組対応、太字による見出し検出、NaN 安全な読み取り順ソート |
+| **v1.5.0** | `group_text_fragments` — `TextFragment` を行/段落単位の `TextGroup` へ統合；`font_covers_char` — cmap カバレッジ判定；Form XObject 再帰テキスト抽出（`Do` 演算子対応）；複数 CS 間グラフィック状態継承；`harumi-ai`: `OverflowStrategy`（Shrink/Truncate）、`font_fallbacks` 複数フォント描画、`on_progress` コールバック；`extract_table_cells` — テーブル行/列検出（ヒューリスティック） |
 
 ---
 

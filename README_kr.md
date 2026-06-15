@@ -113,6 +113,9 @@ doc.save("searchable.pdf")?;
 | PDF에 파일을 첨부하고 싶다 | `doc.attach_file(name, data, mime)` 로 임의 파일을 EmbeddedFiles로 첨부（FlateDecode 압축, 이름순 정렬）；`doc.list_attachments()` → `Vec<AttachmentInfo>`（v1.4+） |
 | 추출한 텍스트에서 굵기/기울임/폰트 이름을 얻고 싶다 | `TextFragment::is_bold`・`is_italic`・`font_family`・`base_font` — PostScript `/BaseFont` 이름에서 파싱（v1.4.1+） |
 | 추출한 텍스트에서 단 레이아웃을 감지하고 싶다 | `detect_text_columns(&frags, page_width)` — X 밀도 히스토그램으로 빈 간격을 감지해 `Vec<ColumnZone>` 반환（v1.4.1+） |
+| 추출된 텍스트를 줄 또는 단락 단위로 그룹화 | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` — 인접 fragment를 `TextGroup`으로 병합. `Paragraph`는 단락 경계까지, `Line`은 같은 줄만 병합. 번역 모델 입력 품질 향상에 활용（v1.5+） |
+| 폰트가 특정 문자를 지원하는지 확인 | `font_covers_char(font_bytes, ch) -> bool` — ttf-parser로 cmap 조회. 폴백 폰트 선택에 활용（v1.5+） |
+| 테이블 PDF에서 셀 단위로 텍스트 추출 | `extract_table_cells(&frags, page_width, page_height)` — `detect_text_columns`로 열, Y 좌표 클러스터링으로 행을 감지해 `Vec<TableCell>` 반환. 각 셀에 `row`/`col`(0-기반)·`text`·바운딩 박스 포함. 격자선 없는 PDF는 휴리스틱（v1.5+） |
 | PDF 디지털 서명을 검증하고 싶다 | `doc.verify_signatures(&pdf_bytes)` — 서명 메타데이터（서명자, 타임스탬프, 필드명）추출；암호화 검증은 TODO（`digital-signature` feature） |
 | PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
 
@@ -784,6 +787,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; MCP `pdf_replace_text` 레이아웃 유지 번역 워크플로와 비 Identity `CIDToGIDMap` 진단; `cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` 폰트 속성（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` 단 레이아웃 추론 |
 | **v1.4.2** | `harumi-ai` overlay 모드 정확도 향상：행별 흰색 사각형 크기（높이·너비·디센더 피복）、정확한 기준선 Y 배치、`detect_text_columns` 다단 지원、굵기 기반 제목 감지、NaN 안전 읽기 순서 정렬 |
+| **v1.5.0** | `group_text_fragments` — `TextFragment`을 행/단락 `TextGroup`으로 병합; `font_covers_char` — cmap 커버리지 조회; Form XObject 재귀 텍스트 추출 (`Do` 연산자); 다중 CS 간 그래픽 상태 보존; `harumi-ai`: `OverflowStrategy`(Shrink/Truncate), `font_fallbacks` 다중 폰트 렌더링, `on_progress` 콜백; `extract_table_cells` — 테이블 행/열 감지（휴리스틱） |
 
 ---
 

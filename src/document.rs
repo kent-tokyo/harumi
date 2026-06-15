@@ -5315,6 +5315,23 @@ pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
         .map(|adv| adv as f32 * font_size / upem)
 }
 
+/// Return `true` when `font_bytes` contains a glyph for `ch`.
+///
+/// Uses [ttf-parser](https://docs.rs/ttf-parser) to check the font's `cmap` table.
+/// Returns `false` when `font_bytes` cannot be parsed.
+///
+/// # Example
+/// ```no_run
+/// # let font_bytes = std::fs::read("NotoSansJP-Regular.ttf").unwrap();
+/// assert!(harumi::font_covers_char(&font_bytes, '日'));
+/// assert!(!harumi::font_covers_char(&font_bytes, '؟')); // Arabic question mark
+/// ```
+pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
+    ttf_parser::Face::parse(font_bytes, 0)
+        .map(|face| face.glyph_index(ch).is_some())
+        .unwrap_or(false)
+}
+
 /// Calculate the total width of a text string in PDF points from raw TTF bytes.
 ///
 /// This helper is useful for checking text overflow without needing access to Font objects.

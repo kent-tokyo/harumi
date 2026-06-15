@@ -9,6 +9,33 @@ use crate::{
     extractor,
 };
 
+/// Controls what happens when translated text is wider than the original bounding box.
+pub enum OverflowStrategy {
+    /// Scale the font down until the text fits.  `min_font_size` sets the
+    /// floor (default `6.0` pt); below that the text overflows silently.
+    Shrink {
+        /// Smallest font size (pt) allowed before text is allowed to overflow.
+        min_font_size: f32,
+    },
+    /// If scaling to `min_font_size` still overflows, clip the text and append `"…"`.
+    Truncate {
+        /// Smallest font size (pt) before the text is truncated.
+        min_font_size: f32,
+    },
+}
+
+impl Default for OverflowStrategy {
+    fn default() -> Self { Self::Shrink { min_font_size: 6.0 } }
+}
+
+impl OverflowStrategy {
+    pub(crate) fn min_font_size(&self) -> f32 {
+        match self {
+            Self::Shrink { min_font_size } | Self::Truncate { min_font_size } => *min_font_size,
+        }
+    }
+}
+
 /// Controls how the translated PDF is produced.
 #[derive(Default)]
 pub enum TranslationMode {
@@ -66,6 +93,20 @@ pub struct TranslateOptions {
     /// placing the translation. Set this when the source PDF has a non-white background
     /// (e.g. safety signs, coloured headers) so the cover matches the background.
     pub cover_color: Option<[f32; 3]>,
+    /// Additional TTF/OTF fonts tried in order when the primary `font` does not
+    /// contain a glyph for a character (default: empty — no fallback).
+    ///
+    /// harumi-ai partitions each translated text run into sub-runs by font,
+    /// embeds only the fonts that are actually used, and renders each sub-run
+    /// with the appropriate font.  The primary font is always tried first.
+    pub font_fallbacks: Vec<Vec<u8>>,
+    /// What to do when translated text overflows its bounding box (default: `Shrink { 6.0 }`).
+    pub overflow: OverflowStrategy,
+    /// Optional callback invoked after each page's translation completes.
+    ///
+    /// The first argument is the number of pages translated so far; the second is
+    /// the total page count.  Useful for streaming progress to a client.
+    pub progress_fn: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
 }
 
 impl TranslateOptions {
@@ -85,6 +126,9 @@ impl TranslateOptions {
             pages_per_batch: 1,
             mode: TranslationMode::default(),
             cover_color: None,
+            font_fallbacks: vec![],
+            overflow: OverflowStrategy::default(),
+            progress_fn: None,
         }
     }
 
@@ -102,11 +146,14 @@ pub struct TranslateOptionsBuilder {
     source_lang: Option<String>,
     translator: Option<Arc<dyn Translator>>,
     font: Option<Vec<u8>>,
+    font_fallbacks: Vec<Vec<u8>>,
     layout: Option<LayoutOptions>,
     concurrency: Option<usize>,
     pages_per_batch: Option<usize>,
     mode: Option<TranslationMode>,
     cover_color: Option<[f32; 3]>,
+    overflow: Option<OverflowStrategy>,
+    progress_fn: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
 }
 
 impl TranslateOptionsBuilder {
@@ -166,6 +213,27 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Append a fallback font (unsubsetted TTF/OTF bytes) tried when the primary font
+    /// does not contain a glyph.  Call multiple times to add multiple fallbacks.
+    pub fn add_font_fallback(mut self, bytes: Vec<u8>) -> Self {
+        self.font_fallbacks.push(bytes);
+        self
+    }
+
+    /// Overflow handling strategy when translated text is wider than the original (default: `Shrink { 6.0 }`).
+    pub fn overflow(mut self, strategy: OverflowStrategy) -> Self {
+        self.overflow = Some(strategy);
+        self
+    }
+
+    /// Register a progress callback invoked after each page's translation completes.
+    ///
+    /// `f(pages_done, total_pages)` — both counts are 1-based.
+    pub fn on_progress<F: Fn(u32, u32) + Send + Sync + 'static>(mut self, f: F) -> Self {
+        self.progress_fn = Some(Arc::new(f));
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -177,11 +245,14 @@ impl TranslateOptionsBuilder {
                 .translator
                 .expect("TranslateOptionsBuilder: translator() is required"),
             font: self.font.expect("TranslateOptionsBuilder: font() is required"),
+            font_fallbacks: self.font_fallbacks,
             layout: self.layout.unwrap_or_default(),
             concurrency: self.concurrency.unwrap_or(4),
             pages_per_batch: self.pages_per_batch.unwrap_or(1),
             mode: self.mode.unwrap_or_default(),
             cover_color: self.cover_color,
+            overflow: self.overflow.unwrap_or_default(),
+            progress_fn: self.progress_fn,
         }
     }
 }
@@ -209,6 +280,8 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
 }
 
 async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     // ── Phase 1: Extract (sync) ───────────────────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
     let pages = extractor::extract_pages(&mut doc)?;
@@ -224,6 +297,8 @@ async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions)
     let target_lang = options.target_lang.clone();
     let source_lang = options.source_lang.clone();
     let batch_size = options.pages_per_batch;
+    let total_pages = pages.len() as u32;
+    let done_pages = Arc::new(AtomicU32::new(0));
 
     // Group consecutive pages into batches for cross-page context.
     let batches: Vec<Vec<extractor::PageContent>> = pages
@@ -236,11 +311,16 @@ async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions)
             let translator = Arc::clone(&translator);
             let target = target_lang.clone();
             let src = source_lang.clone();
+            let batch_len = batch.len() as u32;
+            let done_pages = Arc::clone(&done_pages);
+            let progress = options.progress_fn.clone();
             async move {
                 let batch_json = extractor::pages_to_json(&batch)?;
                 let results = translator
                     .translate(&[batch_json], &target, src.as_deref())
                     .await?;
+                let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
+                if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
 
                 let json = results
                     .into_iter()

@@ -268,6 +268,325 @@ pub fn detect_text_columns(fragments: &[TextFragment], page_width: f32) -> Vec<C
 }
 
 // ---------------------------------------------------------------------------
+// Text grouping
+// ---------------------------------------------------------------------------
+
+/// Controls how [`group_text_fragments`] merges individual [`TextFragment`]s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupingStrategy {
+    /// No grouping: each [`TextFragment`] becomes its own [`TextGroup`].
+    Raw,
+    /// Merge fragments that share the same visual line
+    /// (y-coordinate within ±½ font-size).
+    Line,
+    /// Group lines into paragraphs: a new paragraph starts when the vertical
+    /// gap between consecutive lines exceeds 1.5 × the line height.
+    Paragraph,
+}
+
+/// A group of [`TextFragment`]s merged into a single logical text block.
+///
+/// Returned by [`group_text_fragments`].  Primarily used to feed
+/// paragraph-level context to a translation model instead of
+/// per-character fragments.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct TextGroup {
+    /// Combined Unicode text of all constituent fragments (space-separated
+    /// within a line, newline-separated between lines for `Paragraph` groups).
+    pub text: String,
+    /// Source fragments in reading order.
+    pub fragments: Vec<TextFragment>,
+    /// X coordinate of the leftmost fragment (PDF points, bottom-left origin).
+    pub x: f32,
+    /// Baseline Y of the topmost (highest) line in the group.
+    pub y: f32,
+    /// Bounding-box width spanning all fragments.
+    pub width: f32,
+    /// Bounding-box height from the last line's baseline to the topmost line.
+    pub height: f32,
+}
+
+/// Group text fragments into logical blocks according to `strategy`.
+///
+/// The input slice need not be sorted; a working copy is sorted by reading
+/// order before grouping.
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::{Document, GroupingStrategy, group_text_fragments};
+/// # fn main() -> harumi::Result<()> {
+/// let doc = Document::from_file("doc.pdf")?;
+/// let frags = doc.extract_text_runs(1)?;
+/// let groups = group_text_fragments(&frags, GroupingStrategy::Paragraph);
+/// for g in &groups { println!("{}", g.text); }
+/// # Ok(())
+/// # }
+/// ```
+pub fn group_text_fragments(
+    fragments: &[TextFragment],
+    strategy: GroupingStrategy,
+) -> Vec<TextGroup> {
+    if fragments.is_empty() {
+        return vec![];
+    }
+    if matches!(strategy, GroupingStrategy::Raw) {
+        return fragments
+            .iter()
+            .map(|f| TextGroup {
+                text: f.text.clone(),
+                fragments: vec![f.clone()],
+                x: f.x,
+                y: f.y,
+                width: f.width.max(0.0),
+                height: f.height.max(0.0),
+            })
+            .collect();
+    }
+
+    // Sort by reading order (top-to-bottom, then left-to-right).
+    let mut sorted = fragments.to_vec();
+    sort_by_reading_order(&mut sorted);
+
+    // Phase 1: group into lines.
+    let mut lines: Vec<TextGroup> = Vec::new();
+    for frag in &sorted {
+        let tol = (frag.font_size * 0.5).max(2.0);
+        if let Some(last) = lines.last_mut()
+            && last.y.is_finite()
+            && (frag.y - last.y).abs() <= tol
+        {
+            // Same visual line — merge.
+            if !last.text.is_empty() && !last.text.ends_with(' ') {
+                last.text.push(' ');
+            }
+            last.text.push_str(&frag.text);
+            last.fragments.push(frag.clone());
+            let frag_right = frag.x + frag.width.max(0.0);
+            let self_right = last.x + last.width;
+            last.x = last.x.min(frag.x);
+            last.width = frag_right.max(self_right) - last.x;
+            last.height = last.height.max(frag.height);
+            continue;
+        }
+        lines.push(TextGroup {
+            text: frag.text.clone(),
+            fragments: vec![frag.clone()],
+            x: frag.x,
+            y: frag.y,
+            width: frag.width.max(0.0),
+            height: frag.height.max(0.0),
+        });
+    }
+
+    if matches!(strategy, GroupingStrategy::Line) {
+        return lines;
+    }
+
+    // Phase 2: merge consecutive lines into paragraphs.
+    let mut paragraphs: Vec<TextGroup> = Vec::new();
+    for line in lines {
+        if paragraphs.is_empty() {
+            paragraphs.push(line);
+            continue;
+        }
+        let prev = paragraphs.last().unwrap();
+        let gap = (prev.y - line.y).abs();
+        let line_h = prev.height.max(line.height);
+        if gap > line_h * 1.5 {
+            paragraphs.push(line);
+        } else {
+            let last = paragraphs.last_mut().unwrap();
+            last.text.push('\n');
+            last.text.push_str(&line.text);
+            last.fragments.extend(line.fragments);
+            let line_right = line.x + line.width;
+            let self_right = last.x + last.width;
+            last.x = last.x.min(line.x);
+            last.width = line_right.max(self_right) - last.x;
+            last.height = (last.y - line.y) + line.height.max(last.height);
+        }
+    }
+
+    paragraphs
+}
+
+// ---------------------------------------------------------------------------
+// Table cell detection
+// ---------------------------------------------------------------------------
+
+/// A text cell detected by [`extract_table_cells`].
+///
+/// Row and column indices are 0-based and derived from Y-coordinate clustering
+/// (rows) and [`detect_text_columns`] zone assignment (columns).
+///
+/// > **Note:** Table detection without visible grid lines is heuristic.
+/// > Complex layouts (merged cells, nested tables, irregular spacing) may
+/// > produce unexpected row/column assignments.  Always validate the output
+/// > before relying on it for layout-sensitive work.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCell {
+    /// 0-based row index (top = 0).
+    pub row: usize,
+    /// 0-based column index (left = 0).
+    pub col: usize,
+    /// Merged text of all fragments in this cell, in left-to-right order.
+    pub text: String,
+    /// X coordinate of the cell's leftmost fragment (PDF points).
+    pub x: f32,
+    /// Y coordinate of the cell's topmost baseline (PDF points).
+    pub y: f32,
+    /// Bounding-box width of the cell.
+    pub width: f32,
+    /// Bounding-box height of the cell (baseline to bottom of em square).
+    pub height: f32,
+}
+
+/// Detect table structure in a flat list of text fragments.
+///
+/// The function uses two orthogonal passes:
+/// - **Columns** — delegates to [`detect_text_columns`] (X-density gap detection).
+/// - **Rows** — fragments whose Y baselines are within `½ × font_size` of the
+///   row's first fragment are grouped into the same row; a larger gap starts a
+///   new row.
+///
+/// Returns one [`TableCell`] per occupied (row, col) pair, sorted by row then
+/// column.  Invisible fragments and empty fragments are excluded.
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::{Document, extract_table_cells};
+/// # fn main() -> harumi::Result<()> {
+/// let mut doc = Document::from_file("table.pdf")?;
+/// let (w, h) = doc.page(1)?.size()?;
+/// let frags = doc.extract_text_runs(1)?;
+/// let cells = extract_table_cells(&frags, w, h);
+/// for cell in &cells {
+///     println!("({},{}) {}", cell.row, cell.col, cell.text);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn extract_table_cells(
+    fragments: &[TextFragment],
+    page_width: f32,
+    _page_height: f32,
+) -> Vec<TableCell> {
+    if fragments.is_empty() || page_width <= 0.0 {
+        return vec![];
+    }
+
+    // Detect column zones (reuse existing X-gap algorithm).
+    let col_zones = detect_text_columns(fragments, page_width);
+    if col_zones.is_empty() {
+        return vec![];
+    }
+
+    // Work only with visible, non-empty fragments in reading order.
+    let mut sorted: Vec<TextFragment> = fragments
+        .iter()
+        .filter(|f| !f.invisible && !f.text.trim().is_empty())
+        .cloned()
+        .collect();
+    if sorted.is_empty() {
+        return vec![];
+    }
+    sort_by_reading_order(&mut sorted);
+
+    // Row-grouping threshold: half the first (topmost) fragment's font size, at
+    // least 2 pt.  Using the topmost fragment's size avoids inflating the
+    // threshold with large headings that appear later.
+    let row_tol = {
+        let first_fs = sorted.iter()
+            .find(|f| f.font_size.is_finite() && f.font_size > 0.0)
+            .map(|f| f.font_size)
+            .unwrap_or(12.0);
+        (first_fs * 0.5).max(2.0)
+    };
+
+    // Group fragments into rows by Y proximity.
+    let mut rows: Vec<Vec<&TextFragment>> = Vec::new();
+    for frag in &sorted {
+        let in_current_row = rows.last().map(|r| {
+            let row_y = r[0].y; // topmost y of this row
+            (row_y - frag.y).abs() <= row_tol
+        });
+        if in_current_row == Some(true) {
+            rows.last_mut().unwrap().push(frag);
+        } else {
+            rows.push(vec![frag]);
+        }
+    }
+
+    // Helper: map an x coordinate to a column index.
+    let col_for_x = |x: f32| -> usize {
+        for (i, zone) in col_zones.iter().enumerate() {
+            if x >= zone.x_start && x < zone.x_end {
+                return i;
+            }
+        }
+        // Outside all zones — assign to nearest zone.
+        col_zones
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let da = (x - (a.x_start + a.x_end) * 0.5).abs();
+                let db = (x - (b.x_start + b.x_end) * 0.5).abs();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    };
+
+    // Collect fragments per (row, col) cell.
+    let mut cell_map: std::collections::BTreeMap<(usize, usize), Vec<&TextFragment>> =
+        std::collections::BTreeMap::new();
+    for (row_idx, row_frags) in rows.iter().enumerate() {
+        for frag in row_frags {
+            let col_idx = col_for_x(frag.x);
+            cell_map.entry((row_idx, col_idx)).or_default().push(frag);
+        }
+    }
+
+    // Build TableCell for each occupied (row, col).
+    cell_map
+        .into_iter()
+        .map(|((row, col), mut frags)| {
+            // Within a cell, sort left-to-right.
+            frags.sort_by(|a, b| {
+                a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let text = frags
+                .iter()
+                .map(|f| f.text.trim())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let x = frags.iter().map(|f| f.x).fold(f32::INFINITY, f32::min);
+            let y = frags.iter().map(|f| f.y).fold(f32::NEG_INFINITY, f32::max);
+            let right = frags
+                .iter()
+                .map(|f| f.x + f.width.max(0.0))
+                .fold(f32::NEG_INFINITY, f32::max);
+            let height = frags.iter().map(|f| f.height.max(0.0)).fold(0.0f32, f32::max);
+            TableCell {
+                row,
+                col,
+                text,
+                x,
+                y,
+                width: (right - x).max(0.0),
+                height,
+            }
+        })
+        .collect()
+    // BTreeMap iteration is already sorted by (row, col), so no extra sort needed.
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -279,10 +598,88 @@ pub(crate) fn extract_text_runs_from_page(
     let fonts = collect_fonts(doc, page_id);
 
     let mut fragments = Vec::new();
+    // Carry graphics state (colour, render-mode) across streams on the same page.
+    let mut carry = ParseCarryState::default();
     for stream_bytes in &streams {
-        parse_content_stream(stream_bytes, &fonts, &mut fragments);
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments);
     }
+    // Also extract text from Form XObjects (headers, footers, watermarks).
+    extract_text_from_xobjects(doc, page_id, &mut carry, &mut fragments, 0);
     Ok(fragments)
+}
+
+/// Recursively extract text from Form XObjects referenced in the page resources.
+///
+/// `depth` guards against infinite recursion (limit: 5 levels).  Coordinate
+/// transformation via the XObject `/Matrix` is not applied; text coordinates
+/// are emitted in the XObject's own coordinate system, which for most
+/// header/footer XObjects matches the parent page coordinates.
+fn extract_text_from_xobjects(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    carry: &mut ParseCarryState,
+    out: &mut Vec<TextFragment>,
+    depth: u8,
+) {
+    if depth > 5 {
+        return;
+    }
+    let page_dict = match doc.get_object(page_id).ok().and_then(|o| o.as_dict().ok()) {
+        Some(d) => d,
+        None => return,
+    };
+    let resources_obj = match page_dict.get(b"Resources").ok() {
+        Some(o) => o,
+        None => return,
+    };
+    let resources_dict = match resolve_dict(doc, resources_obj) {
+        Some(d) => d,
+        None => return,
+    };
+    let xobject_obj = match resources_dict.get(b"XObject").ok() {
+        Some(o) => o,
+        None => return,
+    };
+    let xobject_dict = match resolve_dict(doc, xobject_obj) {
+        Some(d) => d,
+        None => return,
+    };
+
+    // Collect XObject IDs first to avoid borrow-checker issues in the loop.
+    let xobj_ids: Vec<lopdf::ObjectId> = xobject_dict
+        .iter()
+        .filter_map(|(_, v)| if let Object::Reference(id) = v { Some(*id) } else { None })
+        .collect();
+
+    for xobj_id in xobj_ids {
+        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
+        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
+
+        let is_form = xobj_stream.dict.get(b"Subtype").ok()
+            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
+            == Some(b"Form");
+        if !is_form {
+            continue;
+        }
+
+        let content = if xobj_stream.dict.get(b"Filter").is_ok() {
+            let mut owned = xobj_stream.clone();
+            if owned.decompress().is_err() {
+                continue;
+            }
+            owned.content
+        } else {
+            xobj_stream.content.clone()
+        };
+
+        // Use the XObject's own resource fonts, falling back to page fonts.
+        let xobj_fonts = xobj_stream.dict.get(b"Resources").ok()
+            .and_then(|res_ref| resolve_dict(doc, res_ref))
+            .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
+            .unwrap_or_else(|| collect_fonts(doc, page_id));
+
+        parse_content_stream(&content, &xobj_fonts, carry, out);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -373,18 +770,38 @@ pub(crate) fn collect_fonts(
     collect_fonts_inner(doc, page_id).unwrap_or_default()
 }
 
+/// Collect fonts from a resources dictionary directly.
+/// Used by both page-level and Form-XObject font collection.
+fn collect_fonts_from_resources(
+    doc: &lopdf::Document,
+    resources_dict: &Dictionary,
+) -> HashMap<Vec<u8>, FontInfo> {
+    let mut fonts = HashMap::new();
+    let Ok(font_obj) = resources_dict.get(b"Font") else {
+        return fonts;
+    };
+    let Some(font_dict) = resolve_dict(doc, font_obj) else {
+        return fonts;
+    };
+    collect_font_dict_entries(doc, font_dict, &mut fonts);
+    fonts
+}
+
 fn collect_fonts_inner(
     doc: &lopdf::Document,
     page_id: ObjectId,
 ) -> Option<HashMap<Vec<u8>, FontInfo>> {
-    let mut fonts = HashMap::new();
-
     let page_dict = doc.get_object(page_id).ok()?.as_dict().ok()?;
     let resources_obj = page_dict.get(b"Resources").ok()?;
     let resources_dict = resolve_dict(doc, resources_obj)?;
-    let font_obj = resources_dict.get(b"Font").ok()?;
-    let font_dict = resolve_dict(doc, font_obj)?;
+    Some(collect_fonts_from_resources(doc, resources_dict))
+}
 
+fn collect_font_dict_entries(
+    doc: &lopdf::Document,
+    font_dict: &Dictionary,
+    fonts: &mut HashMap<Vec<u8>, FontInfo>,
+) {
     for (name, font_ref) in font_dict.iter() {
         let Object::Reference(font_id) = font_ref else {
             continue;
@@ -425,8 +842,6 @@ fn collect_fonts_inner(
 
         fonts.insert(name.clone(), font_info);
     }
-
-    Some(fonts)
 }
 
 fn collect_type0_font(
@@ -1792,9 +2207,26 @@ pub(crate) fn is_pdf_delimiter(b: u8) -> bool {
 // Step 4: State machine over token stream
 // ---------------------------------------------------------------------------
 
+/// Graphics state carried across multiple content streams on the same page.
+///
+/// Per the PDF spec, the graphics state (colour, render mode, etc.) persists
+/// across streams when a page `/Contents` is an array of streams.  This struct
+/// captures the subset of state that affects text extraction.
+struct ParseCarryState {
+    cur_color: [f32; 3],
+    cur_render_mode: u8,
+}
+
+impl Default for ParseCarryState {
+    fn default() -> Self {
+        Self { cur_color: [0.0, 0.0, 0.0], cur_render_mode: 0 }
+    }
+}
+
 fn parse_content_stream(
     bytes: &[u8],
     fonts: &HashMap<Vec<u8>, FontInfo>,
+    state: &mut ParseCarryState,
     out: &mut Vec<TextFragment>,
 ) {
     let tokens = tokenize(bytes);
@@ -1805,8 +2237,6 @@ fn parse_content_stream(
     let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
-    let mut cur_color: [f32; 3] = [0.0, 0.0, 0.0];
-    let mut cur_render_mode: u8 = 0;
 
     for token in tokens {
         match token {
@@ -1864,7 +2294,7 @@ fn parse_content_stream(
                 }
                 b"Tr" => {
                     if let Some(Token::Number(mode)) = stack.pop() {
-                        cur_render_mode = mode as u8;
+                        state.cur_render_mode = mode as u8;
                     }
                     stack.clear();
                 }
@@ -1878,13 +2308,13 @@ fn parse_content_stream(
                         Some(Token::Number(rv)),
                     ) = (b_val, g_val, r_val)
                     {
-                        cur_color = [rv, gv, bv];
+                        state.cur_color = [rv, gv, bv];
                     }
                     stack.clear();
                 }
                 b"g" => {
                     if let Some(Token::Number(gray)) = stack.pop() {
-                        cur_color = [gray, gray, gray];
+                        state.cur_color = [gray, gray, gray];
                     }
                     stack.clear();
                 }
@@ -1902,8 +2332,8 @@ fn parse_content_stream(
                             x,
                             y,
                             fonts,
-                            cur_color,
-                            cur_render_mode,
+                            state.cur_color,
+                            state.cur_render_mode,
                         )
                     {
                         x += frag.width;
@@ -1924,8 +2354,8 @@ fn parse_content_stream(
                                         cur_x,
                                         y,
                                         fonts,
-                                        cur_color,
-                                        cur_render_mode,
+                                        state.cur_color,
+                                        state.cur_render_mode,
                                     ) {
                                         cur_x += frag.width;
                                         out.push(frag);
@@ -2306,5 +2736,113 @@ mod tests {
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
         assert!(zones[0].x_start < zones[1].x_start);
+    }
+
+    fn make_frag(text: &str, x: f32, y: f32, w: f32, fs: f32) -> TextFragment {
+        TextFragment {
+            text: text.into(),
+            x,
+            y,
+            width: w,
+            height: fs,
+            font_size: fs,
+            font_name: "F1".into(),
+            color: [0.0; 3],
+            invisible: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        }
+    }
+
+    #[test]
+    fn extract_table_cells_single_column() {
+        // Three rows, one column.
+        let frags = vec![
+            make_frag("Header", 50.0, 700.0, 80.0, 12.0),
+            make_frag("Row 1",  50.0, 680.0, 60.0, 12.0),
+            make_frag("Row 2",  50.0, 660.0, 60.0, 12.0),
+        ];
+        let cells = extract_table_cells(&frags, 595.0, 842.0);
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0].row, 0); assert_eq!(cells[0].col, 0);
+        assert_eq!(cells[1].row, 1);
+        assert_eq!(cells[2].row, 2);
+        assert_eq!(cells[0].text, "Header");
+    }
+
+    #[test]
+    fn extract_table_cells_two_columns() {
+        // Two rows × two columns (100 pt gap between columns).
+        let frags = vec![
+            make_frag("A1", 50.0,  700.0, 80.0, 12.0),
+            make_frag("B1", 300.0, 700.0, 80.0, 12.0),
+            make_frag("A2", 50.0,  680.0, 80.0, 12.0),
+            make_frag("B2", 300.0, 680.0, 80.0, 12.0),
+        ];
+        let cells = extract_table_cells(&frags, 595.0, 842.0);
+        assert_eq!(cells.len(), 4);
+        // Row 0, col 0 should be "A1"
+        let a1 = cells.iter().find(|c| c.row == 0 && c.col == 0).unwrap();
+        assert_eq!(a1.text, "A1");
+        // Row 0, col 1 should be "B1"
+        let b1 = cells.iter().find(|c| c.row == 0 && c.col == 1).unwrap();
+        assert_eq!(b1.text, "B1");
+    }
+
+    #[test]
+    fn extract_table_cells_merges_same_cell_fragments() {
+        // Two fragments on the same line, same column → merged into one cell.
+        let frags = vec![
+            make_frag("Hello", 50.0,  700.0, 30.0, 12.0),
+            make_frag("World", 85.0,  700.0, 30.0, 12.0),
+        ];
+        let cells = extract_table_cells(&frags, 595.0, 842.0);
+        assert_eq!(cells.len(), 1);
+        assert!(cells[0].text.contains("Hello"));
+        assert!(cells[0].text.contains("World"));
+    }
+
+    #[test]
+    fn extract_table_cells_empty_returns_empty() {
+        assert!(extract_table_cells(&[], 595.0, 842.0).is_empty());
+        assert!(extract_table_cells(&[], 0.0, 842.0).is_empty());
+    }
+
+    #[test]
+    fn group_text_fragments_raw() {
+        let frags = vec![
+            make_frag("A", 50.0, 700.0, 20.0, 12.0),
+            make_frag("B", 80.0, 700.0, 20.0, 12.0),
+        ];
+        let groups = group_text_fragments(&frags, GroupingStrategy::Raw);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn group_text_fragments_line() {
+        let frags = vec![
+            make_frag("A", 50.0,  700.0, 20.0, 12.0),
+            make_frag("B", 80.0,  700.0, 20.0, 12.0), // same line
+            make_frag("C", 50.0,  680.0, 20.0, 12.0), // new line (gap > 6pt)
+        ];
+        let groups = group_text_fragments(&frags, GroupingStrategy::Line);
+        assert_eq!(groups.len(), 2, "expected 2 lines, got {}", groups.len());
+        assert!(groups[0].text.contains('A') && groups[0].text.contains('B'));
+    }
+
+    #[test]
+    fn group_text_fragments_paragraph() {
+        // Three lines: first two close together (same paragraph), third far below.
+        let frags = vec![
+            make_frag("L1", 50.0, 700.0, 20.0, 12.0),
+            make_frag("L2", 50.0, 686.0, 20.0, 12.0), // gap=14, < 1.5×12=18 → same paragraph
+            make_frag("L3", 50.0, 630.0, 20.0, 12.0), // gap=56, > 18 → new paragraph
+        ];
+        let groups = group_text_fragments(&frags, GroupingStrategy::Paragraph);
+        assert_eq!(groups.len(), 2, "expected 2 paragraphs, got {}", groups.len());
+        assert!(groups[0].text.contains("L1") && groups[0].text.contains("L2"));
+        assert!(groups[1].text.contains("L3"));
     }
 }

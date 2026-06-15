@@ -1,18 +1,45 @@
 // overlay.rs — in-place overlay translation with AI layout evaluation
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 
 use futures::stream::{self, StreamExt};
-use harumi::{detect_text_columns, sort_by_reading_order, Document, TextFragment};
+use harumi::{FontHandle, detect_text_columns, sort_by_reading_order, Document, TextFragment};
 use ttf_parser::Face;
 
 use crate::{
-    Error, Result, TranslateOptions,
+    Error, OverflowStrategy, Result, TranslateOptions,
     builder::OutputBlock,
     extractor,
     prompts::layout_correction_prompt,
 };
+
+// ── Font-fallback helpers ─────────────────────────────────────────────────────
+
+/// Split `text` into runs of (substring, font_index).
+///
+/// Font index 0 = primary font; 1+ = fallbacks in order.
+/// Characters not covered by any font are assigned to the primary font (index 0).
+pub(crate) fn split_by_font(text: &str, faces: &[&Face]) -> Vec<(String, usize)> {
+    if faces.len() <= 1 {
+        return vec![(text.to_owned(), 0)];
+    }
+    let mut runs: Vec<(String, usize)> = Vec::new();
+    for ch in text.chars() {
+        let idx = faces
+            .iter()
+            .position(|f| f.glyph_index(ch).is_some())
+            .unwrap_or(0);
+        if let Some(last) = runs.last_mut()
+            && last.1 == idx
+        {
+            last.0.push(ch);
+        } else {
+            runs.push((ch.to_string(), idx));
+        }
+    }
+    runs
+}
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
@@ -202,12 +229,39 @@ pub(crate) fn measure_text_width(text: &str, face: &Face, font_size: f32) -> f32
         .sum()
 }
 
-/// Scale down font_size so text fits within max_width. Minimum 6pt.
-pub(crate) fn fit_font_size(text: &str, face: &Face, desired_size: f32, max_width: f32) -> f32 {
+/// Scale down font_size so text fits within max_width, floored at `min_fs`.
+pub(crate) fn fit_font_size(
+    text: &str,
+    face: &Face,
+    desired_size: f32,
+    max_width: f32,
+    min_fs: f32,
+) -> f32 {
     if max_width <= 0.0 { return desired_size; }
     let total_w = measure_text_width(text, face, desired_size);
     if total_w <= max_width || total_w == 0.0 { return desired_size; }
-    (desired_size * max_width / total_w).max(6.0)
+    (desired_size * max_width / total_w).max(min_fs)
+}
+
+/// Truncate `text` at `font_size` so it fits within `max_width`, appending `"…"`.
+pub(crate) fn truncate_to_fit(text: &str, face: &Face, font_size: f32, max_width: f32) -> String {
+    let ellipsis = "…";
+    let ellipsis_w = measure_text_width(ellipsis, face, font_size);
+    if ellipsis_w >= max_width { return ellipsis.to_owned(); }
+    let budget = max_width - ellipsis_w;
+    let chars: Vec<char> = text.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let s: String = chars[..mid].iter().collect();
+        if measure_text_width(&s, face, font_size) <= budget { lo = mid; } else { hi = mid - 1; }
+    }
+    if lo == 0 {
+        ellipsis.to_owned()
+    } else {
+        format!("{}{}", chars[..lo].iter().collect::<String>(), ellipsis)
+    }
 }
 
 // ── AI layout evaluation ──────────────────────────────────────────────────────
@@ -333,17 +387,26 @@ pub(crate) async fn extract_and_translate(
 
     let mut page_translations: HashMap<u32, Vec<String>> = HashMap::new();
 
+    let total_pages = overlay_pages.len() as u32;
+    let done_pages = Arc::new(AtomicU32::new(0));
+
     let results: Vec<(u32, Vec<String>)> = stream::iter(batches)
         .map(|batch| {
             let translator = Arc::clone(&translator);
             let target = target_lang.clone();
             let src = source_lang.clone();
+            let batch_len = batch.len() as u32;
+            let done_pages = Arc::clone(&done_pages);
+            let progress = options.progress_fn.clone();
             async move {
                 let batch_json = extractor::pages_to_json(&batch)?;
                 let results = translator.translate(&[batch_json], &target, src.as_deref()).await?;
                 let json = results.into_iter().next()
                     .ok_or_else(|| Error::Translator("translator returned empty result".into()))?;
                 let page_block_lists = extractor::json_to_translated_pages(&json)?;
+
+                let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
+                if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
 
                 let out: Vec<(u32, Vec<String>)> = batch
                     .iter()
@@ -392,6 +455,16 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
     let face = Face::parse(&options.font, 0)
         .map_err(|e| Error::FontParse(e.to_string()))?;
 
+    // Parse fallback faces (borrow from options; live for the whole function).
+    let fallback_faces: Vec<Face<'_>> = options.font_fallbacks.iter()
+        .filter_map(|b| Face::parse(b, 0).ok())
+        .collect();
+    let all_faces: Vec<&Face<'_>> = std::iter::once(&face)
+        .chain(fallback_faces.iter())
+        .collect();
+
+    let min_fs = options.overflow.min_font_size();
+
     let mut reports: Vec<PlacedLineReport> = Vec::new();
     for overlay_page in &overlay_pages {
         let page_num = overlay_page.page_num;
@@ -405,7 +478,7 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
             let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
             let avail_w = (line.col_right - line.x).max(50.0);
             let text_w_desired = measure_text_width(text, &face, desired);
-            let actual_fs = fit_font_size(text, &face, desired, avail_w);
+            let actual_fs = fit_font_size(text, &face, desired, avail_w, min_fs);
             let overflow = text_w_desired > avail_w * 1.05 || actual_fs < desired * 0.9;
             reports.push(PlacedLineReport {
                 id: line_idx,
@@ -436,7 +509,12 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
 
     // ── Phase 4: Apply overlay to original PDF ────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
-    let font = doc.embed_font(&options.font)?;
+    // Embed primary font; fallback fonts are embedded lazily on first use.
+    let primary_font = doc.embed_font(&options.font)?;
+    let mut font_handles: Vec<Option<FontHandle>> =
+        std::iter::once(Some(primary_font))
+            .chain(std::iter::repeat(None).take(options.font_fallbacks.len()))
+            .collect();
 
     let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
 
@@ -473,13 +551,35 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
                 let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
                 let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
                 let avail_w = (line.col_right - line.x).max(50.0);
-                let scaled = fit_font_size(text, &face, desired, avail_w).max(desired * 0.95);
+                let scaled = fit_font_size(text, &face, desired, avail_w, min_fs).max(desired * 0.95);
+                // Apply overflow strategy: truncate if still too wide.
+                let display_text: std::borrow::Cow<str> = match &options.overflow {
+                    OverflowStrategy::Truncate { .. }
+                        if measure_text_width(text, &face, scaled) > avail_w * 1.05 =>
+                    {
+                        truncate_to_fit(text, &face, scaled, avail_w).into()
+                    }
+                    _ => text.into(),
+                };
                 // Synthetic bold for headings and originally-bold lines.
                 let bold = line.is_heading || line.is_bold;
-                // Place translated text at the original baseline Y (no arbitrary shift).
-                doc.page(page_num)?.add_text_styled(
-                    text, font, [line.x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
-                )?;
+
+                // Split text into font-specific runs and render each sub-run.
+                let runs = split_by_font(&display_text, &all_faces);
+                let mut run_x = line.x;
+                for (run_text, fidx) in runs {
+                    // Embed fallback font on first use.
+                    if font_handles[fidx].is_none() {
+                        let fb = &options.font_fallbacks[fidx - 1];
+                        font_handles[fidx] = Some(doc.embed_font(fb)?);
+                    }
+                    let fh = font_handles[fidx].unwrap();
+                    let run_face = all_faces[fidx];
+                    doc.page(page_num)?.add_text_styled(
+                        &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
+                    )?;
+                    run_x += measure_text_width(&run_text, run_face, scaled);
+                }
             }
         }
     }

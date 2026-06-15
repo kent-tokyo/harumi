@@ -40,5 +40,5 @@ pub mod providers;
 
 pub use error::{Error, Result};
 pub use layout::LayoutOptions;
-pub use pdf_translator::{TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf};
+pub use pdf_translator::{OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf};
 pub use translator::Translator;

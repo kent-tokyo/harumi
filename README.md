@@ -109,6 +109,9 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to attach files to a PDF | `doc.attach_file(name, data, mime)` embeds any file as a PDF attachment (EmbeddedFiles, FlateDecode-compressed, sorted name tree); `doc.list_attachments()` → `Vec<AttachmentInfo>` (v1.4+) |
 | Need bold/italic/font-family from extracted text | `TextFragment::is_bold`, `is_italic`, `font_family`, `base_font` — parsed from the PostScript `/BaseFont` name (v1.4.1+) |
 | Need to detect column layout from extracted text | `detect_text_columns(&frags, page_width)` — X-density histogram splits text into `Vec<ColumnZone>` by gap detection (v1.4.1+) |
+| Need to group extracted fragments into lines or paragraphs | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` — merges adjacent `TextFragment`s into `TextGroup`s; `Paragraph` groups by inter-line gap, `Line` groups same-baseline fragments — useful for feeding paragraph-level context to a translation model (v1.5+) |
+| Need to check whether a font file covers a given character | `font_covers_char(font_bytes, ch) -> bool` — queries the font cmap via ttf-parser; use to select between primary and fallback fonts before embedding (v1.5+) |
+| Need to extract text from a PDF table cell by cell | `extract_table_cells(&frags, page_width, page_height)` — returns `Vec<TableCell>` with 0-based `row`/`col`, `text`, and bounding box; columns from `detect_text_columns`, rows from Y-gap clustering; heuristic only (no grid-line support) (v1.5+) |
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
 | Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts all signature data (signer, timestamp, field name); performs RSA PKCS#1 v1.5 cryptographic verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
 | Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |
@@ -151,8 +154,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | **Text extraction** |
 | — CID fonts (ToUnicode CMap) | Yes | Yes ⭐ | Yes | Yes |
 | — Simple fonts (Type1/TrueType) | Yes | Yes | Yes | Yes |
-| — Form XObject recursion | No (v1.3) | Yes ⭐ | Yes | Unknown |
-| — Graphic state preservation | No (v1.3) | Yes ⭐ | Yes | Unknown |
+| — Form XObject recursion | Yes (v1.5+) | Yes ⭐ | Yes | Unknown |
+| — Graphic state preservation | Yes (v1.5+) | Yes ⭐ | Yes | Unknown |
 | — `uni<XXXX>` glyph names | No (v1.3) | Yes ⭐ | Unknown | Unknown |
 | — Reading order / XY-Cut | No | Yes ⭐ | Yes | Unknown |
 | — RTL / BiDi support | No | Yes ⭐ | Unknown | Unknown |
@@ -930,6 +933,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v0.8** | `replace_text_resubset` — expand font subset at replacement time (any language); MCP `pdf_replace_text` layout-preserving translation workflow and non-Identity `CIDToGIDMap` diagnostics; `InlineSpan` bold/italic/color in `FlowDocument` + HTML `<strong>`/`<em>`/`<span>` inline styles; nested `/Pages` tree inherited-attribute fix; TTC E2E tests; `wasm-pack test --node` CI; `cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` font attributes (`is_bold`, `is_italic`, `font_family`, `base_font`); `detect_text_columns` + `ColumnZone` for column-layout inference |
 | **v1.4.2** | `harumi-ai` overlay mode accuracy: per-line white-rect sizing (height, width, descender coverage), exact baseline Y placement, multi-column layout via `detect_text_columns`, bold-based heading detection, NaN-safe reading-order sort |
+| **v1.5.0** | `group_text_fragments` — merge `TextFragment`s into line/paragraph `TextGroup`s; `font_covers_char` — cmap coverage check; Form XObject recursive text extraction (`Do` operator); cross-content-stream graphics state preservation; `extract_table_cells` — heuristic table row/col detection; `harumi-ai`: `OverflowStrategy` (Shrink/Truncate), `font_fallbacks` multi-font rendering per character, `on_progress` translation callback |
 
 ---
 

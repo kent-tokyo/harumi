@@ -23,7 +23,7 @@
 //!                        default: NotoSansJP-Regular.ttf in current directory
 
 use std::env;
-use harumi_ai::{TranslateOptions, TranslationMode, translate_pdf, providers::AnthropicTranslator};
+use harumi_ai::{TranslationMode, translate_pdf, providers::AnthropicTranslator};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,10 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_lang = args.get(4).map(String::as_str);
     let mode_arg    = args.get(5).map(String::as_str).unwrap_or("overlay");
 
-    let mode = if mode_arg == "new" {
-        TranslationMode::NewDocument
-    } else {
-        TranslationMode::Overlay
+    let mode = match mode_arg {
+        "new"     => TranslationMode::NewDocument,
+        "inplace" => TranslationMode::InPlace,
+        _         => TranslationMode::Overlay,
     };
 
     // ── API key & model ───────────────────────────────────────────────────────
@@ -71,9 +71,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .model(model)
         .build();
 
-    let mut opts = TranslateOptions::new(target_lang.as_str(), translator, font);
-    opts.source_lang = source_lang.map(str::to_owned);
-    opts.mode = mode;
+    let opts = harumi_ai::TranslateOptionsBuilder::default()
+        .target_lang(target_lang.as_str())
+        .translator(translator)
+        .font(font)
+        .mode(mode)
+        .on_progress(|done, total| {
+            eprint!("\r  page {done}/{total}   ");
+        })
+        .build();
+    let opts = {
+        let mut o = opts;
+        o.source_lang = source_lang.map(str::to_owned);
+        o
+    };
 
     let src_display = source_lang.unwrap_or("auto");
     println!("[harumi-ai] Translating: {input_path}  ({src_display} → {target_lang})  mode={mode_arg}");

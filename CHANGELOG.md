@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added (harumi)
+
+- **`group_text_fragments(fragments, strategy) -> Vec<TextGroup>`** (`src/extract.rs`) —
+  merges individual `TextFragment`s into logical text blocks before handing them to a
+  translation model.  Three strategies are available via `GroupingStrategy`:
+  - `Raw` — identity (one fragment = one group)
+  - `Line` — fragments within ±½ font-size on the same baseline are merged
+  - `Paragraph` — adjacent lines separated by a gap ≤ 1.5 × line height are merged
+  `TextGroup` exposes `text: String`, `fragments: Vec<TextFragment>`, and a bounding box
+  `(x, y, width, height)`.  Exported from the crate root along with `GroupingStrategy` and
+  `TextGroup`.
+
+- **`font_covers_char(font_bytes: &[u8], ch: char) -> bool`** (`src/document.rs`) —
+  queries the font's `cmap` table via ttf-parser to determine whether the font contains a
+  glyph for `ch`.  Returns `false` when `font_bytes` cannot be parsed.  Useful for choosing
+  between primary and fallback fonts before embedding.
+
+- **Form XObject recursive text extraction** (`src/extract.rs`) —
+  `extract_text_runs` now descends into `Form`-subtype XObjects referenced by `Do` operators
+  in the page content stream.  Headers, footers, and watermarks stored as Form XObjects are
+  included in the extracted fragments.  Recursion depth is capped at 5.  Each XObject uses
+  its own `/Resources` font dictionary, falling back to page-level fonts when absent.
+
+- **Cross-content-stream graphics state** (`src/extract.rs` — `ParseCarryState`) —
+  When a page `/Contents` entry is an array of streams, the PDF spec requires colour and
+  render-mode state to carry over between streams.  A new `ParseCarryState { cur_color,
+  cur_render_mode }` struct is propagated across `parse_content_stream` calls so that text
+  in the second stream inherits colour or render-mode operators set in the first stream.
+
+- **`extract_table_cells(fragments, page_width, page_height) -> Vec<TableCell>`** (`src/extract.rs`) —
+  detects table structure from a flat `TextFragment` slice using two independent passes:
+  - **Columns** — delegates to `detect_text_columns` (reuses the X-density gap algorithm).
+  - **Rows** — after `sort_by_reading_order`, fragments are clustered by Y proximity: a gap
+    larger than `½ × font_size` of the row's first fragment starts a new row.
+  Each occupied `(row, col)` pair becomes one `TableCell` with 0-based `row`/`col` indices,
+  merged `text` (fragments within the cell are joined left-to-right), and a bounding box
+  `(x, y, width, height)`.  Results are sorted by row then column.
+  **Limitation (documented):** detection is heuristic.  PDFs without visible grid lines,
+  merged cells, or nested tables may produce incorrect row/column assignments.
+  `TableCell` and `extract_table_cells` are exported from the crate root.
+
+### Added (harumi-ai)
+
+- **`OverflowStrategy`** (`harumi-ai/src/pdf_translator.rs`) — controls what happens when
+  translated text is wider than the original bounding box:
+  - `Shrink { min_font_size: f32 }` — scale the font down to `min_font_size` (default
+    `6.0 pt`).  This was the only behaviour before; it is now the explicit default.
+  - `Truncate { min_font_size: f32 }` — scale down first; if still too wide at
+    `min_font_size`, clip the text and append `"…"`.
+  Set via `TranslateOptions::overflow` or `TranslateOptionsBuilder::overflow(strategy)`.
+
+- **`TranslateOptions::font_fallbacks: Vec<Vec<u8>>`** — additional TTF/OTF fonts tried in
+  order when the primary `font` does not contain a glyph for a character.  harumi-ai
+  partitions each translated text run into sub-runs by font (using `split_by_font`), embeds
+  only fonts that are actually used, and renders each sub-run at the correct x offset.
+  Add fallbacks via `TranslateOptionsBuilder::add_font_fallback(bytes)`.
+
+- **`TranslateOptions::progress_fn`** — optional callback invoked after each batch of pages
+  is translated, with signature `Fn(pages_done: u32, total_pages: u32)`.  Intended for
+  streaming progress to clients that would otherwise time out on large PDFs.  Register via
+  `TranslateOptionsBuilder::on_progress(fn)`.  Works for all three `TranslationMode`s.
+
+---
+
 ## [1.4.5] — 2026-06-15
 
 ### Added (harumi)

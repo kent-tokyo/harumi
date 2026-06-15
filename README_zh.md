@@ -111,6 +111,9 @@ doc.save("searchable.pdf")?;
 | 需要在 PDF 中附加文件 | `doc.attach_file(name, data, mime)` 将任意文件嵌入为 EmbeddedFiles 附件（FlateDecode 压缩、按名称排序）；`doc.list_attachments()` 返回 `Vec<AttachmentInfo>`（v1.4+） |
 | 需要从提取的文本中获取粗体/斜体/字体名称 | `TextFragment::is_bold`、`is_italic`、`font_family`、`base_font` — 从 PostScript `/BaseFont` 名称解析（v1.4.1+） |
 | 需要从提取的文本中检测分栏布局 | `detect_text_columns(&frags, page_width)` — X 密度直方图检测空白间距，返回 `Vec<ColumnZone>`（v1.4.1+） |
+| 需要将提取的文本按行或段落分组 | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` — 将相邻片段合并为 `TextGroup`。`Paragraph` 按段落边界合并，`Line` 仅合并同行片段。用于提高翻译模型的输入质量（v1.5+） |
+| 需要检查字体是否覆盖某个字符 | `font_covers_char(font_bytes, ch) -> bool` — 通过 ttf-parser 查询字体 cmap；用于选择备用字体（v1.5+） |
+| 需要从表格 PDF 中按单元格提取文本 | `extract_table_cells(&frags, page_width, page_height)` — 用 `detect_text_columns` 检测列，Y 坐标聚类检测行，返回 `Vec<TableCell>`。每个单元格含 `row`/`col`（从 0 起）、`text` 及边界框。无边框 PDF 为启发式检测（v1.5+） |
 | 需要验证 PDF 数字签名 | `doc.verify_signatures(&pdf_bytes)` — 提取签名元数据（签名者、时间戳、字段名）；密码学验证待做（`digital-signature` feature） |
 | 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
 
@@ -783,6 +786,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；MCP `pdf_replace_text` 保持版面的翻译流程和非 Identity `CIDToGIDMap` 诊断；`cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` 字体属性（`is_bold`、`is_italic`、`font_family`、`base_font`）；`detect_text_columns` + `ColumnZone` 用于分栏布局推断 |
 | **v1.4.2** | `harumi-ai` overlay 模式精度提升：逐行白色矩形尺寸（高度、宽度、下行深度覆盖）、精确基线 Y 坐标、`detect_text_columns` 多栏支持、基于粗体的标题检测、NaN 安全读取顺序排序 |
+| **v1.5.0** | `group_text_fragments` — 将 `TextFragment` 合并为行/段落 `TextGroup`；`font_covers_char` — 查询 cmap 覆盖范围；Form XObject 递归文本提取（`Do` 运算符）；跨内容流图形状态继承；`harumi-ai`: `OverflowStrategy`（Shrink/Truncate）、`font_fallbacks` 多字体渲染、`on_progress` 回调；`extract_table_cells` — 表格行/列检测（启发式） |
 
 ---
 

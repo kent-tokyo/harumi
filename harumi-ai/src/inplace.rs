@@ -1,9 +1,25 @@
 // inplace.rs — content-stream direct-replacement translation mode
 
-use harumi::Document;
+use harumi::{Document, FontHandle};
 use ttf_parser::Face;
 
-use crate::{Error, Result, TranslateOptions, overlay};
+use crate::{Error, OverflowStrategy, Result, TranslateOptions, overlay};
+
+/// Strip a leading fullwidth/halfwidth colon separator.
+///
+/// SDS form PDFs (e.g. Kanto Chemical) store label values like
+/// `"： 関東化学株式会社"` where `：` is a static template element in the
+/// content stream, separate from the variable value.  When extracted together
+/// they form a string starting with `：`, but `replace_text` cannot find the
+/// combined string because only the value portion exists as a replaceable run.
+///
+/// Returns the value substring after the separator, trimmed, or `None` if no
+/// colon prefix is present.
+fn strip_colon_prefix(text: &str) -> Option<&str> {
+    let t = text.trim_start();
+    let rest = t.strip_prefix('：').or_else(|| t.strip_prefix(':'))?;
+    Some(rest.trim_start())
+}
 
 /// Translate a PDF by rewriting content streams in-place.
 ///
@@ -19,14 +35,26 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
     let face = Face::parse(&options.font, 0)
         .map_err(|e| Error::FontParse(e.to_string()))?;
 
+    let fallback_faces: Vec<Face<'_>> = options.font_fallbacks.iter()
+        .filter_map(|b| Face::parse(b, 0).ok())
+        .collect();
+    let all_faces: Vec<&Face<'_>> = std::iter::once(&face)
+        .chain(fallback_faces.iter())
+        .collect();
+
     let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
     let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
         .clamp(0.05, 0.35);
 
     let mut doc = Document::from_bytes(pdf_bytes)?;
-    let font = doc.embed_font(&options.font)?;
+    let primary_font = doc.embed_font(&options.font)?;
+    let mut font_handles: Vec<Option<FontHandle>> =
+        std::iter::once(Some(primary_font))
+            .chain(std::iter::repeat(None).take(options.font_fallbacks.len()))
+            .collect();
 
     let mut replaced = 0usize;
+    let mut sep_retry = 0usize;  // succeeded after stripping "：" prefix
     let mut fallback = 0usize;
 
     for overlay_page in &overlay_pages {
@@ -47,11 +75,27 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
             // Attempt content-stream rewrite.  replace_text() returns the
             // match count immediately (read-only scan) and queues the actual
             // rewrite for finalize(); so we can branch on it right away.
-            let count = doc.page(page_num)?.replace_text(&line.text, text, font)?;
+            let count = doc.page(page_num)?.replace_text(&line.text, text, primary_font)?;
 
             if count > 0 {
                 replaced += count;
             } else {
+                // Retry: strip a leading "：" separator.  In SDS form PDFs the
+                // colon is a static template element stored separately from the
+                // variable value, so the full "： value" string doesn't exist
+                // as one replaceable text run, but "value" alone does.
+                let retry = 'sep: {
+                    let Some(orig_val) = strip_colon_prefix(&line.text) else { break 'sep 0; };
+                    if orig_val.is_empty() { break 'sep 0; }
+                    // Strip the same separator from the translation if present.
+                    let trans_val = strip_colon_prefix(text).unwrap_or(text);
+                    let trans_val = if trans_val.is_empty() { text } else { trans_val };
+                    doc.page(page_num)?.replace_text(orig_val, trans_val, primary_font)?
+                };
+
+                if retry > 0 {
+                    sep_retry += retry;
+                } else {
                 // Fall back to overlay: cover the original text with a
                 // rectangle, then draw the translation on top.
                 fallback += 1;
@@ -61,7 +105,7 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
                         "[harumi-ai] fallback page={} reason={} text={:?}",
                         page_num,
                         reason,
-                        &line.text[..line.text.len().min(60)]
+                        line.text.chars().take(40).collect::<String>()
                     );
                 }
                 let x = line.x - 1.0;
@@ -78,19 +122,40 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
                     fs.min(line.line_height * 0.85)
                 };
                 let avail_w = (line.col_right - line.x).max(50.0);
-                let scaled = overlay::fit_font_size(text, &face, desired, avail_w)
+                let min_fs = options.overflow.min_font_size();
+                let scaled = overlay::fit_font_size(text, &face, desired, avail_w, min_fs)
                     .max(desired * 0.95);
+                let display_text: std::borrow::Cow<str> = match &options.overflow {
+                    OverflowStrategy::Truncate { .. }
+                        if overlay::measure_text_width(text, &face, scaled) > avail_w * 1.05 =>
+                    {
+                        overlay::truncate_to_fit(text, &face, scaled, avail_w).into()
+                    }
+                    _ => text.into(),
+                };
                 let bold = line.is_heading || line.is_bold;
-                doc.page(page_num)?.add_text_styled(
-                    text, font, [line.x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
-                )?;
+                let runs = overlay::split_by_font(&display_text, &all_faces);
+                let mut run_x = line.x;
+                for (run_text, fidx) in runs {
+                    if font_handles[fidx].is_none() {
+                        let fb = &options.font_fallbacks[fidx - 1];
+                        font_handles[fidx] = Some(doc.embed_font(fb)?);
+                    }
+                    let fh = font_handles[fidx].unwrap();
+                    let run_face = all_faces[fidx];
+                    doc.page(page_num)?.add_text_styled(
+                        &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
+                    )?;
+                    run_x += overlay::measure_text_width(&run_text, run_face, scaled);
+                }
+                } // end else (retry == 0)
             }
         }
     }
 
     eprintln!(
-        "[harumi-ai] InPlace: {} stream-replaced, {} overlay-fallback",
-        replaced, fallback
+        "[harumi-ai] InPlace: {} stream-replaced, {} sep-retry, {} overlay-fallback",
+        replaced, sep_retry, fallback
     );
 
     doc.save_to_bytes().map_err(Into::into)
