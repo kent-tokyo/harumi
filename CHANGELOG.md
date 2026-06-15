@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.2] — 2026-06-15
+
+### Fixed (harumi)
+
+- **Font inheritance from ancestor Pages nodes** (`src/extract.rs`) —
+  `collect_fonts_inner()` now walks the `/Parent` chain when a page has no
+  `/Resources` dictionary.  PDF §7.7.3 permits fonts to be declared on ancestor
+  Pages nodes; Chrome/Skia-generated PDFs commonly do this, causing the font map
+  to be empty and all text extraction to fail silently.
+
+### Fixed (harumi-ai)
+
+- **JSON repair for LLM-emitted unescaped quotes** (`src/extractor.rs`) —
+  `json_to_translated_pages()` now tries a direct `serde_json` parse first, then
+  falls back to `repair_json_strings()`, a char-level state machine that escapes
+  interior unescaped `"` inside `"text"` string values that LLMs sometimes emit
+  without the required `\"` escaping (e.g. section references).  4 unit tests added.
+- **Prompt instruction for quote escaping** (`src/prompts.rs`) —
+  `translation_system_prompt()` and `layout_correction_prompt()` now explicitly
+  instruct the model to escape double-quotes inside translated text values as `\"`.
+- **Default `max_tokens` raised 4 096 → 16 000** (`src/providers/anthropic.rs`) —
+  prevents mid-translation truncation on dense documents.
+
+---
+
 ## [1.5.1] — 2026-06-15
 
 ### Fixed (harumi-ai)
