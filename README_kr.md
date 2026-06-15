@@ -38,6 +38,8 @@ PDF 번역은 `pdf_extract_all_pages` 로 모든 페이지의 텍스트 조각�
 `mode: "new_font"` 를 사용하세요.
 `harumi-ai` CLI는 기존 레이아웃을 유지할 때 기본적으로 `overlay` mode를 사용합니다.
 새 문서로 다시 만들고 싶을 때만 `new` 를 지정하세요.
+Overlay mode는 `detect_text_columns` 로 다단 레이아웃을 감지하고, 번역 텍스트를
+원문의 정확한 베이스라인 Y에 배치합니다（흰 사각형은 실제 descender 깊이로 보정）。
 
 [smithery.ai](https://smithery.ai) 또는 [mcp.so](https://mcp.so)에 등록 예정.
 

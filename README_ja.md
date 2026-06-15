@@ -38,6 +38,8 @@ PDF翻訳では `pdf_extract_all_pages` で全ページの断片を抽出し、�
 `mode: "new_font"` を使います。
 `harumi-ai` の CLI は、既存レイアウトを保ちたい場合の既定が `overlay` mode です。
 新規レイアウトで作り直したい場合だけ `new` を指定してください。
+Overlay mode は `detect_text_columns` で複数段組を検出し、訳文を原文の正確な
+ベースライン Y に配置します（フォントの実ディセンダー量で白矩形を補正済み）。
 
 [smithery.ai](https://smithery.ai) または [mcp.so](https://mcp.so) に登録予定。
 

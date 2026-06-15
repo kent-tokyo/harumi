@@ -36,6 +36,8 @@ PDF 翻译流程：先用 `pdf_extract_all_pages` 提取所有页面的文本片
 `pdf_replace_text` 在保留原版面的前提下替换文本。如果 PDF 因非 Identity
 `CIDToGIDMap` 无法重新子集化，请指定 Unicode TTF 并使用 `mode: "new_font"`。
 `harumi-ai` CLI 在保留原版面时默认使用 `overlay` mode；只有需要重新生成文档时才指定 `new`。
+Overlay mode 使用 `detect_text_columns` 检测多栏布局，将译文精确放置在原文基线 Y 处
+（白色矩形已按字体实际 descender 量补偿）。
 
 在 [smithery.ai](https://smithery.ai) 或 [mcp.so](https://mcp.so) 上注册中。
 

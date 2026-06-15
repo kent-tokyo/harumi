@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
-use harumi::Document;
+use harumi::{detect_text_columns, sort_by_reading_order, Document, TextFragment};
 use ttf_parser::Face;
 
 use crate::{
@@ -19,11 +19,19 @@ use crate::{
 struct OverlayLine {
     pub x: f32,
     pub y: f32,
+    /// Actual right edge of the text run (x + width of rightmost fragment).
+    pub right: f32,
+    /// Right boundary of the column this line belongs to (used for avail_w).
+    pub col_right: f32,
     pub line_height: f32,
     pub is_heading: bool,
+    #[allow(dead_code)]
+    pub is_bold: bool,
+    #[allow(dead_code)]
     pub page_width: f32,
     pub text: String,
     /// Original fragment texts (individual Tj runs) for text-layer blanking.
+    #[allow(dead_code)]
     pub fragment_texts: Vec<String>,
 }
 
@@ -33,6 +41,52 @@ struct OverlayPage {
     pub body_font_size: f32,
     /// Bboxes of invisible (render-mode-3) text fragments to also white-out.
     pub invisible_rects: Vec<[f32; 4]>,
+}
+
+// ── Extraction helpers ────────────────────────────────────────────────────────
+
+struct RawLine {
+    x: f32,
+    y: f32,
+    right: f32,
+    col_right: f32,
+    text: String,
+    fragments: Vec<String>,
+    /// True if any fragment on this line is bold.
+    is_bold: bool,
+}
+
+/// Group a slice of fragments (already sorted top-to-bottom within a column)
+/// into text lines using a Y-tolerance merge, then return `RawLine`s.
+fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine> {
+    const Y_TOL: f32 = 2.0;
+    let mut raw_lines: Vec<RawLine> = Vec::new();
+    for frag in frags {
+        let frag_right = frag.x + frag.width.max(0.0);
+        if let Some(last) = raw_lines.last_mut() {
+            if (frag.y - last.y).abs() <= Y_TOL {
+                if !last.text.is_empty() && !last.text.ends_with(' ') {
+                    last.text.push(' ');
+                }
+                last.text.push_str(&frag.text);
+                last.x = last.x.min(frag.x);
+                last.right = last.right.max(frag_right);
+                last.fragments.push(frag.text.clone());
+                last.is_bold = last.is_bold || frag.is_bold;
+                continue;
+            }
+        }
+        raw_lines.push(RawLine {
+            x: frag.x,
+            y: frag.y,
+            right: frag_right,
+            col_right,
+            text: frag.text.clone(),
+            fragments: vec![frag.text.clone()],
+            is_bold: frag.is_bold,
+        });
+    }
+    raw_lines
 }
 
 // ── Extraction ────────────────────────────────────────────────────────────────
@@ -51,16 +105,15 @@ fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
 
         let runs = doc.extract_text_runs(page_num)?;
 
-        // Also collect invisible (OCR/render-mode-3) fragment bboxes for white-rect coverage.
-        // These hidden text layers cause unexpected column selections in PDF viewers.
+        // Collect invisible (OCR/render-mode-3) fragment bboxes for white-rect coverage.
         let invisible_rects: Vec<[f32; 4]> = runs
             .iter()
             .filter(|r| r.invisible && !r.text.trim().is_empty())
             .map(|r| [r.x - 1.0, r.y - 1.0, r.width.max(2.0) + 2.0, r.height.max(2.0) + 2.0])
             .collect();
 
-        let visible: Vec<_> = runs
-            .iter()
+        let mut visible: Vec<TextFragment> = runs
+            .into_iter()
             .filter(|r| !r.invisible && !r.text.trim().is_empty())
             .collect();
 
@@ -69,61 +122,61 @@ fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
             continue;
         }
 
-        let mut sorted: Vec<_> = visible.clone();
-        sorted.sort_by(|a, b| {
-            b.y.partial_cmp(&a.y)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
-        });
+        // Use harumi's NaN-safe reading-order sort.
+        sort_by_reading_order(&mut visible);
 
-        const Y_TOL: f32 = 2.0;
-        struct RawLine { x: f32, y: f32, right: f32, text: String, fragments: Vec<String> }
-        let mut raw_lines: Vec<RawLine> = Vec::new();
-        for frag in &sorted {
-            let frag_right = frag.x + frag.width.max(0.0);
-            if let Some(last) = raw_lines.last_mut() {
-                if (frag.y - last.y).abs() <= Y_TOL {
-                    if !last.text.is_empty() && !last.text.ends_with(' ') {
-                        last.text.push(' ');
-                    }
-                    last.text.push_str(&frag.text);
-                    last.x = last.x.min(frag.x);
-                    last.right = last.right.max(frag_right);
-                    last.fragments.push(frag.text.clone());
-                    continue;
-                }
-            }
-            raw_lines.push(RawLine {
-                x: frag.x, y: frag.y, right: frag_right,
-                text: frag.text.clone(), fragments: vec![frag.text.clone()],
-            });
+        // Detect column layout; fall back to full-page single column.
+        let cols = detect_text_columns(&visible, page_width);
+        let col_zones: Vec<(f32, f32)> = if cols.is_empty() {
+            vec![(0.0, page_width)]
+        } else {
+            cols.iter().map(|c| (c.x_start, c.x_end)).collect()
+        };
+
+        // Group fragments into lines per column, then concatenate columns left→right.
+        let mut all_raw_lines: Vec<RawLine> = Vec::new();
+        for (col_x_start, col_x_end) in &col_zones {
+            let col_frags: Vec<&TextFragment> = visible
+                .iter()
+                .filter(|f| f.x >= *col_x_start && f.x < *col_x_end)
+                .collect();
+            let mut col_lines = group_into_raw_lines(&col_frags, *col_x_end);
+            all_raw_lines.append(&mut col_lines);
         }
 
-        let mut gaps: Vec<f32> = raw_lines
+        // Estimate body font size from inter-line gaps (bottom quintile = tight spacing).
+        let mut gaps: Vec<f32> = all_raw_lines
             .windows(2)
             .map(|w| (w[0].y - w[1].y).abs())
             .filter(|&g| g > 1.0 && g < 60.0)
             .collect();
         gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let body_line_h = if gaps.is_empty() { 14.0_f32 } else { gaps[gaps.len() / 5] };
-        // CJK glyphs fill the full em-square, so use a larger leading ratio (1.6)
-        // to leave enough visual breathing room between lines.
+        // CJK glyphs fill the full em-square; use a larger leading ratio (1.6).
         let body_font_size = (body_line_h / 1.6).max(6.0);
 
+        let raw_lines = &all_raw_lines;
         let lines = raw_lines
             .iter()
             .enumerate()
             .map(|(i, rl)| {
                 let gap_above = if i > 0 { (raw_lines[i - 1].y - rl.y).abs() } else { body_line_h };
                 let gap_below = if i + 1 < raw_lines.len() { (rl.y - raw_lines[i + 1].y).abs() } else { body_line_h };
-                // A heading has a large gap above AND starts near the left margin.
-                // Indented continuation lines (like sub-items) should not be treated
-                // as headings even if they follow a large vertical gap.
-                let is_heading = gap_above > body_line_h * 2.2 && rl.x < page_width * 0.2;
+                // Heading: large gap above AND starts near left margin, OR bold font.
+                let is_heading = (gap_above > body_line_h * 2.2 && rl.x < page_width * 0.2)
+                    || rl.is_bold;
                 let lh = gap_below.min(body_line_h * 1.5).max(body_line_h);
                 OverlayLine {
-                    x: rl.x, y: rl.y, line_height: lh, is_heading, page_width,
-                    text: rl.text.clone(), fragment_texts: rl.fragments.clone(),
+                    x: rl.x,
+                    y: rl.y,
+                    right: rl.right,
+                    col_right: rl.col_right,
+                    line_height: lh,
+                    is_heading,
+                    is_bold: rl.is_bold,
+                    page_width,
+                    text: rl.text.clone(),
+                    fragment_texts: rl.fragments.clone(),
                 }
             })
             .collect();
@@ -325,13 +378,9 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
             if text.is_empty() { continue; }
             let max_fs = line.line_height * 0.85;
             let desired = if line.is_heading { (body_fs * 1.4).min(max_fs) } else { body_fs.min(max_fs) };
-            let avail_w = (line.page_width - line.x - 20.0).max(50.0);
-            // Measure at the DESIRED size (before scaling down) to detect true overflow.
+            let avail_w = (line.col_right - line.x).max(50.0);
             let text_w_desired = measure_text_width(text, &face, desired);
             let actual_fs = fit_font_size(text, &face, desired, avail_w);
-            // Report overflow when the line is even mildly too tight.
-            // We prefer prompting the model for a shorter translation over letting
-            // a line shrink noticeably relative to its neighbors.
             let overflow = text_w_desired > avail_w * 1.05 || actual_fs < desired * 0.9;
             reports.push(PlacedLineReport {
                 id: line_idx,
@@ -362,8 +411,12 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
 
     // ── Phase 4: Apply overlay to original PDF ────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
-
     let font = doc.embed_font(&options.font)?;
+
+    // Compute descender depth from the actual font (once, reused per line).
+    let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
+        .max(0.05)
+        .min(0.35);
 
     for overlay_page in &overlay_pages {
         let page_num = overlay_page.page_num;
@@ -371,19 +424,18 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
         let translated_texts = page_translations.get(&page_num);
 
         // First pass: white rectangles over original text.
-        // Also cover invisible (OCR) text layers that would otherwise create
-        // unexpected column selections in PDF viewers.
         for &rect in &overlay_page.invisible_rects {
             doc.page(page_num)?.add_rect(rect, [1.0f32, 1.0, 1.0], 1.0)?;
         }
         for line in &overlay_page.lines {
             let x = line.x - 1.0;
-            // Extend just 8% of body_font_size below the baseline (~1pt for 12pt text)
-            // to cover thin horizontal rules and descenders, without clipping pictograms.
-            let below = body_fs * 0.08;
+            // Extend below the baseline by the font's actual descender depth.
+            let below = body_fs * descender_ratio;
             let y = line.y - below;
-            let w = (line.page_width - x - 20.0).max(10.0);
-            let h = body_fs * 1.3 + below;
+            // Width: cover from left edge to actual text right edge + 2pt padding.
+            let w = (line.right - x + 2.0).max(10.0);
+            // Height: use per-line spacing, not a global fixed multiplier.
+            let h = line.line_height + below;
             doc.page(page_num)?.add_rect([x, y, w, h], [1.0f32, 1.0, 1.0], 1.0)?;
         }
 
@@ -393,11 +445,12 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
                 let text = trans_text.trim();
                 if text.is_empty() { continue; }
                 let max_fs = line.line_height * 0.85;
-            let desired = if line.is_heading { (body_fs * 1.4).min(max_fs) } else { body_fs.min(max_fs) };
-                let avail_w = (line.page_width - line.x - 20.0).max(50.0);
+                let desired = if line.is_heading { (body_fs * 1.4).min(max_fs) } else { body_fs.min(max_fs) };
+                let avail_w = (line.col_right - line.x).max(50.0);
                 let scaled = fit_font_size(text, &face, desired, avail_w).max(desired * 0.95);
+                // Place translated text at the original baseline Y (no arbitrary shift).
                 doc.page(page_num)?.add_text(
-                    text, font, [line.x, line.y - scaled * 0.1], scaled, [0.0f32, 0.0, 0.0],
+                    text, font, [line.x, line.y], scaled, [0.0f32, 0.0, 0.0],
                 )?;
             }
         }

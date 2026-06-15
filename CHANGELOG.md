@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (harumi-ai)
+
+- **Overlay mode layout accuracy** (`harumi-ai/src/overlay.rs`) — five fixes for
+  layout-preserving PDF translation:
+  - **White rect height** now uses per-line `line_height` (derived from actual inter-line
+    gap) instead of the global `body_font_size * 1.3` constant.
+  - **White rect width** now uses the actual right edge of text fragments plus 2 pt
+    padding instead of `page_width - x - 20` fixed margin.
+  - **White rect descender coverage** now computed from the font's real descender ratio
+    via `ttf-parser` (`face.descender() / face.units_per_em()`) instead of `body_fs * 0.08`.
+  - **Translated text Y coordinate** now places text exactly at the original baseline Y
+    (`line.y`) instead of applying an arbitrary `- scaled * 0.1` shift.
+  - **Multi-column support** — `harumi::detect_text_columns()` detects column boundaries;
+    fragments are grouped per column independently, preventing row interleaving on
+    2-column PDF layouts. `avail_w` is now bounded by the column right edge rather than
+    the page edge.
+  - **Heading detection improvement** — `TextFragment::is_bold` (v1.4.1) now contributes
+    to `is_heading` detection alongside the existing gap + margin heuristic.
+  - **Reading-order sort** now delegates to `harumi::sort_by_reading_order()` (NaN-safe)
+    instead of a custom inline comparator.
+
 ---
 
 ## [1.4.1] — 2026-06-15

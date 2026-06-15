@@ -33,6 +33,9 @@ cannot be resubset because it uses a non-Identity `CIDToGIDMap`, use
 `mode: "new_font"` with a Unicode TTF font.
 The `harumi-ai` CLI defaults to `overlay` mode when you want to keep the original
 page layout intact; pass `new` only when you want a regenerated document.
+Overlay mode uses `detect_text_columns` for multi-column layout detection and
+places translated text at the precise original baseline with font-accurate
+descender coverage.
 
 Register on [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) for one-click installation.
 
