@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (harumi-ai)
 
+- **Per-character PDF support for InPlace mode** (`harumi/src/replace.rs`) — `find_cross_op_matches_inner()`
+  now allows horizontal-only `Td`/`TD` operators (ty == 0) between `Tj`/`TJ` operators when building
+  cross-operator matches.  The per-character advance pattern common in Japanese PDFs (`(A)Tj 12 0 Td (B)Tj …`)
+  is now matched and the intermediate `Td` operators are suppressed in the rewritten stream.
+  Width compensation uses `Tz` (horizontal scale) when 70%–130% of the original advance, falling back
+  to `Td` otherwise.  Both `rewrite_content_stream` and `rewrite_stream_preserve_font` updated.
+
 - **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — new translation
   mode that rewrites PDF content streams directly via `harumi::PageHandle::replace_text()`. The
   original `Tj`/`TJ` operators are replaced in-place so the source text is eliminated from the

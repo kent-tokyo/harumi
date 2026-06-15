@@ -11,6 +11,12 @@
 
 ### 追加 (harumi-ai)
 
+- **per-char PDF 対応（InPlace モード向け）** (`harumi/src/replace.rs`) — `find_cross_op_matches_inner()`
+  が水平 `Td`/`TD` (ty=0) を `Tj`/`TJ` 間に許容するよう拡張。日本語 PDF に多い
+  `(A)Tj 12 0 Td (B)Tj …` パターンがマッチ可能になり、中間 `Td` は書き換え後のストリームから
+  除去される。幅補正は 70%〜130% の場合 `Tz`（水平スケール）を使用し、それ以外は `Td`
+  にフォールバック。`rewrite_content_stream` と `rewrite_stream_preserve_font` 両方を更新。
+
 - **`TranslationMode::InPlace`** (`harumi-ai/src/inplace.rs`, `pdf_translator.rs`) — コンテンツ
   ストリーム直接置換による新翻訳モード。`harumi::PageHandle::replace_text()` を使って
   `Tj`/`TJ` 演算子を in-place で書き換えるため、原文がストリームから消去される。白矩形は

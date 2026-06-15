@@ -250,6 +250,13 @@ fn rewrite_stream_preserve_font(
                     cur_size = *size;
                 }
             }
+            // Suppress horizontal Td/TD ops that fall inside a cross-op match region.
+            b"Td" | b"TD" if in_bt => {
+                if let Some(&(_co_idx, _role)) = op_role.get(&op_idx) {
+                    out.extend_from_slice(&bytes[last_copied..op.start]);
+                    last_copied = op.end;
+                }
+            }
             b"Tj" if in_bt => {
                 // Cross-op match.
                 if let Some(&(co_idx, role)) = op_role.get(&op_idx) {
@@ -532,6 +539,25 @@ pub(crate) fn rewrite_content_stream(
         op_role.insert(co.last_op, (co_idx, 2));
     }
 
+    // Pre-compute Tz scale for each cross-op match.
+    // Tz compresses/expands the replacement text so it occupies the same horizontal
+    // space as the original.  Only applied when 70% ≤ scale ≤ 130% to avoid
+    // illegible compression; outside that range we fall back to Td compensation.
+    let co_tz_scale: Vec<Option<f32>> = cross_op
+        .iter()
+        .map(|co| {
+            let r = &replacements[co.replacement_idx];
+            let orig_w = co.orig_width * co.font_size;
+            let new_w = new_width(r, co.font_size);
+            if new_w > 0.0 {
+                let s = orig_w / new_w * 100.0;
+                if (70.0..=130.0).contains(&s) { Some(s) } else { None }
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let mut in_bt = false;
     let mut cur_font: Vec<u8> = Vec::new();
     let mut cur_size: f32 = 12.0;
@@ -553,11 +579,20 @@ pub(crate) fn rewrite_content_stream(
                     cur_size = *size;
                 }
             }
+            // Suppress horizontal Td/TD ops that fall inside a cross-op match region.
+            // These are per-character advance operators common in Japanese PDFs.
+            b"Td" | b"TD" if in_bt => {
+                if let Some(&(_co_idx, _role)) = op_role.get(&op_idx) {
+                    out.extend_from_slice(&bytes[last_copied..op.start]);
+                    last_copied = op.end;
+                }
+            }
             b"Tj" if in_bt => {
                 // Cross-op match handling takes priority.
                 if let Some(&(co_idx, role)) = op_role.get(&op_idx) {
                     let co = &cross_op[co_idx];
                     let r = &replacements[co.replacement_idx];
+                    let tz = co_tz_scale[co_idx];
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
@@ -566,22 +601,24 @@ pub(crate) fn rewrite_content_stream(
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            emit_cross_op_replacement(&mut out, r, co);
+                            emit_cross_op_replacement(&mut out, r, co, tz);
                             fonts_used.insert(r.new_pdf_font_name.clone());
                         }
                         1 => { /* middle: skip */ }
                         _ => {
-                            // Last op: emit suffix + width compensation.
+                            // Last op: emit suffix + width compensation (Td only if no Tz).
                             if !co.suffix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let orig_w = co.orig_width * co.font_size;
-                            let new_w = new_width(r, co.font_size);
-                            let delta = orig_w - new_w;
-                            if delta.abs() > 0.01 {
-                                push_number(&mut out, delta);
-                                out.extend_from_slice(b" 0 Td\n");
+                            if tz.is_none() {
+                                let orig_w = co.orig_width * co.font_size;
+                                let new_w = new_width(r, co.font_size);
+                                let delta = orig_w - new_w;
+                                if delta.abs() > 0.01 {
+                                    push_number(&mut out, delta);
+                                    out.extend_from_slice(b" 0 Td\n");
+                                }
                             }
                         }
                     }
@@ -609,6 +646,7 @@ pub(crate) fn rewrite_content_stream(
                 if let Some(&(co_idx, role)) = op_role.get(&op_idx) {
                     let co = &cross_op[co_idx];
                     let r = &replacements[co.replacement_idx];
+                    let tz = co_tz_scale[co_idx];
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
@@ -616,7 +654,7 @@ pub(crate) fn rewrite_content_stream(
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            emit_cross_op_replacement(&mut out, r, co);
+                            emit_cross_op_replacement(&mut out, r, co, tz);
                             fonts_used.insert(r.new_pdf_font_name.clone());
                         }
                         1 => { /* middle: skip */ }
@@ -625,12 +663,14 @@ pub(crate) fn rewrite_content_stream(
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
                             }
-                            let orig_w = co.orig_width * co.font_size;
-                            let new_w = new_width(r, co.font_size);
-                            let delta = orig_w - new_w;
-                            if delta.abs() > 0.01 {
-                                push_number(&mut out, delta);
-                                out.extend_from_slice(b" 0 Td\n");
+                            if tz.is_none() {
+                                let orig_w = co.orig_width * co.font_size;
+                                let new_w = new_width(r, co.font_size);
+                                let delta = orig_w - new_w;
+                                if delta.abs() > 0.01 {
+                                    push_number(&mut out, delta);
+                                    out.extend_from_slice(b" 0 Td\n");
+                                }
                             }
                         }
                     }
@@ -674,7 +714,20 @@ pub(crate) fn rewrite_content_stream(
 
 /// Emit the font-switch + replacement-text part of a cross-operator replacement.
 /// (Does NOT emit prefix, suffix, or width compensation — those are handled by the caller.)
-fn emit_cross_op_replacement(out: &mut Vec<u8>, r: &ResolvedReplacement, co: &CrossOpMatch) {
+///
+/// If `tz_scale` is `Some(s)`, emits `s Tz` before the text and `100 Tz` after so the
+/// replacement occupies exactly the same horizontal space as the original.  The caller
+/// must then skip the normal `Td` width-compensation step.
+fn emit_cross_op_replacement(
+    out: &mut Vec<u8>,
+    r: &ResolvedReplacement,
+    co: &CrossOpMatch,
+    tz_scale: Option<f32>,
+) {
+    if let Some(scale) = tz_scale {
+        push_number(out, scale);
+        out.extend_from_slice(b" Tz\n");
+    }
     out.push(b'/');
     out.extend_from_slice(&r.new_pdf_font_name);
     out.push(b' ');
@@ -687,6 +740,9 @@ fn emit_cross_op_replacement(out: &mut Vec<u8>, r: &ResolvedReplacement, co: &Cr
     out.push(b' ');
     push_number(out, co.font_size);
     out.extend_from_slice(b" Tf\n");
+    if tz_scale.is_some() {
+        out.extend_from_slice(b"100 Tz\n");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,11 +1220,24 @@ fn find_cross_op_matches_inner(
                     let last_op = seg.chars[char_end - 1].op_idx;
 
                     if first_op != last_op {
-                        // Only accept cross-op matches where all intermediate ops are Tj/TJ.
-                        // This prevents matching across positional operators (Td, Tm, etc.).
+                        // Accept cross-op matches where all intermediate ops are Tj/TJ or
+                        // horizontal-only Td/TD (ty == 0). Horizontal Td ops are common in
+                        // per-character CJK PDFs; they must not shift the baseline.
                         let all_text = ops[first_op + 1..last_op]
                             .iter()
-                            .all(|o| matches!(o.keyword.as_slice(), b"Tj" | b"TJ"));
+                            .all(|o| match o.keyword.as_slice() {
+                                b"Tj" | b"TJ" => true,
+                                b"Td" | b"TD" => match (
+                                    o.operands.first(),
+                                    o.operands.get(1),
+                                ) {
+                                    (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
+                                        ty.abs() < 0.01
+                                    }
+                                    _ => false,
+                                },
+                                _ => false,
+                            });
 
                         if all_text {
                             let prefix_raw: Vec<u8> = seg.chars[..pos]
@@ -1518,5 +1587,89 @@ mod tests {
         assert!(keywords.contains(&b"Tf".as_slice()));
         assert!(keywords.contains(&b"Tj".as_slice()));
         assert!(keywords.contains(&b"ET".as_slice()));
+    }
+
+    // ── per-char Td+Tj matching (⑤-b) ──────────────────────────────────────
+
+    /// A PDF where each character has its own Tj with a horizontal Td between
+    /// each pair — common in Japanese per-character PDFs.
+    /// Verify that the cross-op matcher finds the match across Td operators.
+    #[test]
+    fn per_char_td_match_found() {
+        // Simulate: (A) Tj  12 0 Td  (B) Tj  12 0 Td  (C) Tj
+        // GIDs: A=0x0041, B=0x0042, C=0x0043  (2-byte CID encoding)
+        let stream = b"BT\n/F0 12 Tf\n<0041> Tj\n12 0 Td\n<0042> Tj\n12 0 Td\n<0043> Tj\nET\n";
+        let fi = make_font(&[(0x0041, 'A'), (0x0042, 'B'), (0x0043, 'C')], 2);
+        let mut fonts: HashMap<Vec<u8>, FontInfo> = HashMap::new();
+        fonts.insert(b"F0".to_vec(), fi);
+
+        let ops = parse_ops(stream);
+        let segs = collect_char_segments(&ops, &fonts);
+        // All three characters should be in one segment.
+        assert_eq!(segs.len(), 1);
+        let text: String = segs[0].chars.iter().map(|e| e.ch).collect();
+        assert_eq!(text, "ABC");
+
+        // The cross-op matcher should find "ABC" spanning the Td operators.
+        let r = TextReplacePreserveOp { old_text: "ABC".into(), new_text: "ABC".into() };
+        let matches = find_cross_op_matches_preserve(&ops, &[r], &fonts);
+        assert_eq!(matches.len(), 1, "expected 1 cross-op match across Td operators");
+        let m = &matches[0];
+        // first_op and last_op should differ (it's a cross-op match).
+        assert_ne!(m.first_op, m.last_op);
+    }
+
+    /// Vertical Td (ty ≠ 0) must NOT be allowed in cross-op matches.
+    #[test]
+    fn vertical_td_blocks_cross_op_match() {
+        // (A) Tj  0 -14 Td  (B) Tj — vertical Td means new line, not part of same match.
+        let stream = b"BT\n/F0 12 Tf\n<0041> Tj\n0 -14 Td\n<0042> Tj\nET\n";
+        let fi = make_font(&[(0x0041, 'A'), (0x0042, 'B')], 2);
+        let mut fonts: HashMap<Vec<u8>, FontInfo> = HashMap::new();
+        fonts.insert(b"F0".to_vec(), fi);
+
+        let ops = parse_ops(stream);
+        let r = TextReplacePreserveOp { old_text: "AB".into(), new_text: "AB".into() };
+        let matches = find_cross_op_matches_preserve(&ops, &[r], &fonts);
+        assert_eq!(matches.len(), 0, "vertical Td should block cross-op matching");
+    }
+
+    /// When a per-char stream is rewritten, the intermediate Td ops must be
+    /// suppressed and the output must not contain them.
+    ///
+    /// The intermediate Td uses a distinctive `7 0` offset so we can
+    /// distinguish it from any width-compensation Td emitted after the match.
+    #[test]
+    fn per_char_td_rewrite_suppresses_intermediate_tds() {
+        // CID stream: (日)Tj  7 0 Td  (本)Tj — replace "日本" → "AB"
+        // GIDs: 日=0x65E5, 本=0x672C; A=0x0041, B=0x0042
+        // Use a distinctive "7 0 Td" for the intermediate so we can tell it apart
+        // from any width-compensation Td the rewriter might emit later.
+        let stream = b"BT\n/F0 12 Tf\n<65E5> Tj\n7 0 Td\n<672C> Tj\nET\n";
+        let fi_orig = make_font(&[(0x65E5, '日'), (0x672C, '本')], 2);
+        let mut fonts: HashMap<Vec<u8>, FontInfo> = HashMap::new();
+        fonts.insert(b"F0".to_vec(), fi_orig);
+
+        let r = ResolvedReplacement {
+            old_text: "日本".into(),
+            new_text: "AB".into(),
+            new_pdf_font_name: b"HR0".to_vec(),
+            char_to_gid: [('A', 0x0041u16), ('B', 0x0042u16)].into_iter().collect(),
+            gid_to_advance: [(0x0041u16, 500u16), (0x0042u16, 500u16)].into_iter().collect(),
+            units_per_em: 1000,
+        };
+
+        let (out, _) = rewrite_content_stream(stream, &[r], &fonts);
+        let out_str = String::from_utf8_lossy(&out);
+
+        // The distinctive "7 0 Td" (intermediate) must NOT appear in output.
+        assert!(!out_str.contains("7 0 Td"), "intermediate Td should be suppressed: {out_str}");
+        // The replacement font should be used.
+        assert!(out_str.contains("HR0"), "replacement font HR0 should appear: {out_str}");
+        // The replacement GIDs should appear.
+        assert!(
+            out_str.contains("0041") && out_str.contains("0042"),
+            "replacement GIDs should appear: {out_str}"
+        );
     }
 }
