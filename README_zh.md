@@ -782,6 +782,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v0.7** *（当前）* | `set_encryption` — 写入密码保护 PDF；`add_squiggly` — 波浪下划线注释；页面框全类型支持（裁切框、修边框、出血框、媒体框读写） |
 | **v0.8** | FlowDocument 内联样式（`InlineSpan` 粗体/斜体/颜色合成效果）；`replace_text_resubset` — 含子集扩展的文本替换；MCP `pdf_replace_text` 保持版面的翻译流程和非 Identity `CIDToGIDMap` 诊断；`cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` 字体属性（`is_bold`、`is_italic`、`font_family`、`base_font`）；`detect_text_columns` + `ColumnZone` 用于分栏布局推断 |
+| **v1.4.2** | `harumi-ai` overlay 模式精度提升：逐行白色矩形尺寸（高度、宽度、下行深度覆盖）、精确基线 Y 坐标、`detect_text_columns` 多栏支持、基于粗体的标题检测、NaN 安全读取顺序排序 |
 
 ---
 

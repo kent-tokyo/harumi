@@ -11,8 +11,20 @@
 
 ### 変更 (harumi-ai)
 
+- **Overlay モードの per-line フォントサイズ** (`harumi-ai/src/overlay.rs`) —
+  行間ギャップから推定するグローバル `global_body_fs` ヒューリスティックを廃止し、
+  各翻訳行に `TextFragment.font_size` を直接使用するよう変更。
+  CJK 高密度レイアウトではグローバル推定値が実際のフォントサイズより小さくなるため、
+  翻訳後テキストが過小レンダリングされ、白矩形が短すぎる問題が発生していた。
+
+---
+
+## [1.4.2] — 2026-06-15
+
+### 変更 (harumi-ai)
+
 - **Overlay モードのレイアウト精度向上** (`harumi-ai/src/overlay.rs`) — レイアウト保持翻訳の
-  5項目を修正：
+  7項目を修正：
   - **白矩形の高さ** — グローバルな `body_font_size * 1.3` 定数ではなく、実際の行間から
     導出した per-line `line_height` を使用するよう変更。
   - **白矩形の幅** — `page_width - x - 20` 固定マージンではなく、テキストフラグメントの
@@ -28,6 +40,69 @@
     ヒューリスティックに加えた追加条件として活用。
   - **読み取り順ソート** — NaN 安全な `harumi::sort_by_reading_order()` に移行（カスタム
     インライン比較関数を廃止）。
+
+---
+
+## [1.4.1] — 2026-06-15
+
+### 追加
+
+- **`TextFragment::is_bold`** — フォント名が太字ウェイトを示す場合に `true`
+  （キーワード: Bold、Heavy、Black、Semibold、Demibold、Extrabold）。
+
+- **`TextFragment::is_italic`** — フォント名がイタリック・斜体を示す場合に `true`
+  （キーワード: Italic、Oblique、Slanted）。
+
+- **`TextFragment::font_family`** — PostScript `/BaseFont` エントリから派生したフォント
+  ファミリー名。サブセットプレフィックス（例: `"ABCDEF+"`）とスタイルサフィックスを除外。
+  `/BaseFont` がない場合は空文字列。
+
+- **`TextFragment::base_font`** — サブセットプレフィックスのみ除外した PostScript
+  完全名（例: `"Helvetica-BoldOblique"`、`"NotoSansJP-Regular"`）。
+  `/BaseFont` がない場合は空文字列。
+
+- **`detect_text_columns(fragments, page_width) -> Vec<ColumnZone>`** — テキストフラグメントの
+  X 密度ヒストグラムから段組レイアウトを推定。15pt 以上の連続空白ギャップを段区切りとして検出。
+  1段の場合はページ幅全体の `ColumnZone` を1件返す。
+
+- **`ColumnZone`** — `detect_text_columns` が返す構造体。`x_start: f32` と `x_end: f32`
+  フィールド（PDF ポイント座標）を持つ。
+
+---
+
+## [1.4.0] — 2026-06-14
+
+### 追加
+
+- **`PageHandle::scale_page_content(scale_x, scale_y)`** — 既存のページコンテンツの先頭に
+  `cm`（Concatenate Matrix）演算子を新しいコンテンツストリームとして挿入することで、
+  全コンテンツをスケーリング。A4 → A3 のようなコンテンツ比率を保ったページ拡大に有用。
+
+- **`PageHandle::resize_page_with_content(new_width, new_height)`** — ページの MediaBox を
+  変更し、既存コンテンツを比率に合わせてスケーリングする処理を1回の呼び出しで実行。
+
+- **`Document::overlay_from(other)`** — PDF Form XObject として `other` の各ページを
+  `self` の対応ページに重ね書き。ウォーターマーク・スタンプ・全ページグラフィックの
+  合成に有用。`self` のページ数が `other` より多い場合、超過ページはそのまま保持。
+
+- **`Document::clear_outline()`** — ドキュメントのすべてのブックマーク・目次エントリを
+  削除（未保存のペンディングブックマークと、読み込み済み PDF の `/Outlines` ツリーの両方）。
+
+- **`Document::attach_file(filename, data, mime_type)`** — 任意のファイルを PDF 添付ファイル
+  （`/EmbeddedFiles`）として埋め込む。FlateDecode で圧縮してから埋め込む。
+
+- **`Document::list_attachments()`** — ドキュメントに埋め込まれたすべての添付ファイルを
+  一覧表示。`Vec<AttachmentInfo>` を返す（ファイル名・サイズ・MIME タイプ）。
+
+- **`AttachmentInfo`** — `list_attachments()` が返す構造体。フィールド: `filename: String`、
+  `size: usize`、`mime_type: Option<String>`。
+
+### 修正
+
+- **`add_text_with_opacity` と `add_text_with_rotation` が docs.rs に表示されるように** —
+  これらのメソッドは `#[cfg(feature = "draw")]` の impl ブロック内で定義されていたため、
+  デフォルト features でビルドする docs.rs には表示されていなかった。
+  全 features で docs.rs をビルドするよう `[package.metadata.docs.rs]` を Cargo.toml に追加。
 
 ---
 

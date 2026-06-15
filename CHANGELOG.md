@@ -11,7 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (harumi-ai)
 
-- **Overlay mode layout accuracy** (`harumi-ai/src/overlay.rs`) — five fixes for
+- **Per-line font size in overlay mode** (`harumi-ai/src/overlay.rs`) — replaced the
+  global `global_body_fs` heuristic (derived from inter-line gaps) with
+  `TextFragment.font_size` for each translated line. The global estimate was
+  systematically smaller than the actual font size in dense CJK layouts, causing
+  translated text to render too small and white cover rectangles to be too short.
+
+---
+
+## [1.4.2] — 2026-06-15
+
+### Changed (harumi-ai)
+
+- **Overlay mode layout accuracy** (`harumi-ai/src/overlay.rs`) — seven fixes for
   layout-preserving PDF translation:
   - **White rect height** now uses per-line `line_height` (derived from actual inter-line
     gap) instead of the global `body_font_size * 1.3` constant.

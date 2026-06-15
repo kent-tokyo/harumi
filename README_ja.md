@@ -900,6 +900,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v0.7** *(current)* | `set_encryption` — パスワード保護付き PDF の書き出し；`add_squiggly` — 波線下線注釈；ページボックス全種対応（`crop_box`・`trim_box`・`bleed_box`・`media_box` 読み書き） |
 | **v0.8** | FlowDocument インラインスタイル（太字/イタリック/カラースパン）；`replace_text_resubset` — サブセット拡張付きテキスト置換；MCP `pdf_replace_text` のレイアウト保持翻訳ワークフローと非Identity `CIDToGIDMap` 診断；HTML インラインスタイル対応（`<strong>`・`<em>`・`<span style="color">`・`<a href>`） |
 | **v1.4.1** | `TextFragment` フォント属性（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` による段組レイアウト推定 |
+| **v1.4.2** | `harumi-ai` Overlay モード精度向上：per-line 白矩形サイジング（高さ・幅・ディセンダー被覆）、ベースライン Y 座標の正確な配置、`detect_text_columns` による複数段組対応、太字による見出し検出、NaN 安全な読み取り順ソート |
 
 ---
 

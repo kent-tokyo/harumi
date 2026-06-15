@@ -783,6 +783,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v0.7** *（현재）* | `set_encryption` — 암호화된 PDF 저장; `add_squiggly` — 물결 밑줄 주석; 페이지 박스 전체 지원（크롭·트림·블리드·미디어 박스 읽기/쓰기） |
 | **v0.8** | FlowDocument 인라인 스타일（`InlineSpan` 굵기/기울임/색상 합성 효과）; `replace_text_resubset` — 서브셋 확장 포함 텍스트 교체; MCP `pdf_replace_text` 레이아웃 유지 번역 워크플로와 비 Identity `CIDToGIDMap` 진단; `cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` 폰트 속성（`is_bold`・`is_italic`・`font_family`・`base_font`）；`detect_text_columns` + `ColumnZone` 단 레이아웃 추론 |
+| **v1.4.2** | `harumi-ai` overlay 모드 정확도 향상：행별 흰색 사각형 크기（높이·너비·디센더 피복）、정확한 기준선 Y 배치、`detect_text_columns` 다단 지원、굵기 기반 제목 감지、NaN 안전 읽기 순서 정렬 |
 
 ---
 

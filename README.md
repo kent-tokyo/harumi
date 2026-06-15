@@ -929,6 +929,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v0.7** *(current)* | `set_encryption` — write password-protected PDFs; `add_squiggly` — wavy underline annotation; full page-box API (`crop_box`, `trim_box`, `bleed_box`, `media_box` read/write) |
 | **v0.8** | `replace_text_resubset` — expand font subset at replacement time (any language); MCP `pdf_replace_text` layout-preserving translation workflow and non-Identity `CIDToGIDMap` diagnostics; `InlineSpan` bold/italic/color in `FlowDocument` + HTML `<strong>`/`<em>`/`<span>` inline styles; nested `/Pages` tree inherited-attribute fix; TTC E2E tests; `wasm-pack test --node` CI; `cargo semver-checks` CI |
 | **v1.4.1** | `TextFragment` font attributes (`is_bold`, `is_italic`, `font_family`, `base_font`); `detect_text_columns` + `ColumnZone` for column-layout inference |
+| **v1.4.2** | `harumi-ai` overlay mode accuracy: per-line white-rect sizing (height, width, descender coverage), exact baseline Y placement, multi-column layout via `detect_text_columns`, bold-based heading detection, NaN-safe reading-order sort |
 
 ---
 
