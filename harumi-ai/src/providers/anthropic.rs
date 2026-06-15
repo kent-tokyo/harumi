@@ -75,7 +75,7 @@ impl AnthropicTranslatorBuilder {
             endpoint: self.endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
             api_key: self.api_key.unwrap_or_default(),
             model: self.model.unwrap_or_else(|| DEFAULT_MODEL.to_owned()),
-            max_tokens: self.max_tokens.unwrap_or(4096),
+            max_tokens: self.max_tokens.unwrap_or(16_000),
             system_prompt_template: self.system_prompt_template.unwrap_or_default(),
         }
     }

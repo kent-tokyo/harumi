@@ -16,6 +16,7 @@ pub(crate) fn translation_system_prompt(target_lang: &str, source_lang: Option<&
          - Do not wrap the JSON in markdown fences.\n\
          - Do not add commentary or extra keys.\n\
          - Return the same number of pages and blocks as the input.\n\
+         - Escape any double-quote characters inside `text` values as \\\".\n\
          - Output shape:\n\
            {{\"pages\":[{{\"blocks\":[{{\"id\":<number>,\"text\":\"<translated>\"}}]}}]}}"
     )
@@ -38,6 +39,7 @@ pub(crate) fn layout_correction_prompt(
          - Preserve every `id` and `page`.\n\
          - Do not change lines that are not listed.\n\
          - Do not add markdown fences, explanations, or extra keys.\n\
+         - Escape any double-quote characters inside `text` values as \\\".\n\
          - Output shape:\n\
            {{\"corrections\":[{{\"id\":<number>,\"page\":<number>,\"text\":\"<shorter translation>\"}}]}}\n\n\
          Overflowing lines:\n\

@@ -102,10 +102,15 @@ pub(crate) fn pages_to_json(pages: &[PageContent]) -> Result<String> {
 /// Deserialise the LLM response into per-page translated block lists.
 ///
 /// Returns one `Vec<TranslatedBlock>` per page, in the same order as the input.
-/// Strips markdown code fences before parsing.
+/// Strips markdown code fences before parsing. On failure, attempts to repair
+/// unescaped double-quotes inside `"text"` string values before retrying.
 pub(crate) fn json_to_translated_pages(raw: &str) -> Result<Vec<Vec<TranslatedBlock>>> {
     let s = strip_code_fence(raw);
-    serde_json::from_str::<TranslatedBatchJson>(s)
+    if let Ok(b) = serde_json::from_str::<TranslatedBatchJson>(s) {
+        return Ok(b.pages.into_iter().map(|p| p.blocks).collect());
+    }
+    let repaired = repair_json_strings(s);
+    serde_json::from_str::<TranslatedBatchJson>(&repaired)
         .map(|b| b.pages.into_iter().map(|p| p.blocks).collect())
         .map_err(|e| {
             Error::Translator(format!(
@@ -130,4 +135,110 @@ fn strip_code_fence(s: &str) -> &str {
     let s = s.strip_prefix("```").unwrap_or(s);
     let s = s.strip_suffix("```").unwrap_or(s);
     s.trim()
+}
+
+/// Repair unescaped double-quote characters inside JSON `"text":"..."` string values.
+///
+/// LLMs occasionally omit the `\"` escaping when the translated text itself
+/// contains double-quotes (e.g. section references like `"8 Safety measures"`).
+/// This function uses a character-level scan to detect and escape interior `"`
+/// characters whose position cannot be the closing quote of the string value.
+///
+/// A `"` is treated as the *closing* quote when the immediately following
+/// non-whitespace is `}`, `]`, or `,"` (the start of the next key). Everything
+/// else is treated as an interior quote and escaped to `\"`.
+fn repair_json_strings(s: &str) -> String {
+    const MARKER: &str = "\"text\":\"";
+    let mut result = String::with_capacity(s.len() + 64);
+    let mut rest = s;
+
+    while let Some(pos) = rest.find(MARKER) {
+        result.push_str(&rest[..pos + MARKER.len()]);
+        let after_open = &rest[pos + MARKER.len()..];
+
+        let mut value = String::new();
+        let mut consumed = after_open.len();
+        let mut prev_backslash = false;
+
+        for (i, c) in after_open.char_indices() {
+            if prev_backslash {
+                value.push('\\');
+                value.push(c);
+                prev_backslash = false;
+                continue;
+            }
+            match c {
+                '\\' => { prev_backslash = true; }
+                '"' => {
+                    let tail = after_open[i + c.len_utf8()..].trim_start();
+                    let is_close = tail.starts_with('}')
+                        || tail.starts_with(']')
+                        || tail.starts_with(",\"")
+                        || tail.is_empty();
+                    if is_close {
+                        consumed = i + c.len_utf8();
+                        break;
+                    }
+                    value.push('\\');
+                    value.push('"');
+                }
+                _ => { value.push(c); }
+            }
+        }
+
+        result.push_str(&value);
+        result.push('"');
+        rest = &after_open[consumed..];
+    }
+
+    result.push_str(rest);
+    result
+}
+
+#[cfg(test)]
+mod repair_tests {
+    use super::repair_json_strings;
+
+    #[test]
+    fn no_change_when_already_valid() {
+        let s = r#"{"pages":[{"blocks":[{"id":1,"text":"hello world"}]}]}"#;
+        let r = repair_json_strings(s);
+        assert!(serde_json::from_str::<serde_json::Value>(&r).is_ok());
+        assert!(r.contains("hello world"));
+    }
+
+    #[test]
+    fn escapes_interior_quotes_in_text_value() {
+        // Claude output where section name is wrapped in unescaped quotes
+        let broken = r#"{"pages":[{"blocks":[{"id":9,"text":"（参照"8 防護措置"章节）"}]}]}"#;
+        let repaired = repair_json_strings(broken);
+        let v: serde_json::Value = serde_json::from_str(&repaired)
+            .expect("repaired JSON should parse");
+        let text = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
+        assert!(text.contains('"'), "interior quotes should be preserved in value: {text}");
+        assert!(text.starts_with('（'));
+        assert!(text.ends_with('）'));
+    }
+
+    #[test]
+    fn handles_multiple_blocks() {
+        let broken = r#"{"pages":[{"blocks":[{"id":1,"text":"see "section 1""},{"id":2,"text":"plain text"}]}]}"#;
+        let repaired = repair_json_strings(broken);
+        let v: serde_json::Value = serde_json::from_str(&repaired)
+            .expect("repaired JSON should parse");
+        let t1 = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
+        let t2 = v["pages"][0]["blocks"][1]["text"].as_str().unwrap();
+        assert!(t1.contains('"'));
+        assert_eq!(t2, "plain text");
+    }
+
+    #[test]
+    fn passes_through_already_escaped_quotes() {
+        let valid = r#"{"pages":[{"blocks":[{"id":1,"text":"say \"hello\""}]}]}"#;
+        let repaired = repair_json_strings(valid);
+        let v: serde_json::Value = serde_json::from_str(&repaired)
+            .expect("repaired JSON should parse");
+        let text = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "say \"hello\"");
+    }
 }

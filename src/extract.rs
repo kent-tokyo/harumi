@@ -791,10 +791,23 @@ fn collect_fonts_inner(
     doc: &lopdf::Document,
     page_id: ObjectId,
 ) -> Option<HashMap<Vec<u8>, FontInfo>> {
-    let page_dict = doc.get_object(page_id).ok()?.as_dict().ok()?;
-    let resources_obj = page_dict.get(b"Resources").ok()?;
-    let resources_dict = resolve_dict(doc, resources_obj)?;
-    Some(collect_fonts_from_resources(doc, resources_dict))
+    // PDF spec §7.7.3: /Resources may be inherited from any ancestor /Pages node.
+    // Walk up the /Parent chain until we find a node that carries /Resources.
+    let mut current_id = page_id;
+    loop {
+        let obj = doc.get_object(current_id).ok()?;
+        let dict = obj.as_dict().ok()?;
+        if let Ok(resources_obj) = dict.get(b"Resources") {
+            let resources_dict = resolve_dict(doc, resources_obj)?;
+            return Some(collect_fonts_from_resources(doc, resources_dict));
+        }
+        // No /Resources on this node — climb to the parent Pages node.
+        let parent_ref = dict.get(b"Parent").ok()?;
+        let Object::Reference(parent_id) = parent_ref else {
+            return None;
+        };
+        current_id = *parent_id;
+    }
 }
 
 fn collect_font_dict_entries(
