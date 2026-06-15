@@ -33,6 +33,8 @@ struct OverlayLine {
     /// Original fragment texts (individual Tj runs) for text-layer blanking.
     #[allow(dead_code)]
     pub fragment_texts: Vec<String>,
+    /// Font size of the original text (PDF points), derived from TextFragment.font_size.
+    pub font_size: f32,
 }
 
 struct OverlayPage {
@@ -54,6 +56,8 @@ struct RawLine {
     fragments: Vec<String>,
     /// True if any fragment on this line is bold.
     is_bold: bool,
+    /// Max font_size across fragments on this line (PDF points).
+    font_size: f32,
 }
 
 /// Group a slice of fragments (already sorted top-to-bottom within a column)
@@ -63,18 +67,19 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
     let mut raw_lines: Vec<RawLine> = Vec::new();
     for frag in frags {
         let frag_right = frag.x + frag.width.max(0.0);
-        if let Some(last) = raw_lines.last_mut() {
-            if (frag.y - last.y).abs() <= Y_TOL {
-                if !last.text.is_empty() && !last.text.ends_with(' ') {
-                    last.text.push(' ');
-                }
-                last.text.push_str(&frag.text);
-                last.x = last.x.min(frag.x);
-                last.right = last.right.max(frag_right);
-                last.fragments.push(frag.text.clone());
-                last.is_bold = last.is_bold || frag.is_bold;
-                continue;
+        if let Some(last) = raw_lines.last_mut()
+            && (frag.y - last.y).abs() <= Y_TOL
+        {
+            if !last.text.is_empty() && !last.text.ends_with(' ') {
+                last.text.push(' ');
             }
+            last.text.push_str(&frag.text);
+            last.x = last.x.min(frag.x);
+            last.right = last.right.max(frag_right);
+            last.fragments.push(frag.text.clone());
+            last.is_bold = last.is_bold || frag.is_bold;
+            last.font_size = last.font_size.max(frag.font_size);
+            continue;
         }
         raw_lines.push(RawLine {
             x: frag.x,
@@ -84,6 +89,7 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             text: frag.text.clone(),
             fragments: vec![frag.text.clone()],
             is_bold: frag.is_bold,
+            font_size: frag.font_size,
         });
     }
     raw_lines
@@ -177,6 +183,7 @@ fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
                     page_width,
                     text: rl.text.clone(),
                     fragment_texts: rl.fragments.clone(),
+                    font_size: rl.font_size,
                 }
             })
             .collect();
@@ -370,14 +377,14 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
     let mut reports: Vec<PlacedLineReport> = Vec::new();
     for overlay_page in &overlay_pages {
         let page_num = overlay_page.page_num;
-        let body_fs = global_body_fs;
         let Some(translations) = page_translations.get(&page_num) else { continue };
 
         for (line_idx, (line, trans_text)) in overlay_page.lines.iter().zip(translations.iter()).enumerate() {
             let text = trans_text.trim();
             if text.is_empty() { continue; }
             let max_fs = line.line_height * 0.85;
-            let desired = if line.is_heading { (body_fs * 1.4).min(max_fs) } else { body_fs.min(max_fs) };
+            let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
+            let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
             let avail_w = (line.col_right - line.x).max(50.0);
             let text_w_desired = measure_text_width(text, &face, desired);
             let actual_fs = fit_font_size(text, &face, desired, avail_w);
@@ -402,10 +409,10 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
 
     // Apply corrections back into page_translations.
     for ((page_num, line_idx), corrected_text) in &corrections {
-        if let Some(texts) = page_translations.get_mut(page_num) {
-            if let Some(slot) = texts.get_mut(*line_idx) {
-                *slot = corrected_text.clone();
-            }
+        if let Some(texts) = page_translations.get_mut(page_num)
+            && let Some(slot) = texts.get_mut(*line_idx)
+        {
+            *slot = corrected_text.clone();
         }
     }
 
@@ -415,12 +422,10 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
 
     // Compute descender depth from the actual font (once, reused per line).
     let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
-        .max(0.05)
-        .min(0.35);
+        .clamp(0.05, 0.35);
 
     for overlay_page in &overlay_pages {
         let page_num = overlay_page.page_num;
-        let body_fs = global_body_fs;
         let translated_texts = page_translations.get(&page_num);
 
         // First pass: white rectangles over original text.
@@ -429,8 +434,8 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
         }
         for line in &overlay_page.lines {
             let x = line.x - 1.0;
-            // Extend below the baseline by the font's actual descender depth.
-            let below = body_fs * descender_ratio;
+            // Extend below the baseline by the font's actual descender depth (per-line).
+            let below = line.font_size.max(global_body_fs) * descender_ratio;
             let y = line.y - below;
             // Width: cover from left edge to actual text right edge + 2pt padding.
             let w = (line.right - x + 2.0).max(10.0);
@@ -445,7 +450,8 @@ pub async fn translate_pdf_overlay(pdf_bytes: &[u8], options: TranslateOptions) 
                 let text = trans_text.trim();
                 if text.is_empty() { continue; }
                 let max_fs = line.line_height * 0.85;
-                let desired = if line.is_heading { (body_fs * 1.4).min(max_fs) } else { body_fs.min(max_fs) };
+                let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
+                let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
                 let avail_w = (line.col_right - line.x).max(50.0);
                 let scaled = fit_font_size(text, &face, desired, avail_w).max(desired * 0.95);
                 // Place translated text at the original baseline Y (no arbitrary shift).
