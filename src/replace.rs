@@ -1933,6 +1933,54 @@ pub(crate) fn diagnose_match_failure(
                 return "vertical-Td-or-Tm";
             }
         }
+        // Cross-BT view: Chrome/Skia Type3 fonts emit one character per BT/Tj/ET
+        // block, so segments never hold more than one char. Concatenate all decoded
+        // chars (tracking the active font across BT boundaries) and check for
+        // the target string.
+        {
+            let mut cur_font: Vec<u8> = Vec::new();
+            let mut cross_bt_chars: Vec<CharEntry> = Vec::new();
+            for (op_idx, op) in ops.iter().enumerate() {
+                match op.keyword.as_slice() {
+                    b"Tf" => {
+                        if let Some(Operand::Name(name)) = op.operands.first() {
+                            cur_font = name.clone();
+                        }
+                    }
+                    b"Tj" => {
+                        if let Some(Operand::Str(b)) = op.operands.first() {
+                            push_chars_from_bytes(
+                                &mut cross_bt_chars,
+                                b,
+                                op_idx,
+                                &cur_font,
+                                &existing_fonts,
+                            );
+                        }
+                    }
+                    b"TJ" => {
+                        if let Some(Operand::Array(arr)) = op.operands.first() {
+                            for elem in arr {
+                                if let ArrElem::Str(b) = elem {
+                                    push_chars_from_bytes(
+                                        &mut cross_bt_chars,
+                                        b,
+                                        op_idx,
+                                        &cur_font,
+                                        &existing_fonts,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let cross_bt: String = cross_bt_chars.iter().map(|e| e.ch).collect();
+            if cross_bt.contains(old_text) {
+                return "type3-char-per-tj";
+            }
+        }
     }
     "text-not-in-stream"
 }

@@ -608,65 +608,97 @@ pub(crate) fn extract_text_runs_from_page(
     Ok(fragments)
 }
 
-/// Recursively extract text from Form XObjects referenced in the page resources.
+/// Extract text from Form XObjects referenced in the page content.
 ///
-/// `depth` guards against infinite recursion (limit: 5 levels).  Text coordinates
-/// are transformed to page space by composing `carry.ctm` (the page-level CTM from
-/// the content stream) with each XObject's `/Matrix`.
+/// When the page content stream contains explicit `Do` invocations (recorded in
+/// `carry.do_ctm_map`), each XObject is processed with the CTM that was active at
+/// its specific `Do` call.  This fixes the multi-XObject case where a single
+/// accumulated CTM would be applied to all objects.
+///
+/// When no `Do` operators were seen (legacy / test PDFs that put content in XObjects
+/// without an explicit invocation in the main stream), we fall back to processing
+/// every Form XObject in the inherited /Resources dict with the current CTM.
 fn extract_text_from_xobjects(
     doc: &lopdf::Document,
     page_id: ObjectId,
     carry: &mut ParseCarryState,
     out: &mut Vec<TextFragment>,
-    depth: u8,
+    _depth: u8,
 ) {
-    if depth > 5 {
-        return;
-    }
-    // Save the parent CTM so we can restore it after each XObject.
-    let parent_ctm = carry.ctm;
+    let saved_ctm = carry.ctm;
 
-    // Walk up /Parent chain to find /Resources/XObject (PDF §7.7.3 inheritance).
-    // Chrome/Skia PDFs commonly place /Resources on an ancestor /Pages node rather
-    // than on each page dict, so a direct page_dict.get(b"Resources") would miss them.
-    let xobj_ids = collect_inherited_xobject_ids(doc, page_id);
+    if !carry.do_ctm_map.is_empty() {
+        // Per-Do CTM path: process only explicitly invoked XObjects, each with its
+        // own CTM captured at the time of the Do operator.
+        let xobj_name_map = collect_inherited_xobject_name_map(doc, page_id);
+        let do_ctm_map = std::mem::take(&mut carry.do_ctm_map);
 
-    for xobj_id in xobj_ids {
-        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
-        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
-
-        let is_form = xobj_stream.dict.get(b"Subtype").ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
-            == Some(b"Form");
-        if !is_form {
-            continue;
+        for (xobj_name, do_ctm) in &do_ctm_map {
+            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else { continue };
+            if let Some(content) = decode_form_xobject(doc, xobj_id) {
+                let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                let xobj_matrix = xobject_matrix(doc, xobj_id);
+                carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
+                parse_content_stream(&content, &xobj_fonts, carry, out);
+            }
         }
 
-        let content = if xobj_stream.dict.get(b"Filter").is_ok() {
-            let mut owned = xobj_stream.clone();
-            if owned.decompress().is_err() {
-                continue;
+        carry.do_ctm_map = do_ctm_map;
+    } else {
+        // Fallback path: no Do operators observed.  Process all Form XObjects from
+        // the inherited /Resources dict using the identity (or current) CTM.
+        let xobj_ids = collect_inherited_xobject_ids(doc, page_id);
+        for xobj_id in xobj_ids {
+            if let Some(content) = decode_form_xobject(doc, xobj_id) {
+                let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                let xobj_matrix = xobject_matrix(doc, xobj_id);
+                carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
+                parse_content_stream(&content, &xobj_fonts, carry, out);
             }
-            owned.content
-        } else {
-            xobj_stream.content.clone()
-        };
-
-        // Use the XObject's own resource fonts, falling back to page fonts.
-        let xobj_fonts = xobj_stream.dict.get(b"Resources").ok()
-            .and_then(|res_ref| resolve_dict(doc, res_ref))
-            .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
-            .unwrap_or_else(|| collect_fonts(doc, page_id));
-
-        // Compose page CTM with the XObject's own /Matrix to get the effective
-        // transform for text inside this XObject.
-        let xobj_matrix = read_matrix(&xobj_stream.dict);
-        carry.ctm = multiply_ctm(parent_ctm, xobj_matrix);
-
-        parse_content_stream(&content, &xobj_fonts, carry, out);
+        }
     }
 
-    carry.ctm = parent_ctm;
+    carry.ctm = saved_ctm;
+}
+
+fn decode_form_xobject(doc: &lopdf::Document, xobj_id: ObjectId) -> Option<Vec<u8>> {
+    let xobj_obj = doc.get_object(xobj_id).ok()?;
+    let xobj_stream = xobj_obj.as_stream().ok()?;
+    let is_form = xobj_stream.dict.get(b"Subtype").ok()
+        .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
+        == Some(b"Form");
+    if !is_form {
+        return None;
+    }
+    if xobj_stream.dict.get(b"Filter").is_ok() {
+        let mut owned = xobj_stream.clone();
+        owned.decompress().ok()?;
+        Some(owned.content)
+    } else {
+        Some(xobj_stream.content.clone())
+    }
+}
+
+fn xobject_fonts(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    xobj_id: ObjectId,
+) -> HashMap<Vec<u8>, crate::extract::FontInfo> {
+    doc.get_object(xobj_id)
+        .ok()
+        .and_then(|o| o.as_stream().ok())
+        .and_then(|s| s.dict.get(b"Resources").ok())
+        .and_then(|res_ref| resolve_dict(doc, res_ref))
+        .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
+        .unwrap_or_else(|| collect_fonts(doc, page_id))
+}
+
+fn xobject_matrix(doc: &lopdf::Document, xobj_id: ObjectId) -> [f32; 6] {
+    doc.get_object(xobj_id)
+        .ok()
+        .and_then(|o| o.as_stream().ok())
+        .map(|s| read_matrix(&s.dict))
+        .unwrap_or(IDENTITY_CTM)
 }
 
 // ---------------------------------------------------------------------------
@@ -829,6 +861,44 @@ pub(crate) fn collect_inherited_xobject_ids(
         current_id = *parent_id;
     }
     vec![]
+}
+
+/// Like `collect_inherited_xobject_ids` but returns a `name → ObjectId` map so that
+/// `extract_text_from_xobjects` can look up XObjects by the name used in a `Do` operator.
+fn collect_inherited_xobject_name_map(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> HashMap<Vec<u8>, ObjectId> {
+    let mut current_id = page_id;
+    while let Ok(obj) = doc.get_object(current_id) {
+        let Some(dict) = obj.as_dict().ok() else { break };
+        if let Ok(res_obj) = dict.get(b"Resources") {
+            let map = resolve_dict(doc, res_obj)
+                .and_then(|res_dict| {
+                    res_dict.get(b"XObject").ok().and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
+                })
+                .map(|xobj_dict| {
+                    xobj_dict
+                        .iter()
+                        .filter_map(|(name, v)| {
+                            if let Object::Reference(id) = v {
+                                Some((name.clone(), *id))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<HashMap<Vec<u8>, ObjectId>>()
+                });
+            if let Some(m) = map {
+                return m;
+            }
+            break;
+        }
+        let Ok(parent_ref) = dict.get(b"Parent") else { break };
+        let Object::Reference(parent_id) = parent_ref else { break };
+        current_id = *parent_id;
+    }
+    HashMap::new()
 }
 
 fn collect_font_dict_entries(
@@ -2302,13 +2372,22 @@ fn read_matrix(dict: &lopdf::Dictionary) -> [f32; 6] {
 struct ParseCarryState {
     cur_color: [f32; 3],
     cur_render_mode: u8,
-    /// Accumulated CTM from the page content stream, passed into XObject extraction.
+    /// CTM at the most recent `Do` invocation (used as fallback by XObject extraction).
     ctm: [f32; 6],
+    /// Per-Do CTM map: each entry is `(xobj_name, ctm_at_do_time)` in stream order.
+    /// `extract_text_from_xobjects` uses this so every XObject gets the CTM that was
+    /// active at the specific `Do` that invoked it, not the last one in the stream.
+    do_ctm_map: Vec<(Vec<u8>, [f32; 6])>,
 }
 
 impl Default for ParseCarryState {
     fn default() -> Self {
-        Self { cur_color: [0.0, 0.0, 0.0], cur_render_mode: 0, ctm: IDENTITY_CTM }
+        Self {
+            cur_color: [0.0, 0.0, 0.0],
+            cur_render_mode: 0,
+            ctm: IDENTITY_CTM,
+            do_ctm_map: Vec::new(),
+        }
     }
 }
 
@@ -2421,11 +2500,14 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"Do" => {
-                    // Record the CTM that is active at this invocation so that
-                    // extract_text_from_xobjects() can apply it when parsing the XObject.
-                    // For Chrome/Skia PDFs: q → cm → Do → Q, so the active CTM here is
-                    // the scaled/flipped matrix, not the identity base.
-                    state.ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                    let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                    state.ctm = ctm;
+                    // Record the XObject name (top of stack) paired with the CTM active
+                    // at this invocation so extract_text_from_xobjects() can apply the
+                    // correct per-Do CTM rather than the last one in the stream.
+                    if let Some(Token::Name(name)) = stack.last() {
+                        state.do_ctm_map.push((name.clone(), ctm));
+                    }
                     stack.clear();
                 }
                 b"cm" => {

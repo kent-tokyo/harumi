@@ -936,6 +936,10 @@ impl Document {
             let xobj_name = format!("OVRL{i}");
             add_xobject_to_resources(&mut self.inner, self_page_id, xobj_name.as_bytes(), form_id)?;
 
+            // Isolate the existing page CTM before adding the overlay, so any
+            // unbalanced `cm` in the existing content doesn't affect the overlay.
+            wrap_page_contents_in_q_q(&mut self.inner, self_page_id)?;
+
             // Append the Do operator to invoke the overlay.
             let do_bytes = format!("/{xobj_name} Do\n").into_bytes();
             let do_stream_id = self
@@ -5650,6 +5654,26 @@ fn append_to_contents(
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// Wraps all existing content streams of a page in a `q`/`Q` pair to isolate any
+/// unbalanced `cm` operators from affecting subsequently appended streams.
+fn wrap_page_contents_in_q_q(doc: &mut lopdf::Document, page_id: ObjectId) -> Result<()> {
+    let has_contents = doc
+        .get_object(page_id)
+        .ok()
+        .and_then(|o| o.as_dict().ok())
+        .and_then(|d| d.get(b"Contents").ok().cloned())
+        .is_some();
+    if !has_contents {
+        return Ok(());
+    }
+    let q_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), b"q\n".to_vec())));
+    let big_q_id =
+        doc.add_object(Object::Stream(Stream::new(Dictionary::new(), b"Q\n".to_vec())));
+    prepend_to_contents(doc, page_id, q_id)?;
+    append_to_contents(doc, page_id, big_q_id)?;
     Ok(())
 }
 
