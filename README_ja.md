@@ -209,7 +209,7 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 
 ```toml
 [dependencies]
-harumi = "1.1"
+harumi = "1.5"
 ```
 
 ### CJK フォント入手方法
@@ -910,7 +910,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.3** | 継承 `/Resources` 経由の Form XObject 発見を修正（Chrome/Skia PDF — `extract_text_from_xobjects` 親チェーン走査）；`replace_text()` が Form XObject コンテンツストリームも書き換えるよう対応し `harumi-ai` InPlace モードが Chrome/Skia PDF で動作 |
 | **v1.5.4** | Type3 フォントのテキスト抽出対応（`collect_font_dict_entries` に `/Subtype /Type3` を追加）；Type3 フォントのみを使う Chrome/Skia PDF での翻訳出力ゼロ問題を修正 |
 | **v1.5.5** | Overlay CTM 座標変換を修正 — `parse_content_stream` が `q`/`Q`/`cm` を追跡し `TextFragment` 座標をページ空間へ変換；Chrome/Skia PDF（スケール + Y 反転 CTM）での Overlay テキスト配置が正確に |
-| **v1.5.6** | 日本語変更履歴を更新 — クロス `Tf` テキストマッチング・`TranslationMode::InPlace`・`TranslateOptions::cover_color`・合成太字レンダリングを正式記載（英語版では v1.4.5 で文書化済み） |
+| **v1.5.6** | Chrome/Skia PDF 3件のバグ修正：(1) `overlay_from` が既存ページコンテンツを `q`/`Q` で包み、不均衡な `cm` 演算子を分離；(2) `extract_text_from_xobjects` が `ParseCarryState.do_ctm_map` で per-`Do` CTM を追跡し、最後の累積 CTM ではなく各 XObject 固有の CTM を適用；(3) `diagnose_match_failure` に cross-BT スキャンを追加し、BT/ET をまたぐ Type3 フォントテキストを `"type3-char-per-tj"` として報告 |
 
 ---
 

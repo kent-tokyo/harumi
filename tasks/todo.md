@@ -1653,7 +1653,44 @@ Form XObject 抽出時にその CTM を適用する。
 
 ### 残課題（P1: Type3 InPlace 置換）
 
-- [ ] InPlace モードで Type3 フォントのテキスト置換が失敗する原因を特定
-  - デバッグビルドで `[harumi-ai] fallback reason=` ログを確認
-  - 原因候補: `"vertical-Td-or-Tm"`（文字ごとの Td 位置指定）、`"text-not-in-stream"`、`"cross-Tf"`
-  - P0 の Overlay CTM 修正で視覚品質は改善済み。P1 は追加改善として優先度低
+- [x] InPlace モードで Type3 フォントのテキスト置換が失敗する原因 → `"type3-char-per-tj"` として分類済み（v1.5.6）
+
+---
+
+## バグ修正（v1.5.6）— 2026-06-16
+
+### Chrome/Skia 生成 PDF のオーバーレイ・XObject CTM バグ修正（完了）
+
+**修正 1: overlay_from のベースページ CTM 分離**
+
+Chrome/Skia が生成した PDF のコンテンツストリームは `cm` 演算子が不均衡なことがある（`q`/`Q` で閉じられない）。
+このため `overlay_from()` で重ねたオーバーレイの座標が既存コンテンツの変換行列の影響を受けていた。
+
+- [x] `wrap_page_contents_in_q_q()` ヘルパー追加（`src/document.rs`）
+- [x] `overlay_from()` でオーバーレイ追加前に既存ページコンテンツを `q`/`Q` で包む
+
+**修正 2: Form XObject の per-Do CTM 追跡**
+
+旧実装は `carry.ctm`（最後に見た CTM）を全 Form XObject に適用していた。
+複数の `Do` 演算子が異なる CTM で XObject を呼び出す場合（Chrome/Skia の典型パターン）、
+全 XObject に最後の CTM が適用され、テキスト座標が誤って変換されていた。
+
+- [x] `ParseCarryState.do_ctm_map: HashMap<Vec<u8>, [f32; 6]>` フィールド追加
+- [x] `parse_content_stream()` の `Do` アームで `(xobj_name, current_ctm)` を `do_ctm_map` に記録
+- [x] `extract_text_from_xobjects()` を per-Do CTM パスとフォールバックパスに分岐
+  - do_ctm_map が非空 → 各 XObject を Do 時の CTM で個別に処理
+  - do_ctm_map が空 → 従来の Resources スキャンフォールバック（テスト用 PDF 等）
+- [x] 新ヘルパー関数: `decode_form_xobject()` / `xobject_fonts()` / `xobject_matrix()` / `collect_inherited_xobject_name_map()`
+
+**修正 3: diagnose_match_failure の cross-BT スキャン**
+
+`diagnose_match_failure()` が Type3 フォントの1文字1Tj形式（BT/ET をまたぐ連続 Tj）を認識できず、
+常に `"text-not-in-stream"` を返していた。
+
+- [x] cross-BT スキャンを追加（`src/replace.rs`）: BT/ET 境界をまたいでアクティブフォントを追跡し、全 Tj 出力を連結
+- [x] ターゲット文字列が cross-BT で見つかった場合 `"type3-char-per-tj"` を返す
+- [x] harumi-ai が Type3 フォントの InPlace 失敗を正確に識別し、Overlay フォールバックを選択できるようになった
+
+### テスト（v1.5.6 完了時点）
+
+テスト追加なし（内部リファクタリングのみ）。デフォルト features で 310 件、--all-features で 407 件。

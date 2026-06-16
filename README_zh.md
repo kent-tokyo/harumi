@@ -792,7 +792,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.3** | 修复继承 `/Resources` 中的 Form XObject 发现（Chrome/Skia PDF — `extract_text_from_xobjects` 父链遍历）；`replace_text()` 现支持改写 Form XObject 内容流，`harumi-ai` InPlace 模式在 Chrome/Skia PDF 上正常工作 |
 | **v1.5.4** | 修复 Type3 字体文本提取（`collect_font_dict_entries` 新增 `/Subtype /Type3`）；修复仅使用 Type3 字体的 Chrome/Skia PDF 翻译输出为零的问题 |
 | **v1.5.5** | 修复 Overlay CTM 坐标变换 — `parse_content_stream` 现追踪 `q`/`Q`/`cm` 并将 `TextFragment` 坐标转换到页面空间；Chrome/Skia PDF（缩放 + Y 轴翻转 CTM）的 overlay 文本位置现已正确 |
-| **v1.5.6** | 更新日文变更日志 — 正式记录跨 `Tf` 文本匹配、`TranslationMode::InPlace`、`TranslateOptions::cover_color` 和合成粗体渲染（英文文档已在 v1.4.5 中记录） |
+| **v1.5.6** | 修复三个 Chrome/Skia PDF 问题：(1) `overlay_from` 将现有页面内容包裹在 `q`/`Q` 中，隔离不平衡的 `cm` 运算符；(2) `extract_text_from_xobjects` 通过 `ParseCarryState.do_ctm_map` 追踪 per-`Do` CTM，为每个 XObject 应用其特定 CTM 而非最后累积的 CTM；(3) `diagnose_match_failure` 新增 cross-BT 扫描，将跨 BT/ET 边界的 Type3 字体文本标记为 `"type3-char-per-tj"` |
 
 ---
 
