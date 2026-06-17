@@ -196,6 +196,20 @@ pub struct TextFieldOptions {
     pub read_only: bool,
 }
 
+/// Options for [`PageHandle::replace_text_opts`].
+#[non_exhaustive]
+#[derive(Clone, Debug, Default)]
+pub struct ReplaceOptions {
+    /// When `true`, all whitespace is stripped from `old_text` before matching.
+    ///
+    /// Use this when `old_text` was assembled by concatenating [`TextFragment`](crate::TextFragment)
+    /// values with spaces (the default harumi-ai grouping strategy), but the underlying PDF
+    /// stores each character in its own `BT`/`Tj`/`ET` block — a pattern used by
+    /// Chrome/Skia-generated PDFs with Type3 fonts.  In that case `"T h e F r e e"` is
+    /// normalised to `"TheFree"` before the match, allowing cross-BT replacement to succeed.
+    pub normalize_whitespace: bool,
+}
+
 /// Raw font data stored before subsetting.
 struct RawFont {
     ttf_bytes: Vec<u8>,
@@ -3454,6 +3468,50 @@ impl<'doc> PageHandle<'doc> {
             self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
                 font,
                 old_text: old_text.to_owned(),
+                new_text: new_text.to_owned(),
+            }));
+        }
+        Ok(count)
+    }
+
+    /// Like [`replace_text`](PageHandle::replace_text) but accepts [`ReplaceOptions`].
+    ///
+    /// The primary option is `normalize_whitespace`: when `true`, all whitespace is
+    /// stripped from `old_text` before matching and replacement.  This is useful when
+    /// `old_text` was assembled from [`TextFragment`](crate::TextFragment) values joined
+    /// with spaces (e.g. `"T h e F r e e"` for a Chrome/Skia Type3 PDF), while the PDF
+    /// itself stores the characters without any space glyph between them.
+    ///
+    /// Returns the number of matches found (and queued for replacement).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document,
+    /// or [`Error::InvalidInput`] if called after [`save`](Document::save).
+    pub fn replace_text_opts(
+        &mut self,
+        old_text: &str,
+        new_text: &str,
+        font: FontHandle,
+        opts: ReplaceOptions,
+    ) -> Result<usize> {
+        if self.doc.raw_fonts.get(font.0 as usize).is_none() {
+            return Err(Error::InvalidFont(font.0));
+        }
+        let effective_old: String = if opts.normalize_whitespace {
+            old_text.split_whitespace().collect()
+        } else {
+            old_text.to_owned()
+        };
+        let count = crate::replace::count_matches_in_page(
+            &self.doc.inner,
+            self.page_id,
+            &effective_old,
+            None,
+        )?;
+        if count > 0 {
+            self.push_op(PendingOp::Replace(crate::replace::TextReplaceOp {
+                font,
+                old_text: effective_old,
                 new_text: new_text.to_owned(),
             }));
         }

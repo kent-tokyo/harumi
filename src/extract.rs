@@ -65,6 +65,13 @@ pub struct TextFragment {
     /// Examples: `"Helvetica-BoldOblique"`, `"NotoSansJP-Regular"`.
     /// Empty string when no `/BaseFont` is present in the font dictionary.
     pub base_font: String,
+    /// Advance width of the space glyph (U+0020) in PDF points at this fragment's font size.
+    /// Zero when the font has no space glyph mapped in its ToUnicode table.
+    ///
+    /// Callers can compare `next.x - (prev.x + prev.width)` against `prev.space_advance`
+    /// to decide whether the gap between two adjacent fragments represents a word space
+    /// (gap ≥ space_advance × threshold) or tight character spacing (no space needed).
+    pub space_advance: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -2678,6 +2685,12 @@ fn decode_chars_to_fragment(
     if text.is_empty() {
         return None;
     }
+    let space_advance = font_info
+        .to_unicode
+        .iter()
+        .find(|&(_gid, &ch)| ch == ' ')
+        .map(|(&gid, _)| font_info.advance_width(gid) as f32 / 1000.0 * font_size)
+        .unwrap_or(0.0);
     Some(TextFragment {
         text,
         x,
@@ -2692,6 +2705,7 @@ fn decode_chars_to_fragment(
         is_italic: font_info.is_italic,
         font_family: font_info.font_family.clone(),
         base_font: font_info.base_font.clone(),
+        space_advance,
     })
 }
 
@@ -2932,6 +2946,7 @@ mod tests {
             is_italic: false,
             font_family: String::new(),
             base_font: String::new(),
+            space_advance: 0.0,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -2957,6 +2972,7 @@ mod tests {
             is_italic: false,
             font_family: String::new(),
             base_font: String::new(),
+            space_advance: 0.0,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -2972,6 +2988,7 @@ mod tests {
             is_italic: false,
             font_family: String::new(),
             base_font: String::new(),
+            space_advance: 0.0,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -2993,6 +3010,7 @@ mod tests {
             is_italic: false,
             font_family: String::new(),
             base_font: String::new(),
+            space_advance: 0.0,
         }
     }
 
