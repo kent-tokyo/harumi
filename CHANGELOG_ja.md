@@ -11,6 +11,28 @@
 
 ---
 
+## [1.5.9] — 2026-06-17
+
+### 追加 (harumi)
+
+- **`ReplaceOptions` + `PageHandle::replace_text_opts()`** (`src/document.rs`) —
+  新オプション構造体と `replace_text()` のオプション版メソッド。
+  主要オプション `normalize_whitespace: bool`: `true` の場合、マッチング前に `old_text`
+  から全空白を除去する。harumi-ai が `TextFragment.text` をスペース区切りで結合した
+  `"T h e F r e e"` を渡した場合でも、Chrome/Skia Type3 BT-per-char PDF の
+  `"TheFree"` と一致してインプレース置換が動作するようになる。
+  `replace.rs` の照合パイプラインは変更なし。`replace_text()` 自体も変更なし（semver 互換）。
+
+- **`TextFragment.space_advance`** (`src/extract.rs`) —
+  `#[non_exhaustive]` な `TextFragment` 構造体に新フィールドを追加（非破壊的変更）。
+  そのフォント・フォントサイズでのスペースグリフ（U+0020）の advance width（PDF ポイント）を保持。
+  フォントにスペースグリフがない場合は `0.0`。
+  harumi-ai が `gap = next.x - (prev.x + prev.width)` を `prev.space_advance` と比較することで、
+  隣接フラグメントが単語スペースか文字間隔かを判定し、無条件スペース挿入による
+  `"10M+"` → `"1 0 M +"` の問題を解消できる。
+
+---
+
 ## [1.5.8] — 2026-06-17
 
 ### 修正 (harumi)

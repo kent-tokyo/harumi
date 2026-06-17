@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.9] — 2026-06-17
+
+### Added (harumi)
+
+- **`ReplaceOptions` + `PageHandle::replace_text_opts()`** (`src/document.rs`) —
+  New options struct and method variant of `replace_text()`.  The primary option is
+  `normalize_whitespace: bool`: when `true`, all whitespace is stripped from `old_text`
+  before matching and replacement.  This lets callers assembled from
+  `TextFragment.text` values joined with spaces (e.g. harumi-ai's default grouping
+  produces `"T h e F r e e"`) still match text stored as bare glyphs in Chrome/Skia
+  Type3 BT-per-char PDFs (`"TheFree"`).  The matching pipeline in `replace.rs` is
+  unchanged; normalization is a one-liner at the API boundary.  `replace_text()`
+  itself is unchanged — no semver break.
+
+- **`TextFragment.space_advance`** (`src/extract.rs`) —
+  New field on the `#[non_exhaustive]` `TextFragment` struct (non-breaking addition).
+  Holds the advance width of the space glyph (U+0020) in PDF points at the
+  fragment's font size, or `0.0` when the font has no space glyph.  Callers
+  (e.g. harumi-ai) can compare `gap = next.x - (prev.x + prev.width)` against
+  `prev.space_advance` to decide whether adjacent fragments represent a word space
+  or tight character spacing, avoiding unconditional space insertion that turns
+  `"10M+"` into `"1 0 M +"`.
+
+---
+
 ## [1.5.8] — 2026-06-17
 
 ### Fixed (harumi)

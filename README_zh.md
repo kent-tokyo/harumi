@@ -794,6 +794,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.5** | 修复 Overlay CTM 坐标变换 — `parse_content_stream` 现追踪 `q`/`Q`/`cm` 并将 `TextFragment` 坐标转换到页面空间；Chrome/Skia PDF（缩放 + Y 轴翻转 CTM）的 overlay 文本位置现已正确 |
 | **v1.5.6** | 修复三个 Chrome/Skia PDF 问题：(1) `overlay_from` 将现有页面内容包裹在 `q`/`Q` 中，隔离不平衡的 `cm` 运算符；(2) `extract_text_from_xobjects` 通过 `ParseCarryState.do_ctm_map` 追踪 per-`Do` CTM，为每个 XObject 应用其特定 CTM 而非最后累积的 CTM；(3) `diagnose_match_failure` 新增 cross-BT 扫描，将跨 BT/ET 边界的 Type3 字体文本标记为 `"type3-char-per-tj"` |
 | **v1.5.8** | 修复三个翻译视觉问题：(1) `finalize()` 在 `append_to_contents()` 前调用 `wrap_page_contents_in_q_q()`，防止现有内容中不平衡的 `cm` 影响新追加的流；(2) 将 `ctm_stack` 移至 `ParseCarryState`，使其在多个 `Contents` 数组流之间正确持续（Form XObject per-XObject CTM 追踪）；(3) Chrome/Skia Type3 PDF 的 cross-BT `Tj` 替换 — `find_cross_bt_matches()` + `CrossBtMatch` 检测跨 BT/ET 块的文本，使 `replace_text()` 在这类 PDF 上正常工作 |
+| **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — 匹配前去除 `old_text` 中的空格，使 harumi-ai 的空格拼接片段（如 `"T h e F r e e"`）能匹配 Chrome/Skia Type3 PDF（harumi-ai 无需修改分组逻辑）；`TextFragment.space_advance` — 新增该字体尺寸下空格字形的前进宽度，供调用方判断相邻片段是单词间隔还是紧凑字符间距，避免无条件插入空格导致 `"10M+"` 变成 `"1 0 M +"` |
 
 ---
 

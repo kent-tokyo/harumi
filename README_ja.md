@@ -912,6 +912,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.5** | Overlay CTM 座標変換を修正 — `parse_content_stream` が `q`/`Q`/`cm` を追跡し `TextFragment` 座標をページ空間へ変換；Chrome/Skia PDF（スケール + Y 反転 CTM）での Overlay テキスト配置が正確に |
 | **v1.5.6** | Chrome/Skia PDF 3件のバグ修正：(1) `overlay_from` が既存ページコンテンツを `q`/`Q` で包み、不均衡な `cm` 演算子を分離；(2) `extract_text_from_xobjects` が `ParseCarryState.do_ctm_map` で per-`Do` CTM を追跡し、最後の累積 CTM ではなく各 XObject 固有の CTM を適用；(3) `diagnose_match_failure` に cross-BT スキャンを追加し、BT/ET をまたぐ Type3 フォントテキストを `"type3-char-per-tj"` として報告 |
 | **v1.5.8** | 翻訳ビジュアルバグ 3件修正：(1) `finalize()` が `append_to_contents()` 前に `wrap_page_contents_in_q_q()` を呼び出し、既存コンテンツの不均衡 `cm` が追加ストリームに影響しないよう分離；(2) `ctm_stack` を `ParseCarryState` に移動し複数 `Contents` 配列ストリーム間で正しく継続（Form XObject の per-XObject CTM 追跡）；(3) Chrome/Skia Type3 PDF 向け cross-BT `Tj` 置換 — `find_cross_bt_matches()` + `CrossBtMatch` で BT/ET をまたぐテキストを検出し `replace_text()` が動作するように |
+| **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — `old_text` から空白を除去してマッチングし、harumi-ai のスペース結合フラグメント（`"T h e F r e e"` など）が Chrome/Skia Type3 PDF に一致するように（harumi-ai の grouping ロジック変更不要）；`TextFragment.space_advance` — フラグメントのフォントサイズでのスペースグリフ advance width を追加、単語間隔か文字間隔かの判定に使用でき `"10M+"` → `"1 0 M +"` の問題を解消 |
 
 ---
 
