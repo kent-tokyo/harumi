@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.10] — 2026-06-17
+
+### Fixed (harumi)
+
+- **Cross-BT match count always zero** (`src/replace.rs`) —
+  `count_matches_in_raw_streams()` had no cross-BT counting pass; only
+  intra-segment and cross-Tf passes existed.  For Chrome/Skia Type3 PDFs (one
+  character per `BT`/`Tj`/`ET` block), `count_matches_in_page()` returned 0
+  even after whitespace normalization, so `replace_text_opts()` never queued
+  `PendingOp::Replace`.  Added a cross-BT pass that tracks `cur_font` without
+  an `in_bt` guard (PDF text state persists across `BT`/`ET`), collects
+  characters with their BT-block index, and counts only matches where the
+  first and last characters come from different BT blocks — preventing
+  double-counting of intra-BT matches already handled by the existing passes.
+
+- **`find_cross_bt_matches()` font tracking** (`src/replace.rs`) —
+  The character-collection loop cleared `cur_font` on every `BT` operator and
+  gated `Tf` processing on `in_bt`, causing empty font names for BT blocks
+  where a `Tf` from outside or before the block was still in effect (legal per
+  PDF spec: text state persists across `BT`/`ET`).  Fixed by removing
+  `cur_font.clear()` from the `BT` handler and removing the `in_bt` guard from
+  `Tf`, mirroring the proven logic in `diagnose_match_failure()` Tier 3.
+
+---
+
 ## [1.5.9] — 2026-06-17
 
 ### Added (harumi)

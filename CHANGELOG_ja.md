@@ -11,6 +11,28 @@
 
 ---
 
+## [1.5.10] — 2026-06-17
+
+### 修正 (harumi)
+
+- **cross-BT マッチカウントが常にゼロになる問題** (`src/replace.rs`) —
+  `count_matches_in_raw_streams()` に cross-BT カウントパスが存在しなかった。
+  Chrome/Skia Type3 PDF（各文字が独立した `BT`/`Tj`/`ET` ブロック）では、空白正規化後も
+  `count_matches_in_page()` が 0 を返し、`replace_text_opts()` が `PendingOp::Replace`
+  を積まなかった。`in_bt` ガードなしに `cur_font` を追跡し（PDF 仕様: テキスト状態は
+  `BT`/`ET` をまたいで持続）、各文字の BT ブロックインデックスを記録し、先頭と末尾の文字が
+  異なる BT ブロックにあるマッチのみを計上する cross-BT パスを追加した。
+  既存パスで処理済みの intra-BT マッチの二重計上を防ぐ。
+
+- **`find_cross_bt_matches()` のフォント追跡バグ** (`src/replace.rs`) —
+  文字収集ループが `BT` ごとに `cur_font` をクリアし、`Tf` 処理を `in_bt` で制限していた。
+  BT ブロックの前や外側の `Tf`（PDF 仕様上合法：テキスト状態は `BT`/`ET` をまたいで持続）が
+  無視され、フォント名が空になって文字をデコードできなかった。
+  `BT` ハンドラから `cur_font.clear()` を削除し、`Tf` の `in_bt` ガードを除去して
+  `diagnose_match_failure()` Tier 3 の実績ある実装と整合させた。
+
+---
+
 ## [1.5.9] — 2026-06-17
 
 ### 追加 (harumi)

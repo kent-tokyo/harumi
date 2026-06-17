@@ -796,6 +796,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.5.6** | Chrome/Skia PDF 3개 버그 수정：(1) `overlay_from`이 기존 페이지 콘텐츠를 `q`/`Q`로 감싸 불균형한 `cm` 연산자를 격리；(2) `extract_text_from_xobjects`가 `ParseCarryState.do_ctm_map`으로 per-`Do` CTM을 추적하여 마지막 누적 CTM 대신 각 XObject 고유의 CTM을 적용；(3) `diagnose_match_failure`에 cross-BT 스캔을 추가하여 BT/ET 경계를 넘는 Type3 폰트 텍스트를 `"type3-char-per-tj"`로 보고 |
 | **v1.5.8** | 번역 시각 버그 3개 수정：(1) `finalize()`가 `append_to_contents()` 전에 `wrap_page_contents_in_q_q()`를 호출하여 기존 콘텐츠의 불균형한 `cm`이 추가된 스트림에 영향을 주지 않도록 격리；(2) `ctm_stack`을 `ParseCarryState`로 이동하여 여러 `Contents` 배열 스트림 간에 올바르게 지속（Form XObject per-XObject CTM 추적）；(3) Chrome/Skia Type3 PDF용 cross-BT `Tj` 교체 — `find_cross_bt_matches()` + `CrossBtMatch`로 BT/ET 블록을 넘는 텍스트 감지, `replace_text()`가 이런 PDF에서 작동 |
 | **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — 매칭 전 `old_text`에서 공백을 제거하여 harumi-ai의 공백 결합 프래그먼트（`"T h e F r e e"` 등）가 Chrome/Skia Type3 PDF와 일치하도록（harumi-ai 그룹핑 로직 변경 불필요）；`TextFragment.space_advance` — 해당 폰트 크기에서 공백 글리프 전진 너비를 추가, 인접 프래그먼트가 단어 간격인지 문자 간격인지 판별하여 `"10M+"` → `"1 0 M +"` 문제 해소 |
+| **v1.5.10** | cross-BT 매치 카운트가 항상 0을 반환하는 버그 수정：`count_matches_in_raw_streams()`에 cross-BT 카운팅 패스를 추가하여 `replace_text_opts(normalize_whitespace: true)`가 Chrome/Skia Type3 PDF에서 실제로 교체 작업을 큐에 쌓도록；`find_cross_bt_matches()` 폰트 추적 수정 — `BT`의 `cur_font.clear()`와 `Tf`의 `in_bt` 가드를 제거하여 `BT`/`ET` 간에 폰트가 올바르게 유지되도록（PDF 규격 준수） |
 
 ---
 
