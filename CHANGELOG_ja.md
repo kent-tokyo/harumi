@@ -11,6 +11,29 @@
 
 ---
 
+## [1.5.11] — 2026-06-17
+
+### 修正 (harumi)
+
+- **cross-op マッチングにおける水平 `Tm` の対応** (`src/replace.rs`) —
+  伝統的な日本語 PDF 生成ツールは同一視覚行上の各文字を絶対位置指定の `Tm` 演算子で配置する
+  （例: `100 700 Tm <65E5> Tj  113 700 Tm <672C> Tj`）。
+  `find_cross_op_matches_inner()` と `find_cross_tf_matches_inner()` の中間演算子
+  ホワイトリストが `Tm` を拒否していたため、`Tm` をまたぐ cross-op・cross-Tf マッチが
+  すべて破棄されていた。5つの連動修正:
+  (1) `collect_char_segments()` が垂直 `Tm`（y 変化量 ≥ 1 pt = 新しい行）を検出して
+  フラッシュ；水平 `Tm`（同一 y）は無視して蓄積を継続し、cross-op 範囲内の `Tm` が
+  水平であることを保証する。
+  (2) `collect_cross_tf_segments()` に同じ y デルタ判定を適用 — 水平 `Tm` が
+  cross-Tf セグメント蓄積を中断しなくなる。
+  (3) `find_cross_op_matches_inner()` に `Tm` とテキスト状態演算子（`Tc`、`Tw`、`Tz`、
+  `TL`、`Ts`）を中間演算子ホワイトリストに追加。
+  (4) `find_cross_tf_matches_inner()` 同上。
+  (5) `rewrite_content_stream()` が cross-op マッチ範囲内の `Tm`・`Tc`・`Tw`・`Tz`・
+  `TL`・`Ts` を既存の `Td`/`Tf` 抑制と同様に抑制する。
+
+---
+
 ## [1.5.10] — 2026-06-17
 
 ### 修正 (harumi)

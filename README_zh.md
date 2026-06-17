@@ -796,6 +796,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.8** | 修复三个翻译视觉问题：(1) `finalize()` 在 `append_to_contents()` 前调用 `wrap_page_contents_in_q_q()`，防止现有内容中不平衡的 `cm` 影响新追加的流；(2) 将 `ctm_stack` 移至 `ParseCarryState`，使其在多个 `Contents` 数组流之间正确持续（Form XObject per-XObject CTM 追踪）；(3) Chrome/Skia Type3 PDF 的 cross-BT `Tj` 替换 — `find_cross_bt_matches()` + `CrossBtMatch` 检测跨 BT/ET 块的文本，使 `replace_text()` 在这类 PDF 上正常工作 |
 | **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — 匹配前去除 `old_text` 中的空格，使 harumi-ai 的空格拼接片段（如 `"T h e F r e e"`）能匹配 Chrome/Skia Type3 PDF（harumi-ai 无需修改分组逻辑）；`TextFragment.space_advance` — 新增该字体尺寸下空格字形的前进宽度，供调用方判断相邻片段是单词间隔还是紧凑字符间距，避免无条件插入空格导致 `"10M+"` 变成 `"1 0 M +"` |
 | **v1.5.10** | 修复 cross-BT 匹配计数始终为零的问题：在 `count_matches_in_raw_streams()` 中添加 cross-BT 计数通道，使 `replace_text_opts(normalize_whitespace: true)` 真正为 Chrome/Skia Type3 PDF 排入替换操作；修复 `find_cross_bt_matches()` 字体追踪 — 移除 `BT` 上的 `cur_font.clear()` 和 `Tf` 的 `in_bt` 守卫，使字体在 `BT`/`ET` 间正确持续（符合 PDF 规范） |
+| **v1.5.11** | 提升传统日文 PDF（GHS SDS 等）的 InPlace 匹配率：同一视觉行上用 `Tm` 逐字定位的模式（日文 PDF 生成工具常见）现可正确匹配；`collect_char_segments` 和 `collect_cross_tf_segments` 仅在垂直 Tm（y 变化量 ≥ 1 pt）时刷新；`Tm` 及文本状态运算符（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）加入中间运算符白名单并在 `rewrite_content_stream` 中被抑制 |
 
 ---
 

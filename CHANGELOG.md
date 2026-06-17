@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.11] — 2026-06-17
+
+### Fixed (harumi)
+
+- **Horizontal `Tm` in cross-op matching** (`src/replace.rs`) —
+  Traditional Japanese PDF generators position each character with an absolute
+  `Tm` operator on the same visual line (e.g. `100 700 Tm <65E5> Tj  113 700 Tm <672C> Tj`).
+  The intermediate-ops whitelist in `find_cross_op_matches_inner()` and
+  `find_cross_tf_matches_inner()` rejected `Tm`, discarding every cross-op or
+  cross-Tf match that spanned per-character `Tm` positioning.
+  Five coordinated changes:
+  (1) `collect_char_segments()` now detects vertical `Tm` (y-delta ≥ 1 pt = new line)
+  and flushes; horizontal `Tm` (same y) is silently accumulated, guaranteeing that
+  any `Tm` inside a cross-op match range is horizontal and safe to suppress.
+  (2) `collect_cross_tf_segments()` applies the same y-delta check — horizontal `Tm`
+  no longer breaks cross-Tf segment accumulation.
+  (3) `find_cross_op_matches_inner()` adds `Tm` and text-state ops (`Tc`, `Tw`, `Tz`,
+  `TL`, `Ts`) to the allowed-intermediate-ops whitelist.
+  (4) `find_cross_tf_matches_inner()` same extensions.
+  (5) `rewrite_content_stream()` suppresses `Tm`, `Tc`, `Tw`, `Tz`, `TL`, `Ts` ops
+  that fall inside a cross-op match region, analogous to the existing `Td`/`Tf`
+  suppression.
+
+---
+
 ## [1.5.10] — 2026-06-17
 
 ### Fixed (harumi)

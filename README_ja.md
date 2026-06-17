@@ -914,6 +914,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.8** | 翻訳ビジュアルバグ 3件修正：(1) `finalize()` が `append_to_contents()` 前に `wrap_page_contents_in_q_q()` を呼び出し、既存コンテンツの不均衡 `cm` が追加ストリームに影響しないよう分離；(2) `ctm_stack` を `ParseCarryState` に移動し複数 `Contents` 配列ストリーム間で正しく継続（Form XObject の per-XObject CTM 追跡）；(3) Chrome/Skia Type3 PDF 向け cross-BT `Tj` 置換 — `find_cross_bt_matches()` + `CrossBtMatch` で BT/ET をまたぐテキストを検出し `replace_text()` が動作するように |
 | **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — `old_text` から空白を除去してマッチングし、harumi-ai のスペース結合フラグメント（`"T h e F r e e"` など）が Chrome/Skia Type3 PDF に一致するように（harumi-ai の grouping ロジック変更不要）；`TextFragment.space_advance` — フラグメントのフォントサイズでのスペースグリフ advance width を追加、単語間隔か文字間隔かの判定に使用でき `"10M+"` → `"1 0 M +"` の問題を解消 |
 | **v1.5.10** | cross-BT マッチカウントが常にゼロになるバグ修正：`count_matches_in_raw_streams()` に cross-BT カウントパスを追加し `replace_text_opts(normalize_whitespace: true)` が Chrome/Skia Type3 PDF で実際に置換をキューに積むように；`find_cross_bt_matches()` のフォント追跡修正 — `BT` での `cur_font.clear()` と `Tf` の `in_bt` ガードを除去し、フォントが `BT`/`ET` をまたいで正しく持続するように（PDF 仕様準拠） |
+| **v1.5.11** | 伝統的な日本語 PDF（GHS SDS 等）の InPlace 一致率向上：同一視覚行上の各文字を `Tm` で配置するパターン（日本語 PDF 生成ツールで一般的）で cross-op・cross-Tf マッチが機能するように。`collect_char_segments` と `collect_cross_tf_segments` が垂直 Tm（y 変化量 ≥ 1 pt）のみフラッシュ；`Tm` とテキスト状態演算子（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）を中間演算子ホワイトリストに追加し `rewrite_content_stream` で抑制 |
 
 ---
 
