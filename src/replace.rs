@@ -735,11 +735,59 @@ pub(crate) fn rewrite_content_stream(
         })
         .collect();
 
+    // Pre-compute cross-BT matches (spans BT/ET boundaries — Chrome/Skia Type3 pattern
+    // where each character lives in its own BT/Tj/ET block).
+    let cross_bt = find_cross_bt_matches(&ops, replacements, existing_fonts);
+    let mut first_bt_to_cbt: HashMap<usize, usize> = HashMap::new();
+    for (cbt_idx, cbt) in cross_bt.iter().enumerate() {
+        first_bt_to_cbt.insert(cbt.first_bt_op, cbt_idx);
+    }
+
     let mut in_bt = false;
     let mut cur_font: Vec<u8> = Vec::new();
     let mut cur_size: f32 = 12.0;
+    // Op index of the last ET of an active cross-BT suppression region (inclusive).
+    let mut skip_bt_end: Option<usize> = None;
 
     for (op_idx, op) in ops.iter().enumerate() {
+        // Skip ops within an active cross-BT suppression region.
+        if let Some(skip_end) = skip_bt_end {
+            if op_idx <= skip_end {
+                continue;
+            }
+            skip_bt_end = None;
+        }
+        // Check if this BT opens a cross-BT match.
+        if op.keyword.as_slice() == b"BT"
+            && let Some(&cbt_idx) = first_bt_to_cbt.get(&op_idx)
+        {
+            let cbt = &cross_bt[cbt_idx];
+            let r = &replacements[cbt.replacement_idx];
+            // Copy everything up to (but not including) this BT.
+            out.extend_from_slice(&bytes[last_copied..op.start]);
+            // Copy the block setup: BT through (not including) the anchor Tj.
+            out.extend_from_slice(&bytes[op.start..ops[cbt.anchor_tj_op].start]);
+            // Emit prefix chars (if the anchor Tj has chars before the match).
+            if !cbt.prefix_raw.is_empty() {
+                out.extend_from_slice(&encode_str_hex(&cbt.prefix_raw));
+                out.extend_from_slice(b" Tj\n");
+            }
+            // Emit replacement: font switch + text + restore font + width comp.
+            let orig_w = cbt.orig_width * cbt.font_size;
+            let new_w = new_width(r, cbt.font_size);
+            let delta = orig_w - new_w;
+            out.extend_from_slice(&emit_replacement(r, &cbt.font_name, cbt.font_size, delta));
+            // Emit suffix chars (if the last Tj has chars after the match).
+            if !cbt.suffix_raw.is_empty() {
+                out.extend_from_slice(&encode_str_hex(&cbt.suffix_raw));
+                out.extend_from_slice(b" Tj\n");
+            }
+            out.extend_from_slice(b"ET\n");
+            fonts_used.insert(r.new_pdf_font_name.clone());
+            last_copied = ops[cbt.last_et_op].end;
+            skip_bt_end = Some(cbt.last_et_op);
+            continue;
+        }
         match op.keyword.as_slice() {
             b"BT" => {
                 in_bt = true;
@@ -1255,6 +1303,211 @@ struct CrossOpMatch {
     orig_width: f32,
     font_size: f32,
     font_name: Vec<u8>,
+}
+
+/// A replacement match that spans multiple BT/ET blocks (Chrome/Skia Type3 pattern:
+/// one character per BT/Tj/ET).  The replacement condenses the matched blocks into
+/// a single BT block using the setup from the first block.
+struct CrossBtMatch {
+    replacement_idx: usize,
+    /// Op index of the `BT` that opens the first matched character's block.
+    first_bt_op: usize,
+    /// Op index of the `ET` that closes the last matched character's block.
+    last_et_op: usize,
+    /// Op index of the `Tj` (or TJ) inside the first block that contains the first char.
+    anchor_tj_op: usize,
+    /// Raw bytes of chars in the anchor Tj that appear before the match start.
+    prefix_raw: Vec<u8>,
+    /// Raw bytes of chars in the last Tj that appear after the match end.
+    suffix_raw: Vec<u8>,
+    font_name: Vec<u8>,
+    font_size: f32,
+    /// Sum of `advance_width(gid) / 1000` for all matched chars (for width compensation).
+    orig_width: f32,
+}
+
+/// Find replacement matches that span multiple BT/ET blocks.
+/// Only called when the intra-BT matchers failed, so these are strictly cross-BT.
+fn find_cross_bt_matches(
+    ops: &[Op],
+    replacements: &[ResolvedReplacement],
+    existing_fonts: &HashMap<Vec<u8>, FontInfo>,
+) -> Vec<CrossBtMatch> {
+    if replacements.is_empty() {
+        return Vec::new();
+    }
+
+    // Walk all ops, building a flat list of decoded chars with their BT-block origin.
+    // We track: char, op_idx of the Tj, BT op index of the enclosing block.
+    struct BtChar {
+        ch: char,
+        op_idx: usize,
+        bt_op: usize,
+        raw_bytes: Vec<u8>,
+        font_name: Vec<u8>,
+        font_size: f32,
+    }
+
+    let mut all_chars: Vec<BtChar> = Vec::new();
+    let mut bt_to_et: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
+    let mut in_bt = false;
+    let mut cur_bt_op = 0usize;
+    let mut cur_font: Vec<u8> = Vec::new();
+    let mut cur_size: f32 = 12.0;
+
+    for (op_idx, op) in ops.iter().enumerate() {
+        match op.keyword.as_slice() {
+            b"BT" => {
+                in_bt = true;
+                cur_bt_op = op_idx;
+                cur_font.clear();
+            }
+            b"ET" => {
+                if in_bt {
+                    bt_to_et.insert(cur_bt_op, op_idx);
+                }
+                in_bt = false;
+            }
+            b"Tf" if in_bt => {
+                if let (Some(Operand::Name(name)), Some(Operand::Num(size))) =
+                    (op.operands.first(), op.operands.get(1))
+                {
+                    cur_font = name.clone();
+                    cur_size = *size;
+                }
+            }
+            b"Tj" if in_bt => {
+                if let Some(Operand::Str(str_bytes)) = op.operands.first() {
+                    let Some(fi) = existing_fonts.get(&cur_font) else { continue };
+                    let bt = cur_bt_op;
+                    let fs = cur_size;
+                    let fn_ = cur_font.clone();
+                    if fi.bytes_per_char == 2 {
+                        if str_bytes.len().is_multiple_of(2) {
+                            for chunk in str_bytes.chunks(2) {
+                                let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                if let Some(&ch) = fi.to_unicode.get(&gid) {
+                                    all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: chunk.to_vec(), font_name: fn_.clone(), font_size: fs });
+                                }
+                            }
+                        }
+                    } else {
+                        for &b in str_bytes.iter() {
+                            if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
+                                all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: vec![b], font_name: fn_.clone(), font_size: fs });
+                            }
+                        }
+                    }
+                }
+            }
+            b"TJ" if in_bt => {
+                if let Some(Operand::Array(arr)) = op.operands.first() {
+                    let Some(fi) = existing_fonts.get(&cur_font) else { continue };
+                    let bt = cur_bt_op;
+                    let fs = cur_size;
+                    let fn_ = cur_font.clone();
+                    for elem in arr {
+                        if let ArrElem::Str(str_bytes) = elem {
+                            if fi.bytes_per_char == 2 {
+                                if str_bytes.len().is_multiple_of(2) {
+                                    for chunk in str_bytes.chunks(2) {
+                                        let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                        if let Some(&ch) = fi.to_unicode.get(&gid) {
+                                            all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: chunk.to_vec(), font_name: fn_.clone(), font_size: fs });
+                                        }
+                                    }
+                                }
+                            } else {
+                                for &b in str_bytes.iter() {
+                                    if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
+                                        all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: vec![b], font_name: fn_.clone(), font_size: fs });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if all_chars.is_empty() {
+        return Vec::new();
+    }
+
+    let text_chars: Vec<char> = all_chars.iter().map(|c| c.ch).collect();
+    let mut result: Vec<CrossBtMatch> = Vec::new();
+
+    for (r_idx, r) in replacements.iter().enumerate() {
+        let pattern_chars: Vec<char> = r.old_text.chars().collect();
+        let plen = pattern_chars.len();
+        if plen < 2 {
+            continue; // single-char and empty: handled by intra-BT logic
+        }
+
+        let mut pos = 0usize;
+        while pos + plen <= text_chars.len() {
+            if text_chars[pos..pos + plen] == pattern_chars[..] {
+                let first_bt = all_chars[pos].bt_op;
+                let last_bt = all_chars[pos + plen - 1].bt_op;
+
+                if first_bt != last_bt {
+                    let last_et = match bt_to_et.get(&last_bt) {
+                        Some(&et) => et,
+                        None => { pos += 1; continue; }
+                    };
+
+                    let anchor_tj = all_chars[pos].op_idx;
+                    let last_tj = all_chars[pos + plen - 1].op_idx;
+
+                    let prefix_raw: Vec<u8> = all_chars[..pos].iter()
+                        .filter(|c| c.op_idx == anchor_tj && c.bt_op == first_bt)
+                        .flat_map(|c| c.raw_bytes.iter().copied())
+                        .collect();
+                    let suffix_raw: Vec<u8> = all_chars[pos + plen..].iter()
+                        .filter(|c| c.op_idx == last_tj && c.bt_op == last_bt)
+                        .flat_map(|c| c.raw_bytes.iter().copied())
+                        .collect();
+
+                    let fi = existing_fonts.get(&all_chars[pos].font_name);
+                    let orig_width: f32 = if let Some(fi) = fi {
+                        all_chars[pos..pos + plen].iter().map(|c| {
+                            let gid = if fi.bytes_per_char == 2 && c.raw_bytes.len() == 2 {
+                                u16::from_be_bytes([c.raw_bytes[0], c.raw_bytes[1]])
+                            } else if !c.raw_bytes.is_empty() {
+                                c.raw_bytes[0] as u16
+                            } else {
+                                0
+                            };
+                            fi.advance_width(gid) as f32 / 1000.0
+                        }).sum()
+                    } else {
+                        0.0
+                    };
+
+                    result.push(CrossBtMatch {
+                        replacement_idx: r_idx,
+                        first_bt_op: first_bt,
+                        last_et_op: last_et,
+                        anchor_tj_op: anchor_tj,
+                        prefix_raw,
+                        suffix_raw,
+                        font_name: all_chars[pos].font_name.clone(),
+                        font_size: all_chars[pos].font_size,
+                        orig_width,
+                    });
+                }
+
+                pos += plen;
+            } else {
+                pos += 1;
+            }
+        }
+    }
+
+    result
 }
 
 /// Append decoded characters from `str_bytes` (a Tj/TJ string operand) into `char_buf`.

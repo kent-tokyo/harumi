@@ -626,6 +626,9 @@ fn extract_text_from_xobjects(
     _depth: u8,
 ) {
     let saved_ctm = carry.ctm;
+    // Save the page-level CTM stack: each XObject gets its own fresh stack starting
+    // at its combined Do-time CTM × XObject matrix, independent of the page's state.
+    let saved_ctm_stack = carry.ctm_stack.clone();
 
     if !carry.do_ctm_map.is_empty() {
         // Per-Do CTM path: process only explicitly invoked XObjects, each with its
@@ -639,6 +642,7 @@ fn extract_text_from_xobjects(
                 let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
+                carry.ctm_stack = vec![carry.ctm];
                 parse_content_stream(&content, &xobj_fonts, carry, out);
             }
         }
@@ -653,12 +657,14 @@ fn extract_text_from_xobjects(
                 let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
+                carry.ctm_stack = vec![carry.ctm];
                 parse_content_stream(&content, &xobj_fonts, carry, out);
             }
         }
     }
 
     carry.ctm = saved_ctm;
+    carry.ctm_stack = saved_ctm_stack;
 }
 
 fn decode_form_xobject(doc: &lopdf::Document, xobj_id: ObjectId) -> Option<Vec<u8>> {
@@ -2378,6 +2384,10 @@ struct ParseCarryState {
     /// `extract_text_from_xobjects` uses this so every XObject gets the CTM that was
     /// active at the specific `Do` that invoked it, not the last one in the stream.
     do_ctm_map: Vec<(Vec<u8>, [f32; 6])>,
+    /// CTM stack shared across multiple content streams on the same page.
+    /// Per the PDF spec, multiple streams in a Contents array share the same graphics
+    /// state — so q/Q depth and cm transformations must persist across stream calls.
+    ctm_stack: Vec<[f32; 6]>,
 }
 
 impl Default for ParseCarryState {
@@ -2387,6 +2397,7 @@ impl Default for ParseCarryState {
             cur_render_mode: 0,
             ctm: IDENTITY_CTM,
             do_ctm_map: Vec::new(),
+            ctm_stack: vec![IDENTITY_CTM],
         }
     }
 }
@@ -2405,9 +2416,8 @@ fn parse_content_stream(
     let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
-    // CTM stack: initialized from the caller-supplied CTM (state.ctm).
-    // q pushes a copy, Q pops, cm multiplies the top.
-    let mut ctm_stack: Vec<[f32; 6]> = vec![state.ctm];
+    // CTM stack lives in state.ctm_stack so it persists across multiple content
+    // streams on the same page (PDF spec: Contents array streams share graphics state).
 
     for token in tokens {
         match token {
@@ -2490,17 +2500,17 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"q" => {
-                    ctm_stack.push(*ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+                    state.ctm_stack.push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
                     stack.clear();
                 }
                 b"Q" => {
-                    if ctm_stack.len() > 1 {
-                        ctm_stack.pop();
+                    if state.ctm_stack.len() > 1 {
+                        state.ctm_stack.pop();
                     }
                     stack.clear();
                 }
                 b"Do" => {
-                    let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                    let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                     state.ctm = ctm;
                     // Record the XObject name (top of stack) paired with the CTM active
                     // at this invocation so extract_text_from_xobjects() can apply the
@@ -2528,7 +2538,7 @@ fn parse_content_stream(
                     ) = (fv, ev, dv, cv, bv, av)
                     {
                         let mat = [a, b, c, d, e, f];
-                        let top = ctm_stack.last_mut().unwrap();
+                        let top = state.ctm_stack.last_mut().unwrap();
                         *top = multiply_ctm(*top, mat);
                     }
                     stack.clear();
@@ -2540,7 +2550,7 @@ fn parse_content_stream(
                         _ => None,
                     };
                     if let Some(char_bytes) = bytes_opt {
-                        let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let (px, py) = apply_ctm(ctm, x, y);
                         let scale = ctm_scale(ctm);
                         if let Some(frag) = decode_chars_to_fragment(
@@ -2564,7 +2574,7 @@ fn parse_content_stream(
                 }
                 b"TJ" if in_bt => {
                     if let Some(Token::Array(items)) = stack.pop() {
-                        let ctm = *ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+                        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let scale = ctm_scale(ctm);
                         let mut cur_x = x; // local-space cursor
                         for item in items {

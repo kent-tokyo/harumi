@@ -2861,6 +2861,9 @@ impl Document {
             let new_stream_id = self
                 .inner
                 .add_object(Object::Stream(Stream::new(Dictionary::new(), page_stream)));
+            // Isolate existing page CTM before appending, so any unbalanced `cm` in
+            // the existing content doesn't affect the newly appended text/draw stream.
+            wrap_page_contents_in_q_q(&mut self.inner, page_id)?;
             append_to_contents(&mut self.inner, page_id, new_stream_id)?;
 
             for font_idx in registered_fonts {
