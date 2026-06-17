@@ -798,6 +798,7 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — 매칭 전 `old_text`에서 공백을 제거하여 harumi-ai의 공백 결합 프래그먼트（`"T h e F r e e"` 등）가 Chrome/Skia Type3 PDF와 일치하도록（harumi-ai 그룹핑 로직 변경 불필요）；`TextFragment.space_advance` — 해당 폰트 크기에서 공백 글리프 전진 너비를 추가, 인접 프래그먼트가 단어 간격인지 문자 간격인지 판별하여 `"10M+"` → `"1 0 M +"` 문제 해소 |
 | **v1.5.10** | cross-BT 매치 카운트가 항상 0을 반환하는 버그 수정：`count_matches_in_raw_streams()`에 cross-BT 카운팅 패스를 추가하여 `replace_text_opts(normalize_whitespace: true)`가 Chrome/Skia Type3 PDF에서 실제로 교체 작업을 큐에 쌓도록；`find_cross_bt_matches()` 폰트 추적 수정 — `BT`의 `cur_font.clear()`와 `Tf`의 `in_bt` 가드를 제거하여 `BT`/`ET` 간에 폰트가 올바르게 유지되도록（PDF 규격 준수） |
 | **v1.5.11** | 전통적인 일본어 PDF（GHS SDS 등）InPlace 일치율 향상：같은 시각 줄에서 문자별 `Tm`으로 위치를 지정하는 패턴（일본어 PDF 생성 도구에서 일반적）이 cross-op/cross-Tf 매칭에서 올바르게 작동；`collect_char_segments` 및 `collect_cross_tf_segments`가 수직 Tm（y 변화량 ≥ 1 pt）에만 플러시；`Tm` 및 텍스트 상태 연산자（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）를 중간 연산자 허용 목록에 추가하고 `rewrite_content_stream`에서 억제 |
+| **v1.5.12** | AES-256 암호화 PDF의 자동 스트림 스킵 수정：`page_content_streams()`와 `decode_form_xobject()`가 `decompress()` 실패 시 `stream.content`로 폴백（lopdf가 `load_with_password` 중 이미 압축 해제한 경우 대응）, 페이지당 13→40+ 프래그먼트로 개선；`ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` 진단 API；`TextFragment.tf_font_size` + `TextFragment.tm_y_scale` 새 필드；제로 전진 너비 폴백（문자당 0.5em） |
 
 ---
 

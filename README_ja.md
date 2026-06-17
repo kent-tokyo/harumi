@@ -915,6 +915,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.9** | `ReplaceOptions { normalize_whitespace }` + `replace_text_opts()` — `old_text` から空白を除去してマッチングし、harumi-ai のスペース結合フラグメント（`"T h e F r e e"` など）が Chrome/Skia Type3 PDF に一致するように（harumi-ai の grouping ロジック変更不要）；`TextFragment.space_advance` — フラグメントのフォントサイズでのスペースグリフ advance width を追加、単語間隔か文字間隔かの判定に使用でき `"10M+"` → `"1 0 M +"` の問題を解消 |
 | **v1.5.10** | cross-BT マッチカウントが常にゼロになるバグ修正：`count_matches_in_raw_streams()` に cross-BT カウントパスを追加し `replace_text_opts(normalize_whitespace: true)` が Chrome/Skia Type3 PDF で実際に置換をキューに積むように；`find_cross_bt_matches()` のフォント追跡修正 — `BT` での `cur_font.clear()` と `Tf` の `in_bt` ガードを除去し、フォントが `BT`/`ET` をまたいで正しく持続するように（PDF 仕様準拠） |
 | **v1.5.11** | 伝統的な日本語 PDF（GHS SDS 等）の InPlace 一致率向上：同一視覚行上の各文字を `Tm` で配置するパターン（日本語 PDF 生成ツールで一般的）で cross-op・cross-Tf マッチが機能するように。`collect_char_segments` と `collect_cross_tf_segments` が垂直 Tm（y 変化量 ≥ 1 pt）のみフラッシュ；`Tm` とテキスト状態演算子（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）を中間演算子ホワイトリストに追加し `rewrite_content_stream` で抑制 |
+| **v1.5.12** | AES-256 暗号化 PDF のサイレントストリームスキップ修正：`page_content_streams()` と `decode_form_xobject()` が `decompress()` 失敗時に `stream.content` にフォールバック（lopdf が `load_with_password` 時に解凍済みの場合に対応）、ページあたり 13→40+ フラグメント改善；`ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` 診断 API；`TextFragment.tf_font_size` + `TextFragment.tm_y_scale` 新フィールド；ゼロ advance width フォールバック（0.5em/文字） |
 
 ---
 

@@ -11,6 +11,39 @@
 
 ---
 
+## [1.5.12] — 2026-06-17
+
+### 修正 (harumi)
+
+- **圧縮解凍失敗時のコンテンツストリームサイレントスキップ修正** (`src/extract.rs`) —
+  `page_content_streams()` と `decode_form_xobject()` が `stream.decompress()` の失敗時に
+  ストリームを無言で破棄し、テキスト抽出が不完全になる問題を修正。
+  AES-256 暗号化 PDF（PScript5.dll/Acrobat Distiller 生成）では、`load_with_password()` 時に
+  lopdf がストリームをすでに復号・解凍済みの状態にするが、`/Filter` エントリが残ったままのため
+  `decompress()` が失敗してストリームが破棄される。両関数がフォールバックとして `stream.content`
+  を直接使用するよう修正し、ページあたり 13 件しか取得できなかった問題を解決。
+
+- **advance width ゼロ時のフォールバック** (`src/extract.rs`) — `decode_chars_to_fragment()` が
+  グリフループ後に `total_width == 0.0` の場合 `char_count × font_size × 0.5` を使用。
+  `detect_text_columns()` がゼロ幅フラグメントを 1 ポイント幅として誤認識しカラム境界がずれる問題を修正。
+
+### 追加 (harumi)
+
+- **`ExtractionWarning` 診断 API** (`src/extract.rs`, `src/document.rs`) —
+  `WarningKind` enum（`StreamDecompressFailed` / `XObjectSkipped`）と
+  `ExtractionWarning { kind, stream_id, message }` 構造体を追加・公開。
+  新メソッド `Document::extract_text_runs_verbose(page)` が
+  `(Vec<TextFragment>, Vec<ExtractionWarning>)` を返す。警告リストが非空の場合、
+  どのストリームオブジェクト ID がフォールバック使用したかを特定できる。
+
+- **`TextFragment.tf_font_size` および `TextFragment.tm_y_scale`** (`src/extract.rs`) —
+  `#[non_exhaustive]` な `TextFragment` に 2 つの新フィールドを追加（非破壊的変更）。
+  `tf_font_size` は `Tf` 演算子の生サイズ、`tm_y_scale` は最後の `Tm` 行列の `√(c²+d²)`。
+  `1 Tf  9 0 0 9 x y Tm` パターンの PDF では `tf_font_size=1`, `tm_y_scale=9` となり、
+  harumi-ai が実際の視覚的フォントサイズを正確に把握できるようになる。
+
+---
+
 ## [1.5.11] — 2026-06-17
 
 ### 修正 (harumi)
