@@ -904,6 +904,22 @@ pub(crate) fn rewrite_content_stream(
                     last_copied = op.end;
                 }
             }
+            // Suppress Tm (absolute position reset) inside a cross-op match region.
+            // Japanese PDFs use per-character Tm for individual character placement on
+            // the same visual line; suppressing them keeps the replacement at the first
+            // character's position and prevents spurious cursor repositioning.
+            b"Tm" if in_bt && op_role.contains_key(&op_idx) => {
+                out.extend_from_slice(&bytes[last_copied..op.start]);
+                last_copied = op.end;
+            }
+            // Suppress text-state ops inside a cross-op match region.
+            // Tc/Tw/Tz/TL/Ts affect spacing/scaling of the original glyphs; since
+            // the replacement emits entirely new glyphs in a new font, suppressing
+            // them has no visual impact on the replacement text.
+            b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" if in_bt && op_role.contains_key(&op_idx) => {
+                out.extend_from_slice(&bytes[last_copied..op.start]);
+                last_copied = op.end;
+            }
             b"Tj" if in_bt => {
                 // Cross-op match handling takes priority.
                 if let Some(&(co_idx, role)) = op_role.get(&op_idx) {
@@ -1648,6 +1664,9 @@ pub(crate) fn collect_char_segments(
     let mut cur_font: Vec<u8> = Vec::new();
     let mut cur_size: f32 = 12.0;
     let mut cur_chars: Vec<CharEntry> = Vec::new();
+    // Track the y-coordinate of the last Tm within a BT block.  If Tm moves
+    // significantly in y (new visual line), we flush and start a fresh segment.
+    let mut tm_y: Option<f32> = None;
 
     for (op_idx, op) in ops.iter().enumerate() {
         match op.keyword.as_slice() {
@@ -1655,6 +1674,7 @@ pub(crate) fn collect_char_segments(
                 in_bt = true;
                 cur_chars.clear();
                 cur_font.clear();
+                tm_y = None;
             }
             b"ET" => {
                 if in_bt && !cur_chars.is_empty() {
@@ -1679,6 +1699,27 @@ pub(crate) fn collect_char_segments(
                     }
                     cur_font = name.clone();
                     cur_size = *size;
+                }
+            }
+            b"Tm" if in_bt => {
+                // Tm format: a b c d e f — f (6th operand) is the y translation.
+                // Flush and start a new segment only when y changes significantly
+                // (new visual line).  Horizontal Tm (same y) is a character-advance
+                // and must NOT break the segment — Japanese PDF generators use it
+                // to position every character individually on the same line.
+                if let Some(Operand::Num(f)) = op.operands.get(5) {
+                    let new_y = *f;
+                    if let Some(prev_y) = tm_y && (new_y - prev_y).abs() >= 1.0 {
+                        if !cur_chars.is_empty() {
+                            segments.push(CharSegment {
+                                chars: std::mem::take(&mut cur_chars),
+                                font_name: cur_font.clone(),
+                                font_size: cur_size,
+                            });
+                        }
+                        cur_font.clear();
+                    }
+                    tm_y = Some(new_y);
                 }
             }
             b"Tj" if in_bt => {
@@ -1729,6 +1770,9 @@ fn collect_cross_tf_segments(
     let mut cur_size: f32 = 12.0;
     let mut seg_first_size: f32 = 12.0;
     let mut cur_chars: Vec<CharEntry> = Vec::new();
+    // Track the Tm y-coordinate so we can distinguish horizontal Tm (same line,
+    // no flush) from vertical Tm (new line, flush).
+    let mut seg_tm_y: Option<f32> = None;
 
     macro_rules! flush_seg {
         () => {
@@ -1750,6 +1794,7 @@ fn collect_cross_tf_segments(
                 cur_chars.clear();
                 cur_font.clear();
                 seg_first_size = 12.0;
+                seg_tm_y = None;
             }
             b"ET" => {
                 flush_seg!();
@@ -1767,9 +1812,24 @@ fn collect_cross_tf_segments(
                 }
             }
             b"Tm" if in_bt => {
-                flush_seg!();
-                cur_font.clear();
-                seg_first_size = 12.0;
+                // Flush only when y changes significantly (new visual line).
+                // Horizontal Tm stays within the same segment so cross-Tf detection
+                // can span per-character Tm-positioned text on the same line.
+                if let Some(Operand::Num(f)) = op.operands.get(5) {
+                    let new_y = *f;
+                    let is_new_line = seg_tm_y.is_some_and(|prev_y| (new_y - prev_y).abs() >= 1.0);
+                    if is_new_line {
+                        flush_seg!();
+                        cur_font.clear();
+                        seg_first_size = 12.0;
+                    }
+                    seg_tm_y = Some(new_y);
+                } else {
+                    // Can't parse Tm operands — flush conservatively.
+                    flush_seg!();
+                    cur_font.clear();
+                    seg_first_size = 12.0;
+                }
             }
             b"Td" | b"TD" if in_bt => {
                 let is_vertical = match (op.operands.first(), op.operands.get(1)) {
@@ -1847,13 +1907,16 @@ fn find_cross_op_matches_inner(
                     let last_op = seg.chars[char_end - 1].op_idx;
 
                     if first_op != last_op {
-                        // Accept cross-op matches where all intermediate ops are Tj/TJ or
-                        // horizontal-only Td/TD (ty == 0). Horizontal Td ops are common in
-                        // per-character CJK PDFs; they must not shift the baseline.
+                        // Accept cross-op matches where all intermediate ops are Tj/TJ,
+                        // horizontal-only Td/TD (ty == 0), horizontal Tm (same y — safe
+                        // because collect_char_segments now flushes on vertical Tm), or
+                        // text-state ops that do not alter text position (Tc/Tw/Tz/TL/Ts).
                         let all_text = ops[first_op + 1..last_op]
                             .iter()
                             .all(|o| match o.keyword.as_slice() {
                                 b"Tj" | b"TJ" => true,
+                                b"Tm" => true, // horizontal only (vertical flushed segment)
+                                b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
                                 b"Td" | b"TD" => match (
                                     o.operands.first(),
                                     o.operands.get(1),
@@ -1962,6 +2025,8 @@ fn find_cross_tf_matches_inner(
                             .all(|o| match o.keyword.as_slice() {
                                 b"Tj" | b"TJ" => true,
                                 b"Tf" => true,
+                                b"Tm" => true, // horizontal only (vertical flushed segment)
+                                b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
                                 b"Td" | b"TD" => match (
                                     o.operands.first(),
                                     o.operands.get(1),
