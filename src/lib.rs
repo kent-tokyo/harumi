@@ -110,8 +110,9 @@ pub use document::{
 };
 pub use error::{Error, Result};
 pub use extract::{
-    ColumnZone, GroupingStrategy, TableCell, TextFragment, TextGroup,
-    detect_text_columns, extract_table_cells, group_text_fragments, sort_by_reading_order,
+    ColumnZone, ExtractionWarning, GroupingStrategy, TableCell, TextFragment, TextGroup,
+    WarningKind, detect_text_columns, extract_table_cells, group_text_fragments,
+    sort_by_reading_order,
 };
 pub use font::FontHandle;
 

@@ -2001,6 +2001,28 @@ impl Document {
         crate::extract::extract_text_runs_from_page(&self.inner, page_id)
     }
 
+    /// Like [`extract_text_runs`](Document::extract_text_runs) but also returns
+    /// [`ExtractionWarning`](crate::ExtractionWarning)s for content streams or Form XObjects
+    /// that could not be decompressed.
+    ///
+    /// A non-empty warning list typically means some text was extracted from a raw
+    /// (undecompressed) fallback and may be incomplete.  Use it to diagnose why a
+    /// page returns fewer fragments than expected (e.g. AES-256 encrypted PDFs).
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page` is out of range.
+    pub fn extract_text_runs_verbose(
+        &self,
+        page: u32,
+    ) -> Result<(Vec<crate::extract::TextFragment>, Vec<crate::extract::ExtractionWarning>)> {
+        let all_pages = self.inner.get_pages();
+        let page_id = all_pages
+            .get(&page)
+            .copied()
+            .ok_or(Error::PageNotFound(page))?;
+        crate::extract::extract_text_runs_from_page_verbose(&self.inner, page_id)
+    }
+
     /// Extracts the decoded text from a single page as a plain string.
     ///
     /// This is a convenience wrapper over [`extract_text_runs`](Document::extract_text_runs).

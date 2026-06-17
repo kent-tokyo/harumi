@@ -72,6 +72,42 @@ pub struct TextFragment {
     /// to decide whether the gap between two adjacent fragments represents a word space
     /// (gap ≥ space_advance × threshold) or tight character spacing (no space needed).
     pub space_advance: f32,
+    /// Raw font size from the `Tf` operator, before any `Tm` matrix scaling.
+    /// Equals `font_size` when the active text matrix is a pure translation (scale = 1).
+    pub tf_font_size: f32,
+    /// Y-axis scale factor from the most recent `Tm` matrix: `√(c² + d²)`.
+    /// `font_size ≈ tf_font_size × tm_y_scale` (CTM scaling is not included here).
+    /// Useful when the PDF uses a pattern like `1 Tf  9 0 0 9 x y Tm` where `Tf`
+    /// emits size 1 and the actual visual size comes entirely from the Tm matrix.
+    pub tm_y_scale: f32,
+}
+
+// ---------------------------------------------------------------------------
+// Extraction diagnostics
+// ---------------------------------------------------------------------------
+
+/// Why a content stream or Form XObject was not fully decoded during text extraction.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum WarningKind {
+    /// `decompress()` failed; raw stream content was used as a best-effort fallback.
+    /// This can occur with AES-256 encrypted PDFs where lopdf has already decoded the
+    /// stream during password loading, leaving decoded bytes with the Filter entry intact.
+    StreamDecompressFailed,
+    /// A Form XObject could not be decoded (decompression failed and content was empty).
+    XObjectSkipped,
+}
+
+/// A non-fatal issue encountered while extracting text from a page.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ExtractionWarning {
+    /// Category of the warning.
+    pub kind: WarningKind,
+    /// PDF object ID of the problematic stream (`(object_number, generation_number)`).
+    pub stream_id: Option<(u32, u16)>,
+    /// Human-readable description.
+    pub message: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -685,8 +721,15 @@ fn decode_form_xobject(doc: &lopdf::Document, xobj_id: ObjectId) -> Option<Vec<u
     }
     if xobj_stream.dict.get(b"Filter").is_ok() {
         let mut owned = xobj_stream.clone();
-        owned.decompress().ok()?;
-        Some(owned.content)
+        if owned.decompress().is_ok() {
+            Some(owned.content)
+        } else if !xobj_stream.content.is_empty() {
+            // Fallback: lopdf may have already decoded the stream during AES-256
+            // decryption, leaving final bytes in content with Filter still present.
+            Some(xobj_stream.content.clone())
+        } else {
+            None
+        }
     } else {
         Some(xobj_stream.content.clone())
     }
@@ -757,12 +800,153 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
             let mut owned = stream.clone();
             if owned.decompress().is_ok() {
                 result.push(owned.content);
+            } else if !stream.content.is_empty() {
+                // Fallback: lopdf may have already decoded the stream during AES-256
+                // decryption, leaving final bytes in content with Filter still present.
+                result.push(stream.content.clone());
             }
         } else {
             result.push(stream.content.clone());
         }
     }
     result
+}
+
+/// Like `page_content_streams` but also returns a warning for each stream that
+/// could not be decompressed and fell back to raw content.
+pub(crate) fn page_content_streams_verbose(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> (Vec<Vec<u8>>, Vec<ExtractionWarning>) {
+    let Ok(page_obj) = doc.get_object(page_id) else {
+        return (vec![], vec![]);
+    };
+    let Ok(page_dict) = page_obj.as_dict() else {
+        return (vec![], vec![]);
+    };
+    let Ok(contents_obj) = page_dict.get(b"Contents") else {
+        return (vec![], vec![]);
+    };
+
+    let ids: Vec<ObjectId> = match contents_obj {
+        Object::Reference(id) => vec![*id],
+        Object::Array(arr) => arr
+            .iter()
+            .filter_map(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+            .collect(),
+        _ => return (vec![], vec![]),
+    };
+
+    let mut result = Vec::new();
+    let mut warnings = Vec::new();
+    for id in ids {
+        let Ok(stream_obj) = doc.get_object(id) else { continue };
+        let Ok(stream) = stream_obj.as_stream() else { continue };
+        let has_filter = stream.dict.get(b"Filter").is_ok();
+        if has_filter {
+            let mut owned = stream.clone();
+            if owned.decompress().is_ok() {
+                result.push(owned.content);
+            } else if !stream.content.is_empty() {
+                warnings.push(ExtractionWarning {
+                    kind: WarningKind::StreamDecompressFailed,
+                    stream_id: Some((id.0, id.1)),
+                    message: format!(
+                        "decompress() failed for content stream {id:?}; using raw content as fallback"
+                    ),
+                });
+                result.push(stream.content.clone());
+            }
+        } else {
+            result.push(stream.content.clone());
+        }
+    }
+    (result, warnings)
+}
+
+/// Like `extract_text_runs_from_page` but also collects `ExtractionWarning`s for
+/// streams that could not be decompressed.
+pub(crate) fn extract_text_runs_from_page_verbose(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> Result<(Vec<TextFragment>, Vec<ExtractionWarning>)> {
+    let (streams, mut warnings) = page_content_streams_verbose(doc, page_id);
+    let fonts = collect_fonts(doc, page_id);
+
+    let mut fragments = Vec::new();
+    let mut carry = ParseCarryState::default();
+    for stream_bytes in &streams {
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments);
+    }
+    extract_text_from_xobjects_verbose(doc, page_id, &mut carry, &mut fragments, 0, &mut warnings);
+    Ok((fragments, warnings))
+}
+
+/// `extract_text_from_xobjects` variant that appends `ExtractionWarning`s for
+/// XObjects that could not be decoded.
+fn extract_text_from_xobjects_verbose(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    carry: &mut ParseCarryState,
+    out: &mut Vec<TextFragment>,
+    _depth: u8,
+    warnings: &mut Vec<ExtractionWarning>,
+) {
+    let saved_ctm = carry.ctm;
+    let saved_ctm_stack = carry.ctm_stack.clone();
+
+    if !carry.do_ctm_map.is_empty() {
+        let xobj_name_map = collect_inherited_xobject_name_map(doc, page_id);
+        let do_ctm_map = std::mem::take(&mut carry.do_ctm_map);
+
+        for (xobj_name, do_ctm) in &do_ctm_map {
+            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else { continue };
+            match decode_form_xobject_verbose(doc, xobj_id) {
+                Ok(content) => {
+                    let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                    let xobj_matrix = xobject_matrix(doc, xobj_id);
+                    carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
+                    carry.ctm_stack = vec![carry.ctm];
+                    parse_content_stream(&content, &xobj_fonts, carry, out);
+                }
+                Err(warn) => { warnings.push(warn); }
+            }
+        }
+        carry.do_ctm_map = do_ctm_map;
+    } else {
+        let xobj_ids = collect_inherited_xobject_ids(doc, page_id);
+        for xobj_id in xobj_ids {
+            match decode_form_xobject_verbose(doc, xobj_id) {
+                Ok(content) => {
+                    let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                    let xobj_matrix = xobject_matrix(doc, xobj_id);
+                    carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
+                    carry.ctm_stack = vec![carry.ctm];
+                    parse_content_stream(&content, &xobj_fonts, carry, out);
+                }
+                Err(warn) => { warnings.push(warn); }
+            }
+        }
+    }
+
+    carry.ctm = saved_ctm;
+    carry.ctm_stack = saved_ctm_stack;
+}
+
+/// `decode_form_xobject` variant that returns an `ExtractionWarning` when the
+/// XObject cannot be decoded at all (fallback also failed / content is empty).
+fn decode_form_xobject_verbose(
+    doc: &lopdf::Document,
+    xobj_id: ObjectId,
+) -> std::result::Result<Vec<u8>, ExtractionWarning> {
+    match decode_form_xobject(doc, xobj_id) {
+        Some(bytes) => Ok(bytes),
+        None => Err(ExtractionWarning {
+            kind: WarningKind::XObjectSkipped,
+            stream_id: Some((xobj_id.0, xobj_id.1)),
+            message: format!("Form XObject {xobj_id:?} could not be decoded"),
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2421,6 +2605,7 @@ fn parse_content_stream(
     let mut font_name: Vec<u8> = Vec::new();
     let mut tf_font_size: f32 = 12.0; // raw size from Tf operator
     let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
+    let mut tm_y_scale: f32 = 1.0;    // y-axis scale from the last Tm matrix
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
@@ -2476,6 +2661,7 @@ fn parse_content_stream(
                         let y_scale = (cv * cv + dv * dv).sqrt();
                         if y_scale > 0.0 {
                             font_size = tf_font_size * y_scale;
+                            tm_y_scale = y_scale;
                         }
                     }
                     stack.clear();
@@ -2569,6 +2755,8 @@ fn parse_content_stream(
                             fonts,
                             state.cur_color,
                             state.cur_render_mode,
+                            tf_font_size,
+                            tm_y_scale,
                         ) {
                             // frag.width is page-space; advance local x cursor by local width.
                             let local_advance =
@@ -2597,6 +2785,8 @@ fn parse_content_stream(
                                         fonts,
                                         state.cur_color,
                                         state.cur_render_mode,
+                                        tf_font_size,
+                                        tm_y_scale,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -2639,6 +2829,8 @@ fn decode_chars_to_fragment(
     fonts: &HashMap<Vec<u8>, FontInfo>,
     color: [f32; 3],
     render_mode: u8,
+    tf_font_size: f32,
+    tm_y_scale: f32,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -2685,6 +2877,11 @@ fn decode_chars_to_fragment(
     if text.is_empty() {
         return None;
     }
+    // Fix 5: zero-width fallback — some fonts have missing /W entries and dw=0,
+    // which would make every fragment 0-width and break column detection.
+    if total_width == 0.0 {
+        total_width = text.chars().count() as f32 * font_size * 0.5;
+    }
     let space_advance = font_info
         .to_unicode
         .iter()
@@ -2706,6 +2903,8 @@ fn decode_chars_to_fragment(
         font_family: font_info.font_family.clone(),
         base_font: font_info.base_font.clone(),
         space_advance,
+        tf_font_size,
+        tm_y_scale,
     })
 }
 
@@ -2947,6 +3146,8 @@ mod tests {
             font_family: String::new(),
             base_font: String::new(),
             space_advance: 0.0,
+            tf_font_size: 12.0,
+            tm_y_scale: 1.0,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -2973,6 +3174,8 @@ mod tests {
             font_family: String::new(),
             base_font: String::new(),
             space_advance: 0.0,
+            tf_font_size: 12.0,
+            tm_y_scale: 1.0,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -2989,6 +3192,8 @@ mod tests {
             font_family: String::new(),
             base_font: String::new(),
             space_advance: 0.0,
+            tf_font_size: 12.0,
+            tm_y_scale: 1.0,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3011,6 +3216,8 @@ mod tests {
             font_family: String::new(),
             base_font: String::new(),
             space_advance: 0.0,
+            tf_font_size: fs,
+            tm_y_scale: 1.0,
         }
     }
 
