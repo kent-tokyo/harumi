@@ -1694,3 +1694,45 @@ Chrome/Skia が生成した PDF のコンテンツストリームは `cm` 演算
 ### テスト（v1.5.6 完了時点）
 
 テスト追加なし（内部リファクタリングのみ）。デフォルト features で 310 件、--all-features で 407 件。
+
+---
+
+## バグ修正（v1.5.8）— 2026-06-17
+
+### 翻訳ビジュアルバグ 3件修正（完了）
+
+**修正 1: finalize() の CTM 分離**
+
+既存ページに保留テキスト/描画操作を書き込む `finalize()` が `append_to_contents()` の前に
+`wrap_page_contents_in_q_q()` を呼び出していなかった。既存コンテンツに不均衡な `cm` 演算子が
+あると新規追加ストリームの座標に影響し、テキスト・図形がずれる問題。
+
+- [x] `src/document.rs` `finalize()` — `append_to_contents()` 前に `wrap_page_contents_in_q_q()` 追加
+
+**修正 2: ctm_stack を ParseCarryState に移動（複数ストリーム間 CTM 継続）**
+
+`parse_content_stream()` が `ctm_stack` をローカル変数として保持していたため、
+`Contents` 配列内の複数ストリームをまたぐと CTM スタックがリセットされ、
+後続ストリームや Form XObject のテキスト座標が誤って変換される問題。
+
+- [x] `ParseCarryState` に `ctm_stack: Vec<[f32; 6]>` フィールド追加（初期値 `[IDENTITY_CTM]`）
+- [x] `parse_content_stream()` のローカル `ctm_stack` を `state.ctm_stack` に置換
+- [x] `extract_text_from_xobjects()` が各 Form XObject 呼び出し前後で CTM スタックを保存/復元
+
+**修正 3: Type3 フォント向け cross-BT Tj 置換**
+
+Chrome/Skia 生成 PDF は各文字を独立した `BT … Tj … ET` ブロックに配置する。
+`rewrite_content_stream()` が BT/ET ブロック内のみをマッチするため `replace_text()` が常に 0 を返す問題。
+`diagnose_match_failure()` では `"type3-char-per-tj"` として検出されていたが、実際の置換は未対応だった。
+
+- [x] `src/replace.rs` — `CrossBtMatch` 構造体追加
+- [x] `find_cross_bt_matches()` 関数追加（BT/ET 境界をまたぐ置換ターゲットを検出）
+- [x] `rewrite_content_stream()` に cross-BT マッチ処理追加（最初のブロックの Tf/Tm/Td を保持・置換テキスト出力・残ブロック抑制）
+
+### テスト（v1.5.8 完了時点）
+
+テスト追加なし。デフォルト features で 310 件、--all-features で 407 件。
+
+- [x] `cargo test` — 全件パス
+- [x] `cargo clippy` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.8 公開済み

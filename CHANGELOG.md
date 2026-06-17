@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.8] — 2026-06-17
+
+### Fixed (harumi)
+
+- **`finalize()` CTM isolation** (`src/document.rs`) —
+  `finalize()` now calls `wrap_page_contents_in_q_q()` before `append_to_contents()`
+  when flushing pending text/draw operations onto an existing page.  Previously, any
+  unbalanced `cm` operator in the existing page content could leak into the newly
+  appended stream and misplace the added content.  `overlay_from()` already had this
+  fix; the `finalize()` path was simply missed.
+
+- **`ctm_stack` persists across multiple content streams** (`src/extract.rs`) —
+  `ParseCarryState` gains a `ctm_stack: Vec<[f32; 6]>` field (initialized to
+  `[IDENTITY_CTM]`) that replaces the local `ctm_stack` variable inside
+  `parse_content_stream()`.  Per the PDF spec, multiple streams in a `Contents`
+  array share the same graphics state; previously each stream restarted the CTM
+  stack from `state.ctm` (last `Do`-time CTM only), causing incorrect text
+  coordinates when a page had several content streams with `cm` operators between
+  them.  `extract_text_from_xobjects()` saves/restores the stack around each
+  Form XObject call so every XObject gets a fresh stack seeded with its own
+  `multiply_ctm(do_ctm, xobj_matrix)`.
+
+- **Cross-BT `Tj` replacement for Type3 fonts** (`src/replace.rs`) —
+  Chrome/Skia PDFs place each character in its own `BT … Tj … ET` block.
+  The existing `rewrite_content_stream()` only matched text within a single BT/ET
+  block, so `replace_text()` always returned 0 on these PDFs.
+  New `CrossBtMatch` struct + `find_cross_bt_matches()` function detect replacement
+  targets that span multiple BT/ET blocks.  The rewriter condenses all matched
+  blocks into one, preserving the first block's positioning setup (Tf/Tm/Td),
+  emitting the replacement text, and suppressing the remaining blocks.
+
+---
+
 ## [1.5.6] — 2026-06-15
 
 ### Changed

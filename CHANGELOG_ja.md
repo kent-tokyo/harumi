@@ -11,6 +11,37 @@
 
 ---
 
+## [1.5.8] — 2026-06-17
+
+### 修正 (harumi)
+
+- **`finalize()` CTM 分離** (`src/document.rs`) —
+  既存ページに保留中のテキスト/描画操作を書き込む際、`finalize()` が
+  `append_to_contents()` の前に `wrap_page_contents_in_q_q()` を呼び出すよう修正。
+  既存のページコンテンツに不均衡な `cm` 演算子が含まれる場合、新規追加ストリームの
+  座標系に影響を与え、テキストや図形がずれる問題があった。
+  `overlay_from()` には既に同修正が適用されており、`finalize()` パスのみ漏れていた。
+
+- **`ctm_stack` を複数コンテンツストリーム間で保持** (`src/extract.rs`) —
+  `ParseCarryState` に `ctm_stack: Vec<[f32; 6]>` フィールドを追加（初期値 `[IDENTITY_CTM]`）し、
+  `parse_content_stream()` 内のローカル変数を置き換え。PDF 仕様では `Contents` 配列内の
+  複数ストリームはグラフィクス状態を共有するが、従来は各ストリーム呼び出しごとに
+  `state.ctm`（最後の `Do` 時 CTM のみ）から CTM スタックを再初期化していた。
+  `cm` 演算子を含む複数コンテンツストリームのあるページでテキスト座標が誤って変換される
+  問題を修正。`extract_text_from_xobjects()` は各 Form XObject の呼び出し前後で
+  スタックを保存/復元し、`multiply_ctm(do_ctm, xobj_matrix)` で初期化された独立した
+  スタックを XObject ごとに提供する。
+
+- **Type3 フォント向け cross-BT `Tj` 置換** (`src/replace.rs`) —
+  Chrome/Skia 生成 PDF は各文字を独立した `BT … Tj … ET` ブロックに格納する。
+  従来の `rewrite_content_stream()` は1つの BT/ET ブロック内のテキストしかマッチせず、
+  `replace_text()` がこの形式の PDF で常に 0 を返していた。
+  新規 `CrossBtMatch` 構造体と `find_cross_bt_matches()` 関数で複数 BT/ET ブロックを
+  またぐ置換ターゲットを検出。最初のブロックの位置設定（Tf/Tm/Td）を保持したまま
+  置換テキストを出力し、残りのブロックを抑制して1つの BT/ET ブロックに集約する。
+
+---
+
 ## [1.5.6] — 2026-06-15
 
 ### 追加 (harumi)

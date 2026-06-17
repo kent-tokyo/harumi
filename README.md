@@ -940,6 +940,7 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v1.5.4** | Fix Type3 font support in text extraction (`collect_font_dict_entries` now includes `/Subtype /Type3`); fixes zero-output on Chrome/Skia PDFs that use only Type3 fonts |
 | **v1.5.5** | Fix Overlay CTM coordinate transform — `parse_content_stream` now tracks `q`/`Q`/`cm` and transforms `TextFragment` coordinates to page space; Chrome/Skia PDFs (scale + Y-flip CTM) now have correctly positioned overlay text |
 | **v1.5.6** | Three Chrome/Skia PDF bug fixes: (1) `overlay_from` wraps existing page contents in `q`/`Q` to isolate unbalanced `cm` operators; (2) `extract_text_from_xobjects` tracks per-`Do` CTM via `ParseCarryState.do_ctm_map`, applying each XObject's specific CTM instead of the last accumulated one; (3) `diagnose_match_failure` adds cross-BT scan returning `"type3-char-per-tj"` for Type3 font text spanning BT/ET boundaries |
+| **v1.5.8** | Three translation visual bug fixes: (1) `finalize()` now calls `wrap_page_contents_in_q_q()` before `append_to_contents()` so unbalanced `cm` in existing content doesn't misplace appended text/draw streams; (2) `ctm_stack` moved into `ParseCarryState` so it persists correctly across multiple `Contents`-array streams (per-XObject CTM for Form XObjects); (3) cross-BT `Tj` replacement for Chrome/Skia Type3 PDFs — `find_cross_bt_matches()` + `CrossBtMatch` handle text split across BT/ET blocks, enabling `replace_text()` to work on these PDFs |
 
 ---
 
