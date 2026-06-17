@@ -213,6 +213,91 @@ fn count_matches_in_raw_streams(
                 }
             }
         }
+
+        // Cross-BT pass: count matches spanning multiple BT/ET blocks.
+        // Chrome/Skia Type3 PDFs place one character per BT/Tj/ET block, so
+        // neither the per-segment nor the cross-Tf pass ever finds multi-char text.
+        // Mirror diagnose_match_failure() Tier 3: track font without in_bt guard.
+        // The `first_bt != last_bt` guard prevents double-counting intra-BT matches.
+        if plen > 0 {
+            struct BtChar { ch: char, bt_op: usize }
+            let mut bt_chars: Vec<BtChar> = Vec::new();
+            let mut cur_font_cb: Vec<u8> = Vec::new();
+            let mut cur_bt_op_cb: usize = 0;
+
+            for (op_idx, op) in ops.iter().enumerate() {
+                match op.keyword.as_slice() {
+                    b"BT" => { cur_bt_op_cb = op_idx; }
+                    b"Tf" => {
+                        if let Some(Operand::Name(name)) = op.operands.first() {
+                            cur_font_cb = name.clone();
+                        }
+                    }
+                    b"Tj" => {
+                        if let Some(Operand::Str(str_bytes)) = op.operands.first() {
+                            let Some(fi) = fonts.get(&cur_font_cb) else { continue };
+                            let bt = cur_bt_op_cb;
+                            if fi.bytes_per_char == 2 {
+                                if str_bytes.len().is_multiple_of(2) {
+                                    for chunk in str_bytes.chunks(2) {
+                                        let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                        if let Some(&ch) = fi.to_unicode.get(&gid) {
+                                            bt_chars.push(BtChar { ch, bt_op: bt });
+                                        }
+                                    }
+                                }
+                            } else {
+                                for &b in str_bytes.iter() {
+                                    if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
+                                        bt_chars.push(BtChar { ch, bt_op: bt });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    b"TJ" => {
+                        if let Some(Operand::Array(arr)) = op.operands.first() {
+                            let Some(fi) = fonts.get(&cur_font_cb) else { continue };
+                            let bt = cur_bt_op_cb;
+                            for elem in arr {
+                                if let ArrElem::Str(str_bytes) = elem {
+                                    if fi.bytes_per_char == 2 {
+                                        if str_bytes.len().is_multiple_of(2) {
+                                            for chunk in str_bytes.chunks(2) {
+                                                let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                                if let Some(&ch) = fi.to_unicode.get(&gid) {
+                                                    bt_chars.push(BtChar { ch, bt_op: bt });
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        for &b in str_bytes.iter() {
+                                            if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
+                                                bt_chars.push(BtChar { ch, bt_op: bt });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let flat_chars: Vec<char> = bt_chars.iter().map(|c| c.ch).collect();
+            let mut pos = 0usize;
+            while pos + plen <= flat_chars.len() {
+                if flat_chars[pos..pos + plen] == pattern_chars[..] {
+                    if bt_chars[pos].bt_op != bt_chars[pos + plen - 1].bt_op {
+                        total += 1;
+                    }
+                    pos += plen;
+                } else {
+                    pos += 1;
+                }
+            }
+        }
     }
 
     Ok(total)
@@ -1361,7 +1446,8 @@ fn find_cross_bt_matches(
             b"BT" => {
                 in_bt = true;
                 cur_bt_op = op_idx;
-                cur_font.clear();
+                // Do NOT clear cur_font here: PDF text state (including font) persists
+                // across BT/ET pairs, so a Tf before this BT is still in effect.
             }
             b"ET" => {
                 if in_bt {
@@ -1369,7 +1455,8 @@ fn find_cross_bt_matches(
                 }
                 in_bt = false;
             }
-            b"Tf" if in_bt => {
+            b"Tf" => {
+                // No in_bt guard: Tf outside BT is legal and sets persistent text state.
                 if let (Some(Operand::Name(name)), Some(Operand::Num(size))) =
                     (op.operands.first(), op.operands.get(1))
                 {
