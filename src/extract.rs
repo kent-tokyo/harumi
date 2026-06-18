@@ -740,13 +740,27 @@ fn xobject_fonts(
     page_id: ObjectId,
     xobj_id: ObjectId,
 ) -> HashMap<Vec<u8>, crate::extract::FontInfo> {
-    doc.get_object(xobj_id)
+    // Page fonts serve as a fallback for XObjects that reference fonts defined on
+    // the parent page (common in PScript5.dll/Distiller PDFs where the XObject has
+    // its own /Resources dict but no /Font sub-entry).
+    let page_fonts = collect_fonts(doc, page_id);
+
+    let xobj_specific = doc.get_object(xobj_id)
         .ok()
         .and_then(|o| o.as_stream().ok())
         .and_then(|s| s.dict.get(b"Resources").ok())
         .and_then(|res_ref| resolve_dict(doc, res_ref))
         .map(|res_dict| collect_fonts_from_resources(doc, res_dict))
-        .unwrap_or_else(|| collect_fonts(doc, page_id))
+        .unwrap_or_default();
+
+    if xobj_specific.is_empty() {
+        page_fonts
+    } else {
+        // XObject-specific fonts take priority over page fonts on name collision.
+        let mut merged = page_fonts;
+        merged.extend(xobj_specific);
+        merged
+    }
 }
 
 fn xobject_matrix(doc: &lopdf::Document, xobj_id: ObjectId) -> [f32; 6] {
@@ -3625,5 +3639,109 @@ mod tests {
         assert!((state.ctm[0] - 0.24).abs() < eps, "ctm[0] should be 0.24, got {}", state.ctm[0]);
         assert!((state.ctm[3] - -0.24).abs() < eps, "ctm[3] should be -0.24, got {}", state.ctm[3]);
         assert!((state.ctm[5] - 841.0).abs() < eps, "ctm[5] should be 841, got {}", state.ctm[5]);
+    }
+
+    // Regression test for the PScript5.dll/Distiller pattern where a Form XObject
+    // has its own /Resources dict (e.g. /ProcSet only) but no /Font sub-entry.
+    // The XObject's content stream references fonts by name expecting them to be
+    // resolved from the parent page's /Resources/Font dictionary.
+    //
+    // Before the fix, xobject_fonts() returned an empty map (the /Resources dict
+    // existed so unwrap_or_else never fired), causing all text to be silently dropped.
+    #[test]
+    fn extract_xobject_font_from_page_resources() {
+        use lopdf::{Document, Stream};
+
+        let mut doc = Document::new();
+
+        // Font lives on the PAGE, not inside the XObject.
+        let mut font_d = Dictionary::new();
+        font_d.set("Type", Object::Name(b"Font".to_vec()));
+        font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font_d));
+
+        // Form XObject: has /Resources dict but NO /Font entry (only /ProcSet).
+        // Its content stream uses /F1 which is defined on the page, not here.
+        let mut xobj_res = Dictionary::new();
+        xobj_res.set(
+            "ProcSet",
+            Object::Array(vec![
+                Object::Name(b"PDF".to_vec()),
+                Object::Name(b"Text".to_vec()),
+            ]),
+        );
+        let mut xobj_d = Dictionary::new();
+        xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
+        xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
+        xobj_d.set(
+            "BBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
+        xobj_d.set("Resources", Object::Dictionary(xobj_res));
+        let xobj_id = doc.add_object(Object::Stream(Stream::new(
+            xobj_d,
+            b"BT /F1 12 Tf (Hello) Tj ET".to_vec(),
+        )));
+
+        // Page content: just invokes the XObject via Do.
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            b"/X1 Do".to_vec(),
+        )));
+
+        // Page has /Resources/Font with F1 and /Resources/XObject with X1.
+        let mut font_dict = Dictionary::new();
+        font_dict.set("F1", Object::Reference(font_id));
+        let mut xobj_dict = Dictionary::new();
+        xobj_dict.set("X1", Object::Reference(xobj_id));
+        let mut page_res = Dictionary::new();
+        page_res.set("Font", Object::Dictionary(font_dict));
+        page_res.set("XObject", Object::Dictionary(xobj_dict));
+
+        let mut page_d = Dictionary::new();
+        page_d.set("Type", Object::Name(b"Page".to_vec()));
+        page_d.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
+        page_d.set("Resources", Object::Dictionary(page_res));
+        page_d.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_d));
+
+        let mut pages_d = Dictionary::new();
+        pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_d.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+        if let Ok(obj) = doc.get_object_mut(page_id) {
+            if let Ok(d) = obj.as_dict_mut() {
+                d.set("Parent", Object::Reference(pages_id));
+            }
+        }
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(
+            text.contains("Hello"),
+            "XObject referencing page-level font must extract text; got: {text:?}"
+        );
     }
 }

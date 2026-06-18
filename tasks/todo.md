@@ -1736,3 +1736,82 @@ Chrome/Skia 生成 PDF は各文字を独立した `BT … Tj … ET` ブロッ�
 - [x] `cargo test` — 全件パス
 - [x] `cargo clippy` — 0 警告
 - [x] `cargo publish` — crates.io v1.5.8 公開済み
+
+---
+
+## 機能追加（v1.5.9）— 2026-06-17
+
+### ReplaceOptions + replace_text_opts / TextFragment.space_advance（完了）
+
+**追加 1: normalize_whitespace オプション**
+
+harumi-ai が `group_into_raw_lines()` で全フラグメント間にスペースを挿入するため、
+`replace_text()` に `"T h e F r e e"` が渡されるが、harumi の cross-BT マッチャーは
+`"TheFree"` と照合するため不一致になる問題。
+
+- [x] `src/document.rs` — `ReplaceOptions { normalize_whitespace: bool }` 構造体追加（`#[non_exhaustive]`）
+- [x] `PageHandle::replace_text_opts()` メソッド追加（API 境界で空白を正規化）
+- [x] `src/lib.rs` — `ReplaceOptions` を公開 re-export に追加
+
+**追加 2: TextFragment.space_advance**
+
+harumi-ai がフラグメント間スペース挿入要否を判断できるよう advance width 情報を追加。
+
+- [x] `src/extract.rs` — `TextFragment` に `space_advance: f32` フィールド追加（U+0020 のフォント advance width）
+- [x] `decode_chars_to_fragment()` で `to_unicode` の逆引きにより space GID を特定して計算
+- [x] テスト内の `TextFragment` 直接構築箇所に `space_advance: 0.0` を追加
+
+- [x] `cargo test` — 全件パス
+- [x] `cargo clippy` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.9 公開済み
+
+---
+
+## バグ修正（v1.5.10）— 2026-06-17
+
+### cross-BT マッチカウントバグ + find_cross_bt_matches フォント追跡修正（完了）
+
+**バグ 1（主）: count_matches_in_raw_streams に cross-BT カウントパスがない**
+
+`count_matches_in_page("TheFree")` が 0 を返し `PendingOp::Replace` が積まれない問題。
+
+- [x] `src/replace.rs` — `count_matches_in_raw_streams()` に cross-BT カウントパスを追加
+  - `in_bt` ガードなしで `Tf` を追跡（PDF 仕様: テキスト状態は BT/ET をまたいで持続）
+  - 各文字に BT ブロックインデックスを付与
+  - `first_bt != last_bt` のマッチのみ計上（intra-BT との二重計上防止）
+
+**バグ 2（副）: find_cross_bt_matches のフォント追跡**
+
+- [x] `src/replace.rs` — `BT` ハンドラから `cur_font.clear()` を削除
+- [x] `b"Tf" if in_bt` を `b"Tf"` に変更（in_bt ガード除去）
+
+- [x] `cargo test` — 全件パス
+- [x] `cargo clippy` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.10 公開済み
+
+---
+
+## バグ修正（v1.5.11）— 2026-06-17
+
+### 水平 Tm と テキスト状態演算子の cross-op マッチング対応（完了）
+
+**根本原因**: 伝統的な日本語 PDF（GHS SDS 等）は同一視覚行の各文字を絶対位置 `Tm` で配置する。
+中間演算子ホワイトリストが `Tm` を拒否していたため、cross-op マッチが全て破棄されていた。
+
+- [x] `collect_char_segments()` — 垂直 Tm（y 変化量 ≥ 1 pt）のみフラッシュ；水平 Tm は無視
+  - `tm_y: Option<f32>` トラッカー追加；BT でリセット
+- [x] `collect_cross_tf_segments()` — 同じ y デルタ判定を適用
+  - `seg_tm_y: Option<f32>` トラッカー追加；水平 Tm でフラッシュしない
+- [x] `find_cross_op_matches_inner()` — `b"Tm"` + `b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts"` をホワイトリストに追加
+- [x] `find_cross_tf_matches_inner()` — 同上
+- [x] `rewrite_content_stream()` — cross-op マッチ範囲内の `Tm`・`Tc`・`Tw`・`Tz`・`TL`・`Ts` を抑制
+  - `b"Tm" if in_bt && op_role.contains_key(&op_idx)` アーム追加
+  - `b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" if in_bt && op_role.contains_key(&op_idx)` アーム追加
+
+### テスト（v1.5.11 完了時点）
+
+テスト追加なし。デフォルト features で 310 件、--all-features で 407 件。
+
+- [x] `cargo test` — 全件パス
+- [x] `cargo clippy` — 0 警告
+- [x] `cargo publish` — crates.io v1.5.11 公開済み
