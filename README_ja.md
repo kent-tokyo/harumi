@@ -119,6 +119,8 @@ doc.save("searchable.pdf")?;
 | CMYKカラーを使いたい（印刷ワークフロー） | `Color::Cmyk([c, m, y, k])` — 統一された `Color` enum。`Color::Rgb()` は `From<[f32; 3]>` で互換性あり（v1.0+、破壊的変更） |
 | PDF の電子署名を検証したい | `doc.verify_signatures(&pdf_bytes)` — 全署名データを抽出（署名者・タイムスタンプ・フィールド名）、RSA PKCS#1 v1.5 暗号学的検証を実行、`is_valid: bool` 付き `SignatureInfo` を返す（`digital-signature` feature、v1.2.2+） |
 | PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |
+| TextFragment がどの PDF 演算子から生成されたか追跡したい | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 元の `Tj`/`TJ` キーワードの Content Stream 内バイトオフセット（v1.5.15+） |
+| 1文字ずつ Tj で描かれた PDF のテキストを置換したい | `page.replace_text_fragments(&frags, new_text, font)` — ソース演算子を `() Tj` で無効化し、最初のフラグメント位置に `new_text` を配置。PScript5/Distiller・Type3 レイアウトで `replace_text()` が一致しない場合の解決策（v1.5.15+） |
 
 ---
 
@@ -916,6 +918,9 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.10** | cross-BT マッチカウントが常にゼロになるバグ修正：`count_matches_in_raw_streams()` に cross-BT カウントパスを追加し `replace_text_opts(normalize_whitespace: true)` が Chrome/Skia Type3 PDF で実際に置換をキューに積むように；`find_cross_bt_matches()` のフォント追跡修正 — `BT` での `cur_font.clear()` と `Tf` の `in_bt` ガードを除去し、フォントが `BT`/`ET` をまたいで正しく持続するように（PDF 仕様準拠） |
 | **v1.5.11** | 伝統的な日本語 PDF（GHS SDS 等）の InPlace 一致率向上：同一視覚行上の各文字を `Tm` で配置するパターン（日本語 PDF 生成ツールで一般的）で cross-op・cross-Tf マッチが機能するように。`collect_char_segments` と `collect_cross_tf_segments` が垂直 Tm（y 変化量 ≥ 1 pt）のみフラッシュ；`Tm` とテキスト状態演算子（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）を中間演算子ホワイトリストに追加し `rewrite_content_stream` で抑制 |
 | **v1.5.12** | AES-256 暗号化 PDF のサイレントストリームスキップ修正：`page_content_streams()` と `decode_form_xobject()` が `decompress()` 失敗時に `stream.content` にフォールバック（lopdf が `load_with_password` 時に解凍済みの場合に対応）、ページあたり 13→40+ フラグメント改善；`ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` 診断 API；`TextFragment.tf_font_size` + `TextFragment.tm_y_scale` 新フィールド；ゼロ advance width フォールバック（0.5em/文字） |
+| **v1.5.13** | XObject フォント解決バグ修正：`xobject_fonts()` がページレベルのフォントをベースとして使用するよう変更。PScript5/Distiller 製 PDF で Form XObject が `/Resources` を持つが `/Font` サブエントリを持たない場合（フォントがページ側に定義される典型的な構造）のテキスト全ドロップを修正 |
+| **v1.5.14** | クロスストリーム BT/ET 状態の引き継ぎ：`in_bt`・現在のフォント・テキスト位置を `ParseCarryState` に移動し、ストリーム境界をまたいで保持。Distiller 製 PDF が単一の BT…ET ブロックを複数の `/Contents` 配列ストリームに分割するケース（前ストリームで BT が閉じられず後続ストリームで裸の `Tj` が 48 個破棄されるなど）を修正 |
+| **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 各フラグメントを生成した `Tj`/`TJ` のバイトオフセットで追跡；`PageHandle::replace_text_fragments(fragments, new_text, font)` — ソース演算子を `() Tj` で抑制し訳文を配置。1文字単位 Tj の PScript5/Distiller・Type3 PDF の InPlace 翻訳が可能に |
 
 ---
 

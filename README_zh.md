@@ -116,6 +116,8 @@ doc.save("searchable.pdf")?;
 | 需要从表格 PDF 中按单元格提取文本 | `extract_table_cells(&frags, page_width, page_height)` — 用 `detect_text_columns` 检测列，Y 坐标聚类检测行，返回 `Vec<TableCell>`。每个单元格含 `row`/`col`（从 0 起）、`text` 及边界框。无边框 PDF 为启发式检测（v1.5+） |
 | 需要验证 PDF 数字签名 | `doc.verify_signatures(&pdf_bytes)` — 提取签名元数据（签名者、时间戳、字段名）；密码学验证待做（`digital-signature` feature） |
 | 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
+| 需要追踪 TextFragment 来自哪个 PDF 算子 | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 记录原始 `Tj`/`TJ` 关键字在解压后内容流中的字节偏移（v1.5.15+） |
+| 需要替换每字符独立 Tj 的 PDF 文本 | `page.replace_text_fragments(&frags, new_text, font)` — 将源算子替换为 `() Tj` 以抑制原始字形，并在第一个片段位置放置 `new_text`；适用于 PScript5/Distiller 或 Type3 布局中 `replace_text()` 无法匹配的场景（v1.5.15+） |
 
 ---
 
@@ -798,6 +800,9 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.10** | 修复 cross-BT 匹配计数始终为零的问题：在 `count_matches_in_raw_streams()` 中添加 cross-BT 计数通道，使 `replace_text_opts(normalize_whitespace: true)` 真正为 Chrome/Skia Type3 PDF 排入替换操作；修复 `find_cross_bt_matches()` 字体追踪 — 移除 `BT` 上的 `cur_font.clear()` 和 `Tf` 的 `in_bt` 守卫，使字体在 `BT`/`ET` 间正确持续（符合 PDF 规范） |
 | **v1.5.11** | 提升传统日文 PDF（GHS SDS 等）的 InPlace 匹配率：同一视觉行上用 `Tm` 逐字定位的模式（日文 PDF 生成工具常见）现可正确匹配；`collect_char_segments` 和 `collect_cross_tf_segments` 仅在垂直 Tm（y 变化量 ≥ 1 pt）时刷新；`Tm` 及文本状态运算符（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）加入中间运算符白名单并在 `rewrite_content_stream` 中被抑制 |
 | **v1.5.12** | 修复 AES-256 加密 PDF 的静默流跳过：`page_content_streams()` 和 `decode_form_xobject()` 在 `decompress()` 失败时回退至 `stream.content`（lopdf 在 `load_with_password` 时可能已解压），修复每页 13→40+ 片段问题；`ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` 诊断 API；`TextFragment.tf_font_size` + `TextFragment.tm_y_scale` 新字段；零前进宽度回退（每字符 0.5em） |
+| **v1.5.13** | 修复 XObject 字体解析问题（PScript5/Distiller PDF）：`xobject_fonts()` 现以页面级字体为基础，解决 Form XObject 有 `/Resources` 但无 `/Font` 子条目时文本全部丢弃的问题 |
+| **v1.5.14** | 修复跨流 BT/ET 状态：`in_bt`、当前字体和文本位置移入 `ParseCarryState`，跨 `/Contents` 数组流边界保持；修复 Distiller PDF 将单个 BT…ET 块拆分到多个流时（后续流中裸 Tj 被丢弃）的文本提取问题 |
+| **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 算子级来源追踪；`PageHandle::replace_text_fragments(fragments, new_text, font)` — 将源 Tj/TJ 替换为 `() Tj` 以抑制原字形并放置译文；支持 PScript5/Distiller 及 Type3 逐字符 PDF 的原位翻译 |
 
 ---
 

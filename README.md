@@ -115,6 +115,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum; `Color::Rgb()` still works via `From<[f32; 3]>` (v1.0+, breaking change) |
 | Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — extracts all signature data (signer, timestamp, field name); performs RSA PKCS#1 v1.5 cryptographic verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
 | Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |
+| Need to trace which PDF operator produced a TextFragment | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — byte offset of the originating `Tj`/`TJ` keyword in the decompressed content stream (v1.5.15+) |
+| Need to replace per-character text (one glyph per Tj) | `page.replace_text_fragments(&frags, new_text, font)` — suppresses each source `Tj`/`TJ` operator with `() Tj` and places `new_text` at the first fragment's position; works on PScript5/Distiller and Type3 layouts where `replace_text()` cannot match (v1.5.15+) |
 
 ---
 
@@ -793,6 +795,8 @@ let n: usize = doc.page(1)?.replace_text_preserve_font(old_text, new_text)?;
 let n: usize = doc.page(1)?.can_replace_text(old_text, new_text)?;
 // Replace text + expand font subset to include new characters
 let n: usize = doc.page(1)?.replace_text_resubset(old, new, font_bytes)?;
+// Suppress source Tj/TJ operators for per-character PDFs and place new text
+let n: usize = doc.page(1)?.replace_text_fragments(&frags, new_text, font)?;
 
 // Styled visible text (bold/italic synthetic effects, no extra font file needed)
 doc.page(1)?.add_text_styled(text, font, [x, y], size, [r, g, b], bold, italic)?;
@@ -945,6 +949,9 @@ harumi aims for **zero external runtime dependencies** beyond core PDF handling.
 | **v1.5.10** | Fix cross-BT match count always returning zero: added cross-BT counting pass to `count_matches_in_raw_streams()` so `replace_text_opts(normalize_whitespace: true)` actually queues the replacement for Chrome/Skia Type3 PDFs; fix `find_cross_bt_matches()` font tracking — removed `cur_font.clear()` on `BT` and `in_bt` guard on `Tf` so font persists correctly across `BT`/`ET` pairs (per PDF spec) |
 | **v1.5.11** | Improve InPlace match rate for traditional Japanese PDFs (GHS SDS etc.): horizontal `Tm` operators between characters in the same visual line no longer break cross-op/cross-Tf matching — `collect_char_segments` and `collect_cross_tf_segments` now flush only on vertical Tm (y-delta ≥ 1 pt); `Tm` and text-state ops (`Tc`/`Tw`/`Tz`/`TL`/`Ts`) added to the intermediate-ops whitelist and suppressed in `rewrite_content_stream` |
 | **v1.5.12** | Fix silent stream skip for AES-256 encrypted PDFs: `page_content_streams()` and `decode_form_xobject()` now fall back to `stream.content` when `decompress()` fails (lopdf may have already decoded the stream during `load_with_password`), fixing 13→40+ fragments/page; `ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` diagnostic API; `TextFragment.tf_font_size` + `TextFragment.tm_y_scale` new fields; zero advance-width fallback (`0.5em` per char) |
+| **v1.5.13** | Fix XObject font resolution for PScript5/Distiller PDFs: `xobject_fonts()` now uses page-level fonts as a base so Form XObjects with a `/Resources` dict but no `/Font` sub-entry can still resolve fonts declared on the parent page |
+| **v1.5.14** | Fix cross-stream BT/ET state: `in_bt`, current font, and text position are now stored in `ParseCarryState` and survive stream boundaries; fixes Distiller PDFs that split a single BT…ET block across multiple `/Contents` array streams (e.g. 48 bare `Tj` ops discarded after an unclosed BT in a preceding stream) |
+| **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — operator-level source tracking linking each fragment to its originating `Tj`/`TJ` byte offset; `PageHandle::replace_text_fragments(fragments, new_text, font)` — suppresses source operators with `() Tj` and places translation at the first fragment's position; enables clean InPlace translation of per-character PDFs (PScript5/Distiller, Type3 layouts) |
 
 ---
 

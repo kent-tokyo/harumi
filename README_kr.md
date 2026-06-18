@@ -118,6 +118,8 @@ doc.save("searchable.pdf")?;
 | 테이블 PDF에서 셀 단위로 텍스트 추출 | `extract_table_cells(&frags, page_width, page_height)` — `detect_text_columns`로 열, Y 좌표 클러스터링으로 행을 감지해 `Vec<TableCell>` 반환. 각 셀에 `row`/`col`(0-기반)·`text`·바운딩 박스 포함. 격자선 없는 PDF는 휴리스틱（v1.5+） |
 | PDF 디지털 서명을 검증하고 싶다 | `doc.verify_signatures(&pdf_bytes)` — 서명 메타데이터（서명자, 타임스탬프, 필드명）추출；암호화 검증은 TODO（`digital-signature` feature） |
 | PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
+| TextFragment가 어떤 PDF 연산자에서 생성됐는지 추적 | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 원본 `Tj`/`TJ` 키워드의 내용 스트림 내 바이트 오프셋（v1.5.15+） |
+| 문자별 Tj로 그려진 PDF 텍스트를 교체하고 싶다 | `page.replace_text_fragments(&frags, new_text, font)` — 소스 연산자를 `() Tj`로 억제하고 첫 번째 fragment 위치에 `new_text` 배치；PScript5/Distiller·Type3 레이아웃에서 `replace_text()`가 일치하지 않을 때 사용（v1.5.15+） |
 
 ---
 
@@ -799,6 +801,9 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.5.10** | cross-BT 매치 카운트가 항상 0을 반환하는 버그 수정：`count_matches_in_raw_streams()`에 cross-BT 카운팅 패스를 추가하여 `replace_text_opts(normalize_whitespace: true)`가 Chrome/Skia Type3 PDF에서 실제로 교체 작업을 큐에 쌓도록；`find_cross_bt_matches()` 폰트 추적 수정 — `BT`의 `cur_font.clear()`와 `Tf`의 `in_bt` 가드를 제거하여 `BT`/`ET` 간에 폰트가 올바르게 유지되도록（PDF 규격 준수） |
 | **v1.5.11** | 전통적인 일본어 PDF（GHS SDS 등）InPlace 일치율 향상：같은 시각 줄에서 문자별 `Tm`으로 위치를 지정하는 패턴（일본어 PDF 생성 도구에서 일반적）이 cross-op/cross-Tf 매칭에서 올바르게 작동；`collect_char_segments` 및 `collect_cross_tf_segments`가 수직 Tm（y 변화량 ≥ 1 pt）에만 플러시；`Tm` 및 텍스트 상태 연산자（`Tc`/`Tw`/`Tz`/`TL`/`Ts`）를 중간 연산자 허용 목록에 추가하고 `rewrite_content_stream`에서 억제 |
 | **v1.5.12** | AES-256 암호화 PDF의 자동 스트림 스킵 수정：`page_content_streams()`와 `decode_form_xobject()`가 `decompress()` 실패 시 `stream.content`로 폴백（lopdf가 `load_with_password` 중 이미 압축 해제한 경우 대응）, 페이지당 13→40+ 프래그먼트로 개선；`ExtractionWarning`/`WarningKind` + `extract_text_runs_verbose()` 진단 API；`TextFragment.tf_font_size` + `TextFragment.tm_y_scale` 새 필드；제로 전진 너비 폴백（문자당 0.5em） |
+| **v1.5.13** | XObject 폰트 해석 버그 수정（PScript5/Distiller PDF）：`xobject_fonts()`가 페이지 수준 폰트를 기반으로 사용하도록 변경；Form XObject에 `/Resources`는 있지만 `/Font` 하위 항목이 없는 경우（Distiller PDF의 전형적인 구조）텍스트 전체 누락 수정 |
+| **v1.5.14** | 크로스 스트림 BT/ET 상태 유지：`in_bt`・현재 폰트・텍스트 위치를 `ParseCarryState`에 이동해 스트림 경계를 초월해 보존；Distiller PDF가 단일 BT…ET 블록을 여러 `/Contents` 배열 스트림으로 분할할 때 후속 스트림의 `Tj` 전체 누락 수정 |
+| **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 연산자 수준 소스 추적；`PageHandle::replace_text_fragments(fragments, new_text, font)` — 소스 Tj/TJ를 `() Tj`로 억제하고 번역 텍스트 배치；PScript5/Distiller·Type3 문자별 PDF의 InPlace 번역 가능 |
 
 ---
 

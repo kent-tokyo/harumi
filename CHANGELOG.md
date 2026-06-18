@@ -11,6 +11,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.15] — 2026-06-18
+
+### Added (harumi)
+
+- **`TextFragment` source-operator fields** (`src/extract.rs`) —
+  Three new public fields on `TextFragment` link each fragment back to the
+  content-stream operator that produced it:
+  - `source_stream: Option<usize>` — zero-based index into the page `/Contents`
+    array.  `None` for fragments that come from Form XObjects.
+  - `source_op_start: Option<usize>` — byte offset of the `Tj` / `TJ` keyword
+    in the decompressed stream identified by `source_stream`.
+  - `source_op_end: Option<usize>` — byte offset one past the keyword end
+    (`source_op_start + 2` for both operators).
+  These fields enable `replace_text_fragments` (below) and give callers full
+  traceability from a rendered glyph back to its PDF operator.
+
+- **`PageHandle::replace_text_fragments(fragments, new_text, font)`** (`src/document.rs`) —
+  Suppress the `Tj`/`TJ` operators that produced the given `TextFragment` slice
+  and place `new_text` at the first fragment's position.
+  Each fragment with a valid `source_stream` / `source_op_start` has its
+  source operator rewritten to `() Tj` (empty string — glyph not rendered).
+  `new_text` is then queued as a `PendingOp::Text` run at the anchor fragment's
+  `(x, y, font_size)`.  Returns the number of operators suppressed.
+  Primary use case: per-character PDFs (PScript5/Distiller or Type3 layouts)
+  where each glyph lives in a separate `BT (ch) Tj ET` block, making
+  `replace_text("original line", "translation")` structurally impossible.
+
+### Changed (harumi)
+
+- **`tokenize()` internal return type** (`src/extract.rs`) —
+  Changed from `Vec<Token>` to `Vec<(Token, usize)>` to carry the byte offset
+  of each token.  This is a private function; no public API is affected.
+
+- **`parse_content_stream()` signature** (`src/extract.rs`) —
+  Added `stream_idx: Option<usize>` parameter (private function; callers in
+  `extract_text_runs_from_page` pass the loop index; XObject paths pass `None`).
+
+---
+
 ## [1.5.14] — 2026-06-18
 
 ### Fixed (harumi)
