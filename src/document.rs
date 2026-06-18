@@ -228,6 +228,15 @@ pub struct FragmentReplaceOpts {
     pub y_offset: f32,
     /// Text color.  Defaults to black `[0.0, 0.0, 0.0]` when `None`.
     pub color: Option<Color>,
+    /// When `true` and `max_width` is set, reduce the font size proportionally
+    /// until the replacement text fits on a single line within `max_width`.
+    /// The font size is never reduced below `min_font_size`.
+    /// If the text still does not fit at `min_font_size`, it is rendered at
+    /// that size without truncation.  Default `false`.
+    pub shrink_to_fit: bool,
+    /// Minimum font size (PDF points) used when `shrink_to_fit` is `true`.
+    /// Ignored when `shrink_to_fit` is `false`.  Default `4.0`.
+    pub min_font_size: f32,
 }
 
 impl Default for FragmentReplaceOpts {
@@ -237,6 +246,8 @@ impl Default for FragmentReplaceOpts {
             max_width: None,
             y_offset: 0.0,
             color: None,
+            shrink_to_fit: false,
+            min_font_size: 4.0,
         }
     }
 }
@@ -4002,10 +4013,33 @@ impl<'doc> PageHandle<'doc> {
                 .find(|f| f.source_stream.is_some() || f.source_xobject.is_some())
                 .or_else(|| fragments.first());
             if let Some(frag) = anchor {
-                let fs = opts.font_size.unwrap_or(frag.font_size).max(1.0);
+                let fs_initial = opts.font_size.unwrap_or(frag.font_size).max(1.0);
                 let ax = frag.x;
                 let ay = frag.y + opts.y_offset;
                 let color = opts.color.unwrap_or(Color::Rgb([0.0, 0.0, 0.0]));
+
+                // Apply shrink_to_fit: reduce font size proportionally until
+                // the text fits on one line within max_width.
+                let fs = if opts.shrink_to_fit {
+                    if let Some(max_w) = opts.max_width {
+                        let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
+                        let min_fs = opts.min_font_size.max(1.0);
+                        let mut candidate = fs_initial;
+                        loop {
+                            let w = calculate_text_width(new_text, font_bytes, candidate)
+                                .unwrap_or(max_w);
+                            if w <= max_w || candidate <= min_fs {
+                                break;
+                            }
+                            candidate = (candidate * max_w / w).max(min_fs);
+                        }
+                        candidate
+                    } else {
+                        fs_initial
+                    }
+                } else {
+                    fs_initial
+                };
 
                 let lines: Vec<String> = if let Some(max_w) = opts.max_width {
                     let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;

@@ -174,6 +174,53 @@ impl FontInfo {
 // Public APIs for text extraction utilities
 // ---------------------------------------------------------------------------
 
+/// Return the axis-aligned bounding box that covers all fragments in `fragments`
+/// as `[x, y, width, height]` in PDF points (origin: bottom-left of the page).
+///
+/// Each fragment's vertical extent is estimated from its baseline (`y`) and
+/// `font_size`: ascender ≈ `font_size × 0.75` above the baseline, descender ≈
+/// `font_size × 0.25` below.  This is a good practical approximation for most
+/// Latin and CJK fonts; callers that need exact metrics can adjust the returned
+/// rectangle manually.
+///
+/// Returns `None` when `fragments` is empty.
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::{Document, text_fragment_bounds};
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let doc = Document::from_file("example.pdf")?;
+/// let fragments = doc.extract_text_runs(1)?;
+/// if let Some([x, y, w, h]) = text_fragment_bounds(&fragments) {
+///     println!("Text occupies ({x}, {y}) size {w}×{h} pt");
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn text_fragment_bounds(fragments: &[TextFragment]) -> Option<[f32; 4]> {
+    let mut x_min = f32::INFINITY;
+    let mut x_max = f32::NEG_INFINITY;
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+
+    for frag in fragments {
+        if !frag.x.is_finite() || !frag.y.is_finite() || !frag.font_size.is_finite() {
+            continue;
+        }
+        x_min = x_min.min(frag.x);
+        x_max = x_max.max(frag.x + frag.width.max(0.0));
+        // Baseline at frag.y; ascender ≈ 75 %, descender ≈ 25 % of em height.
+        y_min = y_min.min(frag.y - frag.font_size * 0.25);
+        y_max = y_max.max(frag.y + frag.font_size * 0.75);
+    }
+
+    if !x_min.is_finite() {
+        return None;
+    }
+    Some([x_min, y_min, (x_max - x_min).max(0.0), (y_max - y_min).max(0.0)])
+}
+
 /// Sort text fragments by reading order: top-to-bottom, then left-to-right.
 ///
 /// Fragments returned by [`crate::Document::extract_text_runs`] are in content-stream order.
@@ -3958,5 +4005,39 @@ mod tests {
             text.contains("Hello"),
             "text inside BT split across streams must be extracted; got: {text:?}"
         );
+    }
+
+    #[test]
+    fn text_fragment_bounds_empty() {
+        assert!(text_fragment_bounds(&[]).is_none());
+    }
+
+    #[test]
+    fn text_fragment_bounds_single() {
+        let frag = make_frag("A", 100.0, 700.0, 50.0, 12.0);
+        let [x, y, w, h] = text_fragment_bounds(&[frag]).unwrap();
+        let eps = 0.01;
+        assert!((x - 100.0).abs() < eps, "x={x}");
+        assert!((y - (700.0 - 12.0 * 0.25)).abs() < eps, "y={y}");
+        assert!((w - 50.0).abs() < eps, "w={w}");
+        assert!((h - 12.0).abs() < eps, "h={h}"); // 0.75 + 0.25 = 1.0 × font_size
+    }
+
+    #[test]
+    fn text_fragment_bounds_multiple() {
+        // Two fragments at different positions.
+        let a = make_frag("A", 50.0, 700.0, 40.0, 12.0);
+        let b = make_frag("B", 200.0, 680.0, 60.0, 14.0);
+        let [x, y, w, h] = text_fragment_bounds(&[a, b]).unwrap();
+        let eps = 0.01;
+        // x_min = 50, x_max = 260 → width = 210
+        assert!((x - 50.0).abs() < eps, "x={x}");
+        assert!((w - 210.0).abs() < eps, "w={w}");
+        // y_min = min(700-3, 680-3.5) = 676.5
+        let expected_y_min = f32::min(700.0 - 12.0 * 0.25, 680.0 - 14.0 * 0.25);
+        assert!((y - expected_y_min).abs() < eps, "y={y}");
+        // y_max = max(700+9, 680+10.5) = 709
+        let expected_y_max = f32::max(700.0 + 12.0 * 0.75, 680.0 + 14.0 * 0.75);
+        assert!((h - (expected_y_max - expected_y_min)).abs() < eps, "h={h}");
     }
 }

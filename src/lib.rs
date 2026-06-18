@@ -112,7 +112,7 @@ pub use error::{Error, Result};
 pub use extract::{
     ColumnZone, ExtractionWarning, GroupingStrategy, TableCell, TextFragment, TextGroup,
     WarningKind, detect_text_columns, extract_table_cells, group_text_fragments,
-    sort_by_reading_order,
+    sort_by_reading_order, text_fragment_bounds,
 };
 pub use font::FontHandle;
 
