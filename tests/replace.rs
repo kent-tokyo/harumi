@@ -795,3 +795,119 @@ fn replace_text_fragments_suppresses_source_ops() {
         "new text not found after replace_text_fragments: {after:?}"
     );
 }
+
+#[test]
+fn replace_text_fragments_xobject() {
+    use lopdf::{Dictionary, Document as LDoc, Object, Stream};
+
+    // Build a PDF where text lives in a Form XObject (like Chrome/Skia or Distiller PDFs).
+    let mut ldoc = LDoc::new();
+
+    // Simple Type1 font.
+    let mut font_d = Dictionary::new();
+    font_d.set("Type", Object::Name(b"Font".to_vec()));
+    font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    let font_id = ldoc.add_object(Object::Dictionary(font_d));
+
+    // Form XObject with "Hello" text.
+    let xobj_content = b"BT /F1 12 Tf 0 0 Td (Hello) Tj ET".to_vec();
+    let mut xobj_font_d = Dictionary::new();
+    xobj_font_d.set("F1", Object::Reference(font_id));
+    let mut xobj_res = Dictionary::new();
+    xobj_res.set("Font", Object::Dictionary(xobj_font_d));
+    let mut xobj_d = Dictionary::new();
+    xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
+    xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
+    xobj_d.set("BBox", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0),
+        Object::Integer(595), Object::Integer(842),
+    ]));
+    xobj_d.set("Resources", Object::Dictionary(xobj_res));
+    let xobj_id = ldoc.add_object(Object::Stream(Stream::new(xobj_d, xobj_content)));
+
+    // Page content: `Do` to invoke the XObject.
+    let page_content_id = ldoc.add_object(Object::Stream(Stream::new(
+        Dictionary::new(),
+        b"/X1 Do".to_vec(),
+    )));
+
+    // Page resources include the XObject.
+    let mut xobj_ref_d = Dictionary::new();
+    xobj_ref_d.set("X1", Object::Reference(xobj_id));
+    let mut page_res = Dictionary::new();
+    page_res.set("XObject", Object::Dictionary(xobj_ref_d));
+
+    let mut page_d = Dictionary::new();
+    page_d.set("Type", Object::Name(b"Page".to_vec()));
+    page_d.set("MediaBox", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0),
+        Object::Integer(595), Object::Integer(842),
+    ]));
+    page_d.set("Resources", Object::Dictionary(page_res));
+    page_d.set("Contents", Object::Reference(page_content_id));
+    let page_id = ldoc.add_object(Object::Dictionary(page_d));
+
+    let mut pages_d = Dictionary::new();
+    pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+    pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages_d.set("Count", Object::Integer(1));
+    let pages_id = ldoc.add_object(Object::Dictionary(pages_d));
+
+    if let Ok(obj) = ldoc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+        d.set("Parent", Object::Reference(pages_id));
+    }
+
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = ldoc.add_object(Object::Dictionary(catalog));
+    ldoc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut buf = Vec::new();
+    ldoc.save_to(&mut buf).unwrap();
+
+    // Load with harumi and extract fragments.
+    let mut doc = harumi::Document::from_bytes(&buf).unwrap();
+    let frags = doc.extract_text_runs(1).unwrap();
+
+    // All fragments from the XObject must have source_xobject set.
+    assert!(!frags.is_empty(), "expected fragments from XObject");
+    for f in &frags {
+        assert!(
+            f.source_xobject.is_some(),
+            "XObject fragment missing source_xobject: {:?}",
+            f.text
+        );
+        assert!(
+            f.source_stream.is_none(),
+            "XObject fragment should not have source_stream"
+        );
+    }
+
+    // Replace all XObject fragments.
+    let font = doc.embed_font(FONT).unwrap();
+    let suppressed = doc.page(1).unwrap()
+        .replace_text_fragments(&frags, "World", font)
+        .unwrap();
+    assert!(suppressed > 0, "expected at least 1 op suppressed, got 0");
+
+    // After save + reload, original text must be gone and new text present.
+    let out = doc.save_to_bytes().unwrap();
+    let reloaded = harumi::Document::from_bytes(&out).unwrap();
+    let after: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(
+        !after.contains("Hello"),
+        "XObject text still present after replace: {after:?}"
+    );
+    assert!(
+        after.contains("World"),
+        "replacement text not found: {after:?}"
+    );
+}

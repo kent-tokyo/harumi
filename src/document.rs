@@ -210,6 +210,37 @@ pub struct ReplaceOptions {
     pub normalize_whitespace: bool,
 }
 
+/// Placement options for [`PageHandle::replace_text_fragments_opts`].
+///
+/// Controls how the replacement text is sized, wrapped, and positioned.
+/// Construct with `FragmentReplaceOpts::default()` and override specific fields.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct FragmentReplaceOpts {
+    /// Font size for the placed text.  Defaults to the first fragment's `font_size`
+    /// when `None`.
+    pub font_size: Option<f32>,
+    /// Maximum line width in PDF points.  When set, long text is wrapped to fit
+    /// within this width using the same algorithm as `add_text_box`.
+    pub max_width: Option<f32>,
+    /// Y-axis adjustment applied to the anchor fragment's `y` coordinate.
+    /// Positive shifts text up; negative shifts down.  Default `0.0`.
+    pub y_offset: f32,
+    /// Text color.  Defaults to black `[0.0, 0.0, 0.0]` when `None`.
+    pub color: Option<Color>,
+}
+
+impl Default for FragmentReplaceOpts {
+    fn default() -> Self {
+        Self {
+            font_size: None,
+            max_width: None,
+            y_offset: 0.0,
+            color: None,
+        }
+    }
+}
+
 /// Raw font data stored before subsetting.
 struct RawFont {
     ttf_bytes: Vec<u8>,
@@ -3829,11 +3860,43 @@ impl<'doc> PageHandle<'doc> {
     ///
     /// # Errors
     /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
+    /// Suppress the `Tj`/`TJ` operators that produced `fragments` and place
+    /// `new_text` at the position of the first fragment.
+    ///
+    /// Equivalent to calling
+    /// [`replace_text_fragments_opts`](PageHandle::replace_text_fragments_opts)
+    /// with [`FragmentReplaceOpts::default()`].
     pub fn replace_text_fragments(
         &mut self,
         fragments: &[crate::extract::TextFragment],
         new_text: &str,
         font: FontHandle,
+    ) -> Result<usize> {
+        self.replace_text_fragments_opts(
+            fragments,
+            new_text,
+            font,
+            FragmentReplaceOpts::default(),
+        )
+    }
+
+    /// Like [`replace_text_fragments`](PageHandle::replace_text_fragments) but with
+    /// full control over how the replacement text is placed.
+    ///
+    /// Both page content streams (`source_stream`) and Form XObject streams
+    /// (`source_xobject`) are handled — the source operator is rewritten to `() Tj`
+    /// in whichever stream produced the fragment.
+    ///
+    /// When `opts.max_width` is set, the text is wrapped using the same algorithm
+    /// as [`add_text_box`](PageHandle::add_text_box) and multiple
+    /// `PendingOp::Text` entries are queued (one per line), positioned downward from
+    /// the anchor fragment's coordinates.
+    pub fn replace_text_fragments_opts(
+        &mut self,
+        fragments: &[crate::extract::TextFragment],
+        new_text: &str,
+        font: FontHandle,
+        opts: FragmentReplaceOpts,
     ) -> Result<usize> {
         use lopdf::Object;
         use std::collections::{HashMap, HashSet};
@@ -3842,8 +3905,66 @@ impl<'doc> PageHandle<'doc> {
             return Err(Error::InvalidFont(font.0));
         }
 
-        // Group target op-end positions by source stream index.
-        // We match ops by their `end` byte position, which equals source_op_end.
+        // Helper: decompress, suppress targeted ops, write back — returns count suppressed.
+        // This closure is used for both page-stream and XObject objects.
+        let suppress_in_object =
+            |doc: &mut lopdf::Document,
+             obj_id: lopdf::ObjectId,
+             target_op_ends: &HashSet<usize>|
+             -> usize {
+                let stream_bytes = {
+                    let Ok(obj) = doc.get_object(obj_id) else { return 0 };
+                    let Ok(stream) = obj.as_stream() else { return 0 };
+                    if stream.dict.get(b"Filter").is_ok() {
+                        let mut owned = stream.clone();
+                        if owned.decompress().is_err() {
+                            return 0;
+                        }
+                        owned.content
+                    } else {
+                        stream.content.clone()
+                    }
+                };
+
+                let ops = crate::replace::parse_ops(&stream_bytes);
+                let mut new_bytes: Vec<u8> = Vec::with_capacity(stream_bytes.len() + 64);
+                let mut prev_end = 0usize;
+                let mut suppressed = 0usize;
+
+                for op in &ops {
+                    if op.start > prev_end {
+                        new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
+                    }
+                    let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
+                        && target_op_ends.contains(&op.end);
+                    if is_target {
+                        new_bytes.extend_from_slice(b"() Tj");
+                        suppressed += 1;
+                    } else {
+                        new_bytes.extend_from_slice(&stream_bytes[op.start..op.end]);
+                    }
+                    prev_end = op.end;
+                }
+                if prev_end < stream_bytes.len() {
+                    new_bytes.extend_from_slice(&stream_bytes[prev_end..]);
+                }
+
+                if suppressed > 0
+                    && let Ok(obj) = doc.get_object_mut(obj_id)
+                    && let Ok(stream) = obj.as_stream_mut()
+                {
+                    stream.dict.remove(b"Filter");
+                    stream.dict.remove(b"DecodeParms");
+                    stream.dict.set("Length", Object::Integer(new_bytes.len() as i64));
+                    stream.content = new_bytes;
+                    stream.allows_compression = false;
+                }
+                suppressed
+            };
+
+        let mut total_suppressed = 0usize;
+
+        // --- Page content stream suppression ---
         let mut by_stream: HashMap<usize, HashSet<usize>> = HashMap::new();
         for frag in fragments {
             if let (Some(sidx), Some(_), Some(op_end)) =
@@ -3852,90 +3973,68 @@ impl<'doc> PageHandle<'doc> {
                 by_stream.entry(sidx).or_default().insert(op_end);
             }
         }
-
         let stream_ids =
             crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
-        let mut total_suppressed = 0usize;
-
         for (stream_idx, target_op_ends) in &by_stream {
             let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
-
-            // Decompress stream bytes.
-            let stream_bytes = {
-                let Ok(obj) = self.doc.inner.get_object(stream_id) else { continue };
-                let Ok(stream) = obj.as_stream() else { continue };
-                if stream.dict.get(b"Filter").is_ok() {
-                    let mut owned = stream.clone();
-                    if owned.decompress().is_err() {
-                        continue;
-                    }
-                    owned.content
-                } else {
-                    stream.content.clone()
-                }
-            };
-
-            // Rebuild stream: emit `() Tj` for targeted ops, verbatim for others.
-            let ops = crate::replace::parse_ops(&stream_bytes);
-            let mut new_bytes: Vec<u8> = Vec::with_capacity(stream_bytes.len() + 64);
-            let mut prev_end = 0usize;
-            let mut suppressed_here = 0usize;
-
-            for op in &ops {
-                // Inter-op whitespace / comments.
-                if op.start > prev_end {
-                    new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
-                }
-                let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
-                    && target_op_ends.contains(&op.end);
-                if is_target {
-                    new_bytes.extend_from_slice(b"() Tj");
-                    suppressed_here += 1;
-                } else {
-                    new_bytes.extend_from_slice(&stream_bytes[op.start..op.end]);
-                }
-                prev_end = op.end;
-            }
-            if prev_end < stream_bytes.len() {
-                new_bytes.extend_from_slice(&stream_bytes[prev_end..]);
-            }
-
-            if suppressed_here > 0 {
-                if let Ok(obj) = self.doc.inner.get_object_mut(stream_id)
-                    && let Ok(stream) = obj.as_stream_mut()
-                {
-                    stream.dict.remove(b"Filter");
-                    stream.dict.remove(b"DecodeParms");
-                    stream
-                        .dict
-                        .set("Length", Object::Integer(new_bytes.len() as i64));
-                    stream.content = new_bytes;
-                    stream.allows_compression = false;
-                }
-                total_suppressed += suppressed_here;
-            }
+            total_suppressed +=
+                suppress_in_object(&mut self.doc.inner, stream_id, target_op_ends);
         }
 
-        // Place new text at the position of the first trackable fragment.
+        // --- Form XObject stream suppression ---
+        let mut by_xobj: HashMap<(u32, u16), HashSet<usize>> = HashMap::new();
+        for frag in fragments {
+            if let (Some(xobj_id), Some(_), Some(op_end)) =
+                (frag.source_xobject, frag.source_op_start, frag.source_op_end)
+            {
+                by_xobj.entry(xobj_id).or_default().insert(op_end);
+            }
+        }
+        for (xobj_id, target_op_ends) in &by_xobj {
+            total_suppressed +=
+                suppress_in_object(&mut self.doc.inner, *xobj_id, target_op_ends);
+        }
+
+        // --- New text placement ---
         if !new_text.is_empty() && total_suppressed > 0 {
             let anchor = fragments
                 .iter()
-                .find(|f| f.source_stream.is_some())
+                .find(|f| f.source_stream.is_some() || f.source_xobject.is_some())
                 .or_else(|| fragments.first());
             if let Some(frag) = anchor {
-                self.push_op(PendingOp::Text(PendingText {
-                    font,
-                    text: new_text.to_owned(),
-                    x: frag.x,
-                    y: frag.y,
-                    font_size: frag.font_size,
-                    render_mode: 0,
-                    color: Color::Rgb([0.0, 0.0, 0.0]),
-                    opacity: 1.0,
-                    rotation_degrees: 0.0,
-                    bold: false,
-                    italic: false,
-                }));
+                let fs = opts.font_size.unwrap_or(frag.font_size).max(1.0);
+                let ax = frag.x;
+                let ay = frag.y + opts.y_offset;
+                let color = opts.color.unwrap_or(Color::Rgb([0.0, 0.0, 0.0]));
+
+                let lines: Vec<String> = if let Some(max_w) = opts.max_width {
+                    let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
+                    if let Ok(face) = ttf_parser::Face::parse(font_bytes, 0) {
+                        wrap_paragraph(new_text, &face, fs, max_w)
+                    } else {
+                        vec![new_text.to_owned()]
+                    }
+                } else {
+                    vec![new_text.to_owned()]
+                };
+
+                let line_height = fs * 1.2;
+                for (i, line) in lines.iter().enumerate() {
+                    let ly = ay - i as f32 * line_height;
+                    self.push_op(PendingOp::Text(PendingText {
+                        font,
+                        text: line.clone(),
+                        x: ax,
+                        y: ly,
+                        font_size: fs,
+                        render_mode: 0,
+                        color,
+                        opacity: 1.0,
+                        rotation_degrees: 0.0,
+                        bold: false,
+                        italic: false,
+                    }));
+                }
             }
         }
 

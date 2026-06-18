@@ -94,6 +94,14 @@ pub struct TextFragment {
     /// Byte offset one past the last byte of the `Tj`/`TJ` keyword
     /// (i.e. `source_op_start + 2` for both operators).
     pub source_op_end: Option<usize>,
+    /// `lopdf` `ObjectId` `(object_number, generation_number)` of the Form XObject
+    /// stream that produced this fragment.  `None` for fragments extracted from page
+    /// content streams.  When set, `source_stream` is `None`.
+    ///
+    /// Pass to [`PageHandle::replace_text_fragments`] alongside `source_op_start` /
+    /// `source_op_end` to suppress this fragment's originating operator inside the
+    /// XObject stream.
+    pub source_xobject: Option<(u32, u16)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -658,7 +666,7 @@ pub(crate) fn extract_text_runs_from_page(
     // Carry graphics state (colour, render-mode) across streams on the same page.
     let mut carry = ParseCarryState::default();
     for (stream_idx, stream_bytes) in streams.iter().enumerate() {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx));
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx), None);
     }
     // Also extract text from Form XObjects (headers, footers, watermarks).
     extract_text_from_xobjects(doc, page_id, &mut carry, &mut fragments, 0);
@@ -700,7 +708,7 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out, None);
+                parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
             }
         }
 
@@ -715,7 +723,7 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out, None);
+                parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
             }
         }
     }
@@ -923,7 +931,7 @@ pub(crate) fn extract_text_runs_from_page_verbose(
     let mut fragments = Vec::new();
     let mut carry = ParseCarryState::default();
     for (stream_idx, stream_bytes) in streams.iter().enumerate() {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx));
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx), None);
     }
     extract_text_from_xobjects_verbose(doc, page_id, &mut carry, &mut fragments, 0, &mut warnings);
     Ok((fragments, warnings))
@@ -954,7 +962,7 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out, None);
+                    parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
                 }
                 Err(warn) => { warnings.push(warn); }
             }
@@ -969,7 +977,7 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out, None);
+                    parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
                 }
                 Err(warn) => { warnings.push(warn); }
             }
@@ -2681,6 +2689,7 @@ fn parse_content_stream(
     state: &mut ParseCarryState,
     out: &mut Vec<TextFragment>,
     stream_idx: Option<usize>,
+    xobj_id: Option<(u32, u16)>,
 ) {
     let tokens = tokenize(bytes);
     let mut stack: Vec<(Token, usize)> = Vec::new();
@@ -2855,6 +2864,7 @@ fn parse_content_stream(
                             stream_idx,
                             op_start,
                             op_end,
+                            xobj_id,
                         ) {
                             // frag.width is page-space; advance local x cursor by local width.
                             let local_advance =
@@ -2890,6 +2900,7 @@ fn parse_content_stream(
                                         stream_idx,
                                         op_start,
                                         op_end,
+                                        xobj_id,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -2946,6 +2957,7 @@ fn decode_chars_to_fragment(
     source_stream: Option<usize>,
     source_op_start: Option<usize>,
     source_op_end: Option<usize>,
+    source_xobject: Option<(u32, u16)>,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -3023,6 +3035,7 @@ fn decode_chars_to_fragment(
         source_stream,
         source_op_start,
         source_op_end,
+        source_xobject,
     })
 }
 
@@ -3269,6 +3282,7 @@ mod tests {
             source_stream: None,
             source_op_start: None,
             source_op_end: None,
+            source_xobject: None,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -3300,6 +3314,7 @@ mod tests {
             source_stream: None,
             source_op_start: None,
             source_op_end: None,
+            source_xobject: None,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -3321,6 +3336,7 @@ mod tests {
             source_stream: None,
             source_op_start: None,
             source_op_end: None,
+            source_xobject: None,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3348,6 +3364,7 @@ mod tests {
             source_stream: None,
             source_op_start: None,
             source_op_end: None,
+            source_xobject: None,
         }
     }
 
@@ -3714,7 +3731,7 @@ mod tests {
 
         let mut state = ParseCarryState::default();
         let mut frags: Vec<TextFragment> = Vec::new();
-        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0));
+        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0), None);
 
         assert_eq!(frags.len(), 1, "expected one TextFragment");
         let f = &frags[0];
@@ -3749,7 +3766,7 @@ mod tests {
         let stream = b"q\n0.24 0 0 -0.24 0 841 cm\n/Fm0 Do\nQ\n";
         let mut state = ParseCarryState::default();
         let mut frags: Vec<TextFragment> = Vec::new();
-        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0));
+        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0), None);
 
         let eps = 1e-5f32;
         assert!((state.ctm[0] - 0.24).abs() < eps, "ctm[0] should be 0.24, got {}", state.ctm[0]);
