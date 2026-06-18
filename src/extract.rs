@@ -80,6 +80,20 @@ pub struct TextFragment {
     /// Useful when the PDF uses a pattern like `1 Tf  9 0 0 9 x y Tm` where `Tf`
     /// emits size 1 and the actual visual size comes entirely from the Tm matrix.
     pub tm_y_scale: f32,
+    /// Zero-based index into the page `/Contents` array identifying which content
+    /// stream produced this fragment.  `None` for fragments extracted from Form
+    /// XObjects or whenever source tracking is unavailable.
+    ///
+    /// Use together with [`source_op_start`](Self::source_op_start) and
+    /// [`source_op_end`](Self::source_op_end) to locate the originating `Tj`/`TJ`
+    /// operator for [`PageHandle::replace_text_fragments`].
+    pub source_stream: Option<usize>,
+    /// Byte offset of the first byte of the `Tj` or `TJ` keyword in the
+    /// decompressed content stream identified by `source_stream`.
+    pub source_op_start: Option<usize>,
+    /// Byte offset one past the last byte of the `Tj`/`TJ` keyword
+    /// (i.e. `source_op_start + 2` for both operators).
+    pub source_op_end: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -643,8 +657,8 @@ pub(crate) fn extract_text_runs_from_page(
     let mut fragments = Vec::new();
     // Carry graphics state (colour, render-mode) across streams on the same page.
     let mut carry = ParseCarryState::default();
-    for stream_bytes in &streams {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments);
+    for (stream_idx, stream_bytes) in streams.iter().enumerate() {
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx));
     }
     // Also extract text from Form XObjects (headers, footers, watermarks).
     extract_text_from_xobjects(doc, page_id, &mut carry, &mut fragments, 0);
@@ -686,7 +700,7 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out);
+                parse_content_stream(&content, &xobj_fonts, carry, out, None);
             }
         }
 
@@ -701,7 +715,7 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out);
+                parse_content_stream(&content, &xobj_fonts, carry, out, None);
             }
         }
     }
@@ -826,6 +840,25 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
     result
 }
 
+/// Returns the `ObjectId`s of the content streams in the page `/Contents` array,
+/// in order.  Used by `replace_text_fragments` to write back modified streams.
+pub(crate) fn page_content_stream_ids(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> Vec<ObjectId> {
+    let Ok(page_obj) = doc.get_object(page_id) else { return vec![] };
+    let Ok(page_dict) = page_obj.as_dict() else { return vec![] };
+    let Ok(contents_obj) = page_dict.get(b"Contents") else { return vec![] };
+    match contents_obj {
+        Object::Reference(id) => vec![*id],
+        Object::Array(arr) => arr
+            .iter()
+            .filter_map(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+            .collect(),
+        _ => vec![],
+    }
+}
+
 /// Like `page_content_streams` but also returns a warning for each stream that
 /// could not be decompressed and fell back to raw content.
 pub(crate) fn page_content_streams_verbose(
@@ -889,8 +922,8 @@ pub(crate) fn extract_text_runs_from_page_verbose(
 
     let mut fragments = Vec::new();
     let mut carry = ParseCarryState::default();
-    for stream_bytes in &streams {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments);
+    for (stream_idx, stream_bytes) in streams.iter().enumerate() {
+        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx));
     }
     extract_text_from_xobjects_verbose(doc, page_id, &mut carry, &mut fragments, 0, &mut warnings);
     Ok((fragments, warnings))
@@ -921,7 +954,7 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out);
+                    parse_content_stream(&content, &xobj_fonts, carry, out, None);
                 }
                 Err(warn) => { warnings.push(warn); }
             }
@@ -936,7 +969,7 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out);
+                    parse_content_stream(&content, &xobj_fonts, carry, out, None);
                 }
                 Err(warn) => { warnings.push(warn); }
             }
@@ -2255,7 +2288,11 @@ enum Token {
     Array(Vec<Token>),
 }
 
-fn tokenize(input: &[u8]) -> Vec<Token> {
+/// Tokenize a PDF content stream.  Returns `(token, byte_offset)` pairs where
+/// `byte_offset` is the index of the first byte of that token in `input`.
+/// Keyword offsets are used by `parse_content_stream` to populate
+/// `TextFragment::source_op_start` / `source_op_end`.
+fn tokenize(input: &[u8]) -> Vec<(Token, usize)> {
     let mut tokens = Vec::new();
     let mut i = 0;
 
@@ -2273,6 +2310,7 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
             continue;
         }
         if b == b'<' {
+            let tok_start = i;
             if i + 1 < input.len() && input[i + 1] == b'<' {
                 // Dictionary literal — skip until >>
                 i += 2;
@@ -2294,23 +2332,25 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
             if i < input.len() {
                 i += 1;
             }
-            tokens.push(Token::HexStr(decode_hex_bytes(hex)));
+            tokens.push((Token::HexStr(decode_hex_bytes(hex)), tok_start));
             continue;
         }
         if b == b'/' {
+            let tok_start = i;
             i += 1;
             let start = i;
             while i < input.len() && !is_pdf_whitespace(input[i]) && !is_pdf_delimiter(input[i]) {
                 i += 1;
             }
-            tokens.push(Token::Name(input[start..i].to_vec()));
+            tokens.push((Token::Name(input[start..i].to_vec()), tok_start));
             continue;
         }
         if b == b'[' {
+            let tok_start = i;
             i += 1;
             let (arr, consumed) = parse_array_tokens(&input[i..]);
             i += consumed;
-            tokens.push(Token::Array(arr));
+            tokens.push((Token::Array(arr), tok_start));
             continue;
         }
         if b == b']' {
@@ -2318,9 +2358,10 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
             continue;
         }
         if b == b'(' {
+            let tok_start = i;
             let (bytes, end_i) = parse_literal_string(input, i + 1);
             i = end_i;
-            tokens.push(Token::LitStr(bytes));
+            tokens.push((Token::LitStr(bytes), tok_start));
             continue;
         }
 
@@ -2338,10 +2379,10 @@ fn tokenize(input: &[u8]) -> Vec<Token> {
             && let Ok(n) = s.parse::<f32>()
             && n.is_finite()
         {
-            tokens.push(Token::Number(n));
+            tokens.push((Token::Number(n), start));
             continue;
         }
-        tokens.push(Token::Keyword(word.to_vec()));
+        tokens.push((Token::Keyword(word.to_vec()), start));
     }
 
     tokens
@@ -2639,9 +2680,10 @@ fn parse_content_stream(
     fonts: &HashMap<Vec<u8>, FontInfo>,
     state: &mut ParseCarryState,
     out: &mut Vec<TextFragment>,
+    stream_idx: Option<usize>,
 ) {
     let tokens = tokenize(bytes);
-    let mut stack: Vec<Token> = Vec::new();
+    let mut stack: Vec<(Token, usize)> = Vec::new();
     // Read text state from carry so that BT blocks split across stream boundaries
     // (a Distiller/PScript5 pattern) are handled correctly.
     let mut in_bt        = state.in_bt;
@@ -2654,7 +2696,7 @@ fn parse_content_stream(
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
-    for token in tokens {
+    for (token, tok_pos) in tokens {
         match token {
             Token::Keyword(kw) => match kw.as_slice() {
                 b"BT" => {
@@ -2670,7 +2712,9 @@ fn parse_content_stream(
                 b"Tf" if in_bt => {
                     let top = stack.pop();
                     let second = stack.pop();
-                    if let (Some(Token::Number(size)), Some(Token::Name(name))) = (top, second) {
+                    if let (Some((Token::Number(size), _)), Some((Token::Name(name), _))) =
+                        (top, second)
+                    {
                         font_name = name;
                         tf_font_size = size;
                         font_size = size;
@@ -2680,7 +2724,9 @@ fn parse_content_stream(
                 b"Td" | b"TD" if in_bt => {
                     let top = stack.pop();
                     let second = stack.pop();
-                    if let (Some(Token::Number(ty)), Some(Token::Number(tx))) = (top, second) {
+                    if let (Some((Token::Number(ty), _)), Some((Token::Number(tx), _))) =
+                        (top, second)
+                    {
                         x += tx;
                         y += ty;
                     }
@@ -2694,13 +2740,17 @@ fn parse_content_stream(
                     let pop_c = stack.pop(); // c = y-axis component of skew/rotation
                     stack.pop(); // b
                     stack.pop(); // a
-                    if let (Some(Token::Number(fy)), Some(Token::Number(ex))) = (pop_f, pop_e) {
+                    if let (Some((Token::Number(fy), _)), Some((Token::Number(ex), _))) =
+                        (pop_f, pop_e)
+                    {
                         x = ex;
                         y = fy;
                     }
                     // Compute effective font size from the Tm y-scale:
                     // y_scale = sqrt(c² + d²) handles both scaling and rotation.
-                    if let (Some(Token::Number(dv)), Some(Token::Number(cv))) = (pop_d, pop_c) {
+                    if let (Some((Token::Number(dv), _)), Some((Token::Number(cv), _))) =
+                        (pop_d, pop_c)
+                    {
                         let y_scale = (cv * cv + dv * dv).sqrt();
                         if y_scale > 0.0 {
                             font_size = tf_font_size * y_scale;
@@ -2710,7 +2760,7 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"Tr" => {
-                    if let Some(Token::Number(mode)) = stack.pop() {
+                    if let Some((Token::Number(mode), _)) = stack.pop() {
                         state.cur_render_mode = mode as u8;
                     }
                     stack.clear();
@@ -2720,9 +2770,9 @@ fn parse_content_stream(
                     let g_val = stack.pop();
                     let r_val = stack.pop();
                     if let (
-                        Some(Token::Number(bv)),
-                        Some(Token::Number(gv)),
-                        Some(Token::Number(rv)),
+                        Some((Token::Number(bv), _)),
+                        Some((Token::Number(gv), _)),
+                        Some((Token::Number(rv), _)),
                     ) = (b_val, g_val, r_val)
                     {
                         state.cur_color = [rv, gv, bv];
@@ -2730,7 +2780,7 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"g" => {
-                    if let Some(Token::Number(gray)) = stack.pop() {
+                    if let Some((Token::Number(gray), _)) = stack.pop() {
                         state.cur_color = [gray, gray, gray];
                     }
                     stack.clear();
@@ -2751,7 +2801,7 @@ fn parse_content_stream(
                     // Record the XObject name (top of stack) paired with the CTM active
                     // at this invocation so extract_text_from_xobjects() can apply the
                     // correct per-Do CTM rather than the last one in the stream.
-                    if let Some(Token::Name(name)) = stack.last() {
+                    if let Some((Token::Name(name), _)) = stack.last() {
                         state.do_ctm_map.push((name.clone(), ctm));
                     }
                     stack.clear();
@@ -2765,12 +2815,12 @@ fn parse_content_stream(
                     let bv = stack.pop();
                     let av = stack.pop();
                     if let (
-                        Some(Token::Number(f)),
-                        Some(Token::Number(e)),
-                        Some(Token::Number(d)),
-                        Some(Token::Number(c)),
-                        Some(Token::Number(b)),
-                        Some(Token::Number(a)),
+                        Some((Token::Number(f), _)),
+                        Some((Token::Number(e), _)),
+                        Some((Token::Number(d), _)),
+                        Some((Token::Number(c), _)),
+                        Some((Token::Number(b), _)),
+                        Some((Token::Number(a), _)),
                     ) = (fv, ev, dv, cv, bv, av)
                     {
                         let mat = [a, b, c, d, e, f];
@@ -2780,9 +2830,11 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"Tj" if in_bt => {
+                    let op_start = Some(tok_pos);
+                    let op_end   = Some(tok_pos + 2); // "Tj" is 2 bytes
                     let bytes_opt = match stack.pop() {
-                        Some(Token::HexStr(b)) => Some(b),
-                        Some(Token::LitStr(b)) => Some(b),
+                        Some((Token::HexStr(b), _)) => Some(b),
+                        Some((Token::LitStr(b), _)) => Some(b),
                         _ => None,
                     };
                     if let Some(char_bytes) = bytes_opt {
@@ -2800,6 +2852,9 @@ fn parse_content_stream(
                             state.cur_render_mode,
                             tf_font_size,
                             tm_y_scale,
+                            stream_idx,
+                            op_start,
+                            op_end,
                         ) {
                             // frag.width is page-space; advance local x cursor by local width.
                             let local_advance =
@@ -2811,7 +2866,9 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"TJ" if in_bt => {
-                    if let Some(Token::Array(items)) = stack.pop() {
+                    let op_start = Some(tok_pos);
+                    let op_end   = Some(tok_pos + 2); // "TJ" is 2 bytes
+                    if let Some((Token::Array(items), _)) = stack.pop() {
                         let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let scale = ctm_scale(ctm);
                         let mut cur_x = x; // local-space cursor
@@ -2830,6 +2887,9 @@ fn parse_content_stream(
                                         state.cur_render_mode,
                                         tf_font_size,
                                         tm_y_scale,
+                                        stream_idx,
+                                        op_start,
+                                        op_end,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -2856,7 +2916,7 @@ fn parse_content_stream(
                 }
             },
             other => {
-                stack.push(other);
+                stack.push((other, tok_pos));
             }
         }
     }
@@ -2883,6 +2943,9 @@ fn decode_chars_to_fragment(
     render_mode: u8,
     tf_font_size: f32,
     tm_y_scale: f32,
+    source_stream: Option<usize>,
+    source_op_start: Option<usize>,
+    source_op_end: Option<usize>,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -2957,6 +3020,9 @@ fn decode_chars_to_fragment(
         space_advance,
         tf_font_size,
         tm_y_scale,
+        source_stream,
+        source_op_start,
+        source_op_end,
     })
 }
 
@@ -3018,14 +3084,14 @@ mod tests {
     fn litstr_tokenizer_basic() {
         let stream = b"(Hello)";
         let tokens = tokenize(stream);
-        assert!(matches!(&tokens[0], Token::LitStr(b) if b == b"Hello"));
+        assert!(matches!(&tokens[0].0, Token::LitStr(b) if b == b"Hello"));
     }
 
     #[test]
     fn litstr_escapes() {
         let stream = b"(He\\nllo\\041)"; // \n and \041 = '!'
         let tokens = tokenize(stream);
-        match &tokens[0] {
+        match &tokens[0].0 {
             Token::LitStr(b) => {
                 assert_eq!(b[0], b'H');
                 assert_eq!(b[1], b'e');
@@ -3041,7 +3107,7 @@ mod tests {
     fn litstr_in_array() {
         let stream = b"[(Hel) -50 (lo)]";
         let tokens = tokenize(stream);
-        if let Token::Array(items) = &tokens[0] {
+        if let Token::Array(items) = &tokens[0].0 {
             assert!(matches!(&items[0], Token::LitStr(b) if b == b"Hel"));
             assert!(matches!(&items[1], Token::Number(n) if (*n + 50.0).abs() < 0.1));
             assert!(matches!(&items[2], Token::LitStr(b) if b == b"lo"));
@@ -3056,7 +3122,7 @@ mod tests {
         let tokens = tokenize(stream);
         let keywords: Vec<&[u8]> = tokens
             .iter()
-            .filter_map(|t| {
+            .filter_map(|(t, _)| {
                 if let Token::Keyword(k) = t {
                     Some(k.as_slice())
                 } else {
@@ -3200,6 +3266,9 @@ mod tests {
             space_advance: 0.0,
             tf_font_size: 12.0,
             tm_y_scale: 1.0,
+            source_stream: None,
+            source_op_start: None,
+            source_op_end: None,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -3228,6 +3297,9 @@ mod tests {
             space_advance: 0.0,
             tf_font_size: 12.0,
             tm_y_scale: 1.0,
+            source_stream: None,
+            source_op_start: None,
+            source_op_end: None,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -3246,6 +3318,9 @@ mod tests {
             space_advance: 0.0,
             tf_font_size: 12.0,
             tm_y_scale: 1.0,
+            source_stream: None,
+            source_op_start: None,
+            source_op_end: None,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3270,6 +3345,9 @@ mod tests {
             space_advance: 0.0,
             tf_font_size: fs,
             tm_y_scale: 1.0,
+            source_stream: None,
+            source_op_start: None,
+            source_op_end: None,
         }
     }
 
@@ -3636,7 +3714,7 @@ mod tests {
 
         let mut state = ParseCarryState::default();
         let mut frags: Vec<TextFragment> = Vec::new();
-        parse_content_stream(stream, &fonts, &mut state, &mut frags);
+        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0));
 
         assert_eq!(frags.len(), 1, "expected one TextFragment");
         let f = &frags[0];
@@ -3671,7 +3749,7 @@ mod tests {
         let stream = b"q\n0.24 0 0 -0.24 0 841 cm\n/Fm0 Do\nQ\n";
         let mut state = ParseCarryState::default();
         let mut frags: Vec<TextFragment> = Vec::new();
-        parse_content_stream(stream, &fonts, &mut state, &mut frags);
+        parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0));
 
         let eps = 1e-5f32;
         assert!((state.ctm[0] - 0.24).abs() < eps, "ctm[0] should be 0.24, got {}", state.ctm[0]);

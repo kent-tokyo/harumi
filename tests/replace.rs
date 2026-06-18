@@ -671,3 +671,127 @@ fn replace_text_in_form_xobject_inherited_resources() {
     assert!(!after.contains("Hi"), "old text still present after replace: {after:?}");
     assert!(after.contains("Bye"), "new text not found after replace: {after:?}");
 }
+
+// ---------------------------------------------------------------------------
+// replace_text_fragments
+// ---------------------------------------------------------------------------
+
+/// Build a PDF where each character is placed as a separate BT/Tj/ET block
+/// (simulating PScript5/Distiller per-character layout).
+fn make_per_char_pdf(text: &str) -> Vec<u8> {
+    use lopdf::{Dictionary, Document as LDoc, Object, Stream};
+
+    // Build a simple Type1 font (Helvetica, StandardEncoding).
+    let mut font_d = Dictionary::new();
+    font_d.set("Type", Object::Name(b"Font".to_vec()));
+    font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+
+    // Content: one BT/Tj/ET per ASCII character.
+    let mut content = Vec::<u8>::new();
+    for (i, ch) in text.chars().enumerate() {
+        let x = 72.0 + i as f32 * 8.0;
+        let line = format!("BT /F1 12 Tf {} 700 Td ({ch}) Tj ET\n", x);
+        content.extend_from_slice(line.as_bytes());
+    }
+
+    let mut doc = LDoc::new();
+    let font_id = doc.add_object(Object::Dictionary(font_d));
+
+    let content_id =
+        doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
+
+    let mut font_dict = Dictionary::new();
+    font_dict.set("F1", Object::Reference(font_id));
+    let mut page_res = Dictionary::new();
+    page_res.set("Font", Object::Dictionary(font_dict));
+
+    let mut page_d = Dictionary::new();
+    page_d.set("Type", Object::Name(b"Page".to_vec()));
+    page_d.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
+    page_d.set("Resources", Object::Dictionary(page_res));
+    page_d.set("Contents", Object::Reference(content_id));
+    let page_id = doc.add_object(Object::Dictionary(page_d));
+
+    let mut pages_d = Dictionary::new();
+    pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+    pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages_d.set("Count", Object::Integer(1));
+    let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.set("Parent", Object::Reference(pages_id));
+    }
+
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    buf
+}
+
+#[test]
+fn replace_text_fragments_suppresses_source_ops() {
+    let pdf = make_per_char_pdf("Hello");
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    // Extract fragments — each letter is a separate fragment.
+    let frags = doc.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 5, "expected 5 per-char fragments, got: {frags:?}");
+
+    // All fragments must have source tracking.
+    for f in &frags {
+        assert!(
+            f.source_stream.is_some(),
+            "fragment {:?} has no source_stream",
+            f.text
+        );
+        assert!(
+            f.source_op_start.is_some(),
+            "fragment {:?} has no source_op_start",
+            f.text
+        );
+    }
+
+    // Replace all fragments with translated text.
+    let font = doc.embed_font(FONT).unwrap();
+    let suppressed = doc
+        .page(1)
+        .unwrap()
+        .replace_text_fragments(&frags, "World", font)
+        .unwrap();
+    assert_eq!(suppressed, 5, "expected 5 ops suppressed, got {suppressed}");
+
+    // After save+reload, original text must be gone and new text present.
+    let out = doc.save_to_bytes().unwrap();
+    let reloaded = Document::from_bytes(&out).unwrap();
+    let after: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(
+        !after.contains("Hello"),
+        "original text still present after replace_text_fragments: {after:?}"
+    );
+    assert!(
+        after.contains("World"),
+        "new text not found after replace_text_fragments: {after:?}"
+    );
+}

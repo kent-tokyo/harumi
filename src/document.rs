@@ -3812,6 +3812,136 @@ impl<'doc> PageHandle<'doc> {
         )
     }
 
+    /// Suppress the `Tj`/`TJ` operators that produced `fragments` and place
+    /// `new_text` at the position of the first fragment.
+    ///
+    /// Each fragment in `fragments` that carries `source_stream` / `source_op_start`
+    /// (populated by [`extract_text_runs`](Document::extract_text_runs)) has its
+    /// originating operator replaced with an empty-string `() Tj` so the original
+    /// glyph is no longer rendered.  `new_text` is then queued as a new visible
+    /// text run at the position of the first trackable fragment.
+    ///
+    /// This is particularly useful for PDFs that render each character as a
+    /// separate Tj (e.g. PScript5/Distiller Type3 layouts), where
+    /// [`replace_text`](PageHandle::replace_text) cannot match the logical line.
+    ///
+    /// Returns the number of operators suppressed.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
+    pub fn replace_text_fragments(
+        &mut self,
+        fragments: &[crate::extract::TextFragment],
+        new_text: &str,
+        font: FontHandle,
+    ) -> Result<usize> {
+        use lopdf::Object;
+        use std::collections::{HashMap, HashSet};
+
+        if self.doc.raw_fonts.get(font.0 as usize).is_none() {
+            return Err(Error::InvalidFont(font.0));
+        }
+
+        // Group target op-end positions by source stream index.
+        // We match ops by their `end` byte position, which equals source_op_end.
+        let mut by_stream: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for frag in fragments {
+            if let (Some(sidx), Some(_), Some(op_end)) =
+                (frag.source_stream, frag.source_op_start, frag.source_op_end)
+            {
+                by_stream.entry(sidx).or_default().insert(op_end);
+            }
+        }
+
+        let stream_ids =
+            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+        let mut total_suppressed = 0usize;
+
+        for (stream_idx, target_op_ends) in &by_stream {
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+
+            // Decompress stream bytes.
+            let stream_bytes = {
+                let Ok(obj) = self.doc.inner.get_object(stream_id) else { continue };
+                let Ok(stream) = obj.as_stream() else { continue };
+                if stream.dict.get(b"Filter").is_ok() {
+                    let mut owned = stream.clone();
+                    if owned.decompress().is_err() {
+                        continue;
+                    }
+                    owned.content
+                } else {
+                    stream.content.clone()
+                }
+            };
+
+            // Rebuild stream: emit `() Tj` for targeted ops, verbatim for others.
+            let ops = crate::replace::parse_ops(&stream_bytes);
+            let mut new_bytes: Vec<u8> = Vec::with_capacity(stream_bytes.len() + 64);
+            let mut prev_end = 0usize;
+            let mut suppressed_here = 0usize;
+
+            for op in &ops {
+                // Inter-op whitespace / comments.
+                if op.start > prev_end {
+                    new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
+                }
+                let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
+                    && target_op_ends.contains(&op.end);
+                if is_target {
+                    new_bytes.extend_from_slice(b"() Tj");
+                    suppressed_here += 1;
+                } else {
+                    new_bytes.extend_from_slice(&stream_bytes[op.start..op.end]);
+                }
+                prev_end = op.end;
+            }
+            if prev_end < stream_bytes.len() {
+                new_bytes.extend_from_slice(&stream_bytes[prev_end..]);
+            }
+
+            if suppressed_here > 0 {
+                if let Ok(obj) = self.doc.inner.get_object_mut(stream_id)
+                    && let Ok(stream) = obj.as_stream_mut()
+                {
+                    stream.dict.remove(b"Filter");
+                    stream.dict.remove(b"DecodeParms");
+                    stream
+                        .dict
+                        .set("Length", Object::Integer(new_bytes.len() as i64));
+                    stream.content = new_bytes;
+                    stream.allows_compression = false;
+                }
+                total_suppressed += suppressed_here;
+            }
+        }
+
+        // Place new text at the position of the first trackable fragment.
+        if !new_text.is_empty() && total_suppressed > 0 {
+            let anchor = fragments
+                .iter()
+                .find(|f| f.source_stream.is_some())
+                .or_else(|| fragments.first());
+            if let Some(frag) = anchor {
+                self.push_op(PendingOp::Text(PendingText {
+                    font,
+                    text: new_text.to_owned(),
+                    x: frag.x,
+                    y: frag.y,
+                    font_size: frag.font_size,
+                    render_mode: 0,
+                    color: Color::Rgb([0.0, 0.0, 0.0]),
+                    opacity: 1.0,
+                    rotation_degrees: 0.0,
+                    bold: false,
+                    italic: false,
+                }));
+            }
+        }
+
+        Ok(total_suppressed)
+    }
+
     /// Adds a clickable URL link annotation to this page.
     ///
     /// `rect` is `[x, y, width, height]` in PDF points (origin: bottom-left).
