@@ -2575,11 +2575,13 @@ fn read_matrix(dict: &lopdf::Dictionary) -> [f32; 6] {
 
 // ---------------------------------------------------------------------------
 
-/// Graphics state carried across multiple content streams on the same page.
+/// Graphics and text state carried across multiple content streams on the same page.
 ///
-/// Per the PDF spec, the graphics state (colour, render mode, etc.) persists
-/// across streams when a page `/Contents` is an array of streams.  This struct
-/// captures the subset of state that affects text extraction.
+/// Per the PDF spec, the graphics state (colour, render mode, CTM, etc.) persists
+/// across streams when a page `/Contents` is an array of streams.  Text state also
+/// persists: some generators (PScript5.dll/Distiller) split a single BT…ET block
+/// across stream boundaries, so `in_bt`, the current font, and text position must
+/// survive stream transitions too.
 struct ParseCarryState {
     cur_color: [f32; 3],
     cur_render_mode: u8,
@@ -2593,6 +2595,24 @@ struct ParseCarryState {
     /// Per the PDF spec, multiple streams in a Contents array share the same graphics
     /// state — so q/Q depth and cm transformations must persist across stream calls.
     ctm_stack: Vec<[f32; 6]>,
+    /// Whether we are inside an open BT…ET block that was not closed before the
+    /// stream ended.  Distiller/PScript5 PDFs occasionally split one logical BT block
+    /// across several stream objects; carrying this flag lets following streams treat
+    /// bare Tj/TJ operators as valid rather than silently dropping them.
+    in_bt: bool,
+    /// Current font name (set by `Tf`), carried so bare Tj in subsequent streams can
+    /// still resolve a font when `in_bt` was inherited from a previous stream.
+    font_name: Vec<u8>,
+    /// Raw font size from the last `Tf` operator.
+    tf_font_size: f32,
+    /// Effective font size after Tm y-scale.
+    font_size: f32,
+    /// Y-axis scale from the last `Tm` matrix.
+    tm_y_scale: f32,
+    /// Current text X position.
+    text_x: f32,
+    /// Current text Y position.
+    text_y: f32,
 }
 
 impl Default for ParseCarryState {
@@ -2603,6 +2623,13 @@ impl Default for ParseCarryState {
             ctm: IDENTITY_CTM,
             do_ctm_map: Vec::new(),
             ctm_stack: vec![IDENTITY_CTM],
+            in_bt: false,
+            font_name: Vec::new(),
+            tf_font_size: 12.0,
+            font_size: 12.0,
+            tm_y_scale: 1.0,
+            text_x: 0.0,
+            text_y: 0.0,
         }
     }
 }
@@ -2615,13 +2642,15 @@ fn parse_content_stream(
 ) {
     let tokens = tokenize(bytes);
     let mut stack: Vec<Token> = Vec::new();
-    let mut in_bt = false;
-    let mut font_name: Vec<u8> = Vec::new();
-    let mut tf_font_size: f32 = 12.0; // raw size from Tf operator
-    let mut font_size: f32 = 12.0;    // effective = tf_font_size × Tm y-scale
-    let mut tm_y_scale: f32 = 1.0;    // y-axis scale from the last Tm matrix
-    let mut x: f32 = 0.0;
-    let mut y: f32 = 0.0;
+    // Read text state from carry so that BT blocks split across stream boundaries
+    // (a Distiller/PScript5 pattern) are handled correctly.
+    let mut in_bt        = state.in_bt;
+    let mut font_name    = state.font_name.clone();
+    let mut tf_font_size = state.tf_font_size;
+    let mut font_size    = state.font_size;
+    let mut tm_y_scale   = state.tm_y_scale;
+    let mut x            = state.text_x;
+    let mut y            = state.text_y;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
@@ -2831,6 +2860,15 @@ fn parse_content_stream(
             }
         }
     }
+
+    // Write text state back so the next stream on this page inherits it.
+    state.in_bt        = in_bt;
+    state.font_name    = font_name;
+    state.tf_font_size = tf_font_size;
+    state.font_size    = font_size;
+    state.tm_y_scale   = tm_y_scale;
+    state.text_x       = x;
+    state.text_y       = y;
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
@@ -3742,6 +3780,88 @@ mod tests {
         assert!(
             text.contains("Hello"),
             "XObject referencing page-level font must extract text; got: {text:?}"
+        );
+    }
+
+    // Regression test for Distiller/PScript5 PDFs that split a single BT…ET block
+    // across multiple content streams.  Stream A opens BT (no ET), stream B continues
+    // with Tj operators.  Before the fix, `in_bt` was reset to false at the start of
+    // each parse_content_stream call, so all Tj in stream B were silently dropped.
+    #[test]
+    fn extract_cross_stream_bt_tj() {
+        use lopdf::{Document, Stream};
+
+        let mut doc = Document::new();
+
+        // Font on the page.
+        let mut font_d = Dictionary::new();
+        font_d.set("Type", Object::Name(b"Font".to_vec()));
+        font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font_d));
+
+        // Stream A: opens BT, sets font, but does NOT close with ET.
+        let stream_a_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 100 700 Td".to_vec(),
+        )));
+
+        // Stream B: continues inside the unclosed BT; emits text, then closes ET.
+        let stream_b_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            b"(Hello) Tj ET".to_vec(),
+        )));
+
+        // Page with /Contents as an array of two streams.
+        let mut font_dict = Dictionary::new();
+        font_dict.set("F1", Object::Reference(font_id));
+        let mut page_res = Dictionary::new();
+        page_res.set("Font", Object::Dictionary(font_dict));
+
+        let mut page_d = Dictionary::new();
+        page_d.set("Type", Object::Name(b"Page".to_vec()));
+        page_d.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
+        page_d.set("Resources", Object::Dictionary(page_res));
+        page_d.set(
+            "Contents",
+            Object::Array(vec![
+                Object::Reference(stream_a_id),
+                Object::Reference(stream_b_id),
+            ]),
+        );
+        let page_id = doc.add_object(Object::Dictionary(page_d));
+
+        let mut pages_d = Dictionary::new();
+        pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_d.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+        if let Ok(obj) = doc.get_object_mut(page_id) {
+            if let Ok(d) = obj.as_dict_mut() {
+                d.set("Parent", Object::Reference(pages_id));
+            }
+        }
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(
+            text.contains("Hello"),
+            "text inside BT split across streams must be extracted; got: {text:?}"
         );
     }
 }
