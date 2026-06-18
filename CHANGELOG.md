@@ -11,6 +11,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.16] — 2026-06-18
+
+### Added (harumi)
+
+- **`TextFragment.source_xobject`** (`src/extract.rs`) —
+  New public field `source_xobject: Option<(u32, u16)>` on `TextFragment`.
+  When a fragment is extracted from a Form XObject stream, this field holds the
+  lopdf `ObjectId` `(object_number, generation_number)` of that XObject.
+  Complements the existing `source_stream` / `source_op_start` / `source_op_end`
+  fields so every extractable fragment — whether it comes from a page content
+  stream or a Form XObject — carries a complete source reference.
+
+- **`PageHandle::replace_text_fragments_opts(fragments, new_text, font, opts)`** (`src/document.rs`) —
+  Like `replace_text_fragments` but with full placement control via
+  `FragmentReplaceOpts`.  Both page content streams and Form XObject streams are
+  now handled: fragments with `source_xobject` have their originating operator
+  suppressed inside the XObject stream directly, and the replacement text is
+  placed on the page at the anchor fragment's coordinates.
+
+- **`FragmentReplaceOpts`** (`src/document.rs`, re-exported from `src/lib.rs`) —
+  New `#[non_exhaustive]` options struct for `replace_text_fragments_opts`:
+  - `font_size: Option<f32>` — override the anchor fragment's font size (`None` = use fragment's).
+  - `max_width: Option<f32>` — wrap the replacement text to this width using `wrap_paragraph`.
+  - `y_offset: f32` — shift the placement Y coordinate (default `0.0`).
+  - `color: Option<Color>` — text color override (default black).
+
+### Changed (harumi)
+
+- **`replace_text_fragments`** now delegates to `replace_text_fragments_opts`
+  with `FragmentReplaceOpts::default()`.  Behaviour is unchanged for existing
+  callers.
+
+- **`replace_text_fragments` XObject support** — the function now suppresses
+  operators in Form XObject streams (in addition to page content streams).
+  Fragments from XObjects (identified by `source_xobject.is_some()`) are grouped
+  by ObjectId, and each XObject stream is rewritten with the same
+  decompress → `parse_ops` → rebuild → write-back pattern as page streams.
+
+---
+
 ## [1.5.15] — 2026-06-18
 
 ### Added (harumi)
