@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.14] — 2026-06-18
+
+### Fixed (harumi)
+
+- **Cross-stream BT/ET text state carry** (`src/extract.rs`) —
+  `parse_content_stream()` previously reset `in_bt`, the current font name,
+  font size, and text position to defaults at the start of every call.
+  PScript5.dll/Distiller PDFs occasionally split a single logical BT…ET block
+  across multiple stream objects in the page `/Contents` array; the Tj/TJ
+  operators in the second and subsequent streams were silently discarded because
+  `in_bt` was `false` at their start.  All text-state variables (`in_bt`,
+  `font_name`, `tf_font_size`, `font_size`, `tm_y_scale`, `text_x`, `text_y`)
+  are now stored in `ParseCarryState` and survive stream boundaries, matching
+  the existing behaviour for graphics state (CTM, colour, render mode).
+
+---
+
 ## [1.5.13] — 2026-06-18
 
 ### Fixed (harumi)
