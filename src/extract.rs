@@ -121,6 +121,16 @@ pub struct TextFragment {
     /// Y coordinate of the most recent `Tm` operator.
     /// Paired with [`tm_origin_x`](Self::tm_origin_x); see its documentation.
     pub tm_origin_y: Option<f32>,
+    /// X-scale from the most recent `Tm` matrix: √(a² + b²), where `a b c d e f Tm`.
+    ///
+    /// For axis-aligned Tm (no rotation) this equals the horizontal scaling factor applied
+    /// to glyph advances and `Td` offsets.  Combined with `tm_origin_x`, it lets callers
+    /// recover the logical column position of a fragment even when the PDF uses `font_size=1`
+    /// with a large Tm scale (a common pattern in typesetting software).
+    ///
+    /// `None` when no `Tm` operator preceded the first `Tj` in this BT block (same guard
+    /// as `tm_origin_x`).
+    pub tm_x_scale: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2738,6 +2748,9 @@ struct ParseCarryState {
     /// Reset to `false` on `BT`.  When `false`, `tm_origin_x/y` are not exposed
     /// in `TextFragment::tm_origin_x` (both remain `None`).
     tm_origin_set: bool,
+    /// X-scale from the most recent `Tm` matrix: √(a² + b²).
+    /// Reset to 1.0 on `BT`.  Used to scale `Td` horizontal offsets and glyph widths.
+    tm_x_scale: f32,
 }
 
 impl Default for ParseCarryState {
@@ -2758,6 +2771,7 @@ impl Default for ParseCarryState {
             tm_origin_x: 0.0,
             tm_origin_y: 0.0,
             tm_origin_set: false,
+            tm_x_scale: 1.0,
         }
     }
 }
@@ -2779,6 +2793,7 @@ fn parse_content_stream(
     let mut tf_font_size   = state.tf_font_size;
     let mut font_size      = state.font_size;
     let mut tm_y_scale     = state.tm_y_scale;
+    let mut tm_x_scale     = state.tm_x_scale;
     let mut x              = state.text_x;
     let mut y              = state.text_y;
     let mut tm_origin_set  = state.tm_origin_set;
@@ -2793,6 +2808,7 @@ fn parse_content_stream(
                     x = 0.0;
                     y = 0.0;
                     tm_origin_set = false;
+                    tm_x_scale = 1.0;
                     stack.clear();
                 }
                 b"ET" => {
@@ -2817,8 +2833,12 @@ fn parse_content_stream(
                     if let (Some((Token::Number(ty), _)), Some((Token::Number(tx), _))) =
                         (top, second)
                     {
-                        x += tx;
-                        y += ty;
+                        // Td operands are in "unscaled text space"; multiply by the Tm
+                        // matrix scale to convert to user space (before CTM).
+                        // For axis-aligned Tm this is exact; rotated Tm requires the
+                        // full a/b/c/d matrix and is approximated here.
+                        x += tx * tm_x_scale;
+                        y += ty * tm_y_scale;
                     }
                     stack.clear();
                 }
@@ -2828,8 +2848,8 @@ fn parse_content_stream(
                     let pop_e = stack.pop(); // e = x translation
                     let pop_d = stack.pop(); // d = y-axis component of scale/rotation
                     let pop_c = stack.pop(); // c = y-axis component of skew/rotation
-                    stack.pop(); // b
-                    stack.pop(); // a
+                    let pop_b = stack.pop(); // b = x-axis vertical component
+                    let pop_a = stack.pop(); // a = x-axis horizontal component
                     if let (Some((Token::Number(fy), _)), Some((Token::Number(ex), _))) =
                         (pop_f, pop_e)
                     {
@@ -2851,6 +2871,18 @@ fn parse_content_stream(
                         if y_scale > 0.0 {
                             font_size = tf_font_size * y_scale;
                             tm_y_scale = y_scale;
+                        }
+                    }
+                    // Compute x-scale from the Tm a/b components: sqrt(a² + b²).
+                    // For axis-aligned Tm (no rotation) this is the horizontal scale factor
+                    // used to transform Td offsets and glyph advance widths into user space.
+                    if let (Some((Token::Number(av), _)), Some((Token::Number(bv), _))) =
+                        (pop_a, pop_b)
+                    {
+                        let x_scale = (av * av + bv * bv).sqrt();
+                        if x_scale > 0.0 {
+                            tm_x_scale = x_scale;
+                            state.tm_x_scale = x_scale;
                         }
                     }
                     stack.clear();
@@ -2943,10 +2975,15 @@ fn parse_content_stream(
                         } else {
                             (None, None)
                         };
+                        let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        // x_font_size uses the Tm x-scale for width; font_size (y-scale)
+                        // is kept for height.  For uniform Tm they are equal.
+                        let x_font_size = tf_font_size * tm_x_scale * scale;
                         if let Some(frag) = decode_chars_to_fragment(
                             &char_bytes,
                             &font_name,
                             font_size * scale,
+                            x_font_size,
                             px,
                             py,
                             fonts,
@@ -2960,8 +2997,10 @@ fn parse_content_stream(
                             xobj_id,
                             tm_ox,
                             tm_oy,
+                            tm_xs,
                         ) {
-                            // frag.width is page-space; advance local x cursor by local width.
+                            // frag.width is page-space (x-axis); reverse CTM scale to get
+                            // local-space advance for the x cursor.
                             let local_advance =
                                 if scale > 0.0 { frag.width / scale } else { frag.width };
                             x += local_advance;
@@ -2982,6 +3021,8 @@ fn parse_content_stream(
                         } else {
                             (None, None)
                         };
+                        let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        let x_font_size = tf_font_size * tm_x_scale * scale;
                         let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
@@ -2991,6 +3032,7 @@ fn parse_content_stream(
                                         b,
                                         &font_name,
                                         font_size * scale,
+                                        x_font_size,
                                         px,
                                         py,
                                         fonts,
@@ -3004,6 +3046,7 @@ fn parse_content_stream(
                                         xobj_id,
                                         tm_ox,
                                         tm_oy,
+                                        tm_xs,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -3015,8 +3058,10 @@ fn parse_content_stream(
                                     }
                                 }
                                 Token::Number(kern) => {
-                                    // Kerning is in local-space units.
-                                    cur_x -= kern / 1000.0 * font_size;
+                                    // Kern in TJ is in thousandths of a text-space unit;
+                                    // multiply by tf_font_size × tm_x_scale to convert to
+                                    // user space (horizontal axis).
+                                    cur_x -= kern / 1000.0 * tf_font_size * tm_x_scale;
                                 }
                                 _ => {}
                             }
@@ -3041,6 +3086,7 @@ fn parse_content_stream(
     state.tf_font_size   = tf_font_size;
     state.font_size      = font_size;
     state.tm_y_scale     = tm_y_scale;
+    state.tm_x_scale     = tm_x_scale;
     state.text_x         = x;
     state.text_y         = y;
     state.tm_origin_set  = tm_origin_set;
@@ -3051,6 +3097,7 @@ fn decode_chars_to_fragment(
     char_bytes: &[u8],
     font_name: &[u8],
     font_size: f32,
+    x_font_size: f32,
     x: f32,
     y: f32,
     fonts: &HashMap<Vec<u8>, FontInfo>,
@@ -3064,6 +3111,7 @@ fn decode_chars_to_fragment(
     source_xobject: Option<(u32, u16)>,
     tm_origin_x: Option<f32>,
     tm_origin_y: Option<f32>,
+    tm_x_scale: Option<f32>,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -3091,7 +3139,7 @@ fn decode_chars_to_fragment(
                 let Some(ch) = ch else { continue };
                 text.push(ch);
                 let aw = font_info.advance_width(gid);
-                total_width += aw as f32 / 1000.0 * font_size;
+                total_width += aw as f32 / 1000.0 * x_font_size;
             }
         }
         _ => {
@@ -3102,7 +3150,7 @@ fn decode_chars_to_fragment(
                 };
                 text.push(ch);
                 let aw = font_info.advance_width(code);
-                total_width += aw as f32 / 1000.0 * font_size;
+                total_width += aw as f32 / 1000.0 * x_font_size;
             }
         }
     }
@@ -3113,13 +3161,13 @@ fn decode_chars_to_fragment(
     // Fix 5: zero-width fallback — some fonts have missing /W entries and dw=0,
     // which would make every fragment 0-width and break column detection.
     if total_width == 0.0 {
-        total_width = text.chars().count() as f32 * font_size * 0.5;
+        total_width = text.chars().count() as f32 * x_font_size * 0.5;
     }
     let space_advance = font_info
         .to_unicode
         .iter()
         .find(|&(_gid, &ch)| ch == ' ')
-        .map(|(&gid, _)| font_info.advance_width(gid) as f32 / 1000.0 * font_size)
+        .map(|(&gid, _)| font_info.advance_width(gid) as f32 / 1000.0 * x_font_size)
         .unwrap_or(0.0);
     Some(TextFragment {
         text,
@@ -3144,6 +3192,7 @@ fn decode_chars_to_fragment(
         source_xobject,
         tm_origin_x,
         tm_origin_y,
+        tm_x_scale,
     })
 }
 
@@ -3393,6 +3442,7 @@ mod tests {
             source_xobject: None,
             tm_origin_x: None,
             tm_origin_y: None,
+            tm_x_scale: None,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -3427,6 +3477,7 @@ mod tests {
             source_xobject: None,
             tm_origin_x: None,
             tm_origin_y: None,
+            tm_x_scale: None,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -3451,6 +3502,7 @@ mod tests {
             source_xobject: None,
             tm_origin_x: None,
             tm_origin_y: None,
+            tm_x_scale: None,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3481,6 +3533,7 @@ mod tests {
             source_xobject: None,
             tm_origin_x: None,
             tm_origin_y: None,
+            tm_x_scale: None,
         }
     }
 
@@ -4258,6 +4311,130 @@ mod tests {
                 (second_row_x - first_row_end_x).abs() < 5.0,
                 "second row starts where first row ended (Td with tx=0 keeps x)"
             );
+        }
+    }
+
+    // Regression: tm_x_scale is exposed correctly and Td offsets are scaled by Tm.
+    //
+    // Test A: uniform Tm scale → tm_x_scale = Some(scale), and a horizontal Td jump
+    //         of tx units results in x advancing by tx * scale in page space.
+    // Test B: non-uniform Tm (x_scale ≠ y_scale) → tm_x_scale ≠ tm_y_scale and
+    //         width uses x_scale while height uses y_scale.
+    // Test C: Td-only BT block (no Tm) → tm_x_scale = None.
+    #[test]
+    fn tm_x_scale_and_td_scaling() {
+        use lopdf::{Document, Stream};
+
+        fn make_doc(stream_bytes: Vec<u8>) -> (Document, lopdf::ObjectId) {
+            let mut doc = Document::new();
+            let mut fd = lopdf::Dictionary::new();
+            fd.set("Type", Object::Name(b"Font".to_vec()));
+            fd.set("Subtype", Object::Name(b"Type1".to_vec()));
+            fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+            let font_id = doc.add_object(Object::Dictionary(fd));
+
+            let cid = doc.add_object(Object::Stream(Stream::new(
+                lopdf::Dictionary::new(),
+                stream_bytes,
+            )));
+
+            let mut font_dict = lopdf::Dictionary::new();
+            font_dict.set("F1", Object::Reference(font_id));
+            let mut res = lopdf::Dictionary::new();
+            res.set("Font", Object::Dictionary(font_dict));
+
+            let mut pg = lopdf::Dictionary::new();
+            pg.set("Type", Object::Name(b"Page".to_vec()));
+            pg.set("MediaBox", Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(595), Object::Integer(842),
+            ]));
+            pg.set("Resources", Object::Dictionary(res));
+            pg.set("Contents", Object::Reference(cid));
+            let page_id = doc.add_object(Object::Dictionary(pg));
+
+            let mut ps = lopdf::Dictionary::new();
+            ps.set("Type", Object::Name(b"Pages".to_vec()));
+            ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+            ps.set("Count", Object::Integer(1));
+            let pages_id = doc.add_object(Object::Dictionary(ps));
+
+            if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+                d.set("Parent", Object::Reference(pages_id));
+            }
+
+            let mut cat = lopdf::Dictionary::new();
+            cat.set("Type", Object::Name(b"Catalog".to_vec()));
+            cat.set("Pages", Object::Reference(pages_id));
+            let cat_id = doc.add_object(Object::Dictionary(cat));
+            doc.trailer.set("Root", Object::Reference(cat_id));
+
+            (doc, page_id)
+        }
+
+        let eps = 1.0f32;
+
+        // Test A: uniform Tm scale=10, then Td(5,0) → second fragment x = first_x + width_A + 5*10
+        {
+            // BT /F1 1 Tf  10 0 0 10 50 700 Tm  (A) Tj  5 0 Td  (B) Tj ET
+            let stream = b"BT /F1 1 Tf 10 0 0 10 50 700 Tm (A) Tj 5 0 Td (B) Tj ET".to_vec();
+            let (doc, page_id) = make_doc(stream);
+            let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+            assert_eq!(frags.len(), 2, "expected 2 fragments (A and B)");
+
+            // tm_x_scale should be Some(10.0) for both fragments
+            for f in &frags {
+                let xs = f.tm_x_scale.unwrap_or(f32::NAN);
+                assert!((xs - 10.0).abs() < 0.01, "tm_x_scale should be 10, got {xs}");
+            }
+
+            // Second fragment x should be first_x + width_A + 5*10 = 50 + ε + 50
+            let x_b = frags[1].x;
+            let expected_x_b = frags[0].x + frags[0].width + 5.0 * 10.0;
+            assert!(
+                (x_b - expected_x_b).abs() < eps,
+                "Td(5,0) with Tm scale=10 should advance x by 50; got x_B={x_b}, expected≈{expected_x_b}"
+            );
+        }
+
+        // Test B: non-uniform Tm (x_scale=5, y_scale=2) → width uses x_scale, height uses y_scale
+        {
+            // BT /F1 1 Tf  5 0 0 2 100 700 Tm  (A) Tj ET
+            let stream = b"BT /F1 1 Tf 5 0 0 2 100 700 Tm (A) Tj ET".to_vec();
+            let (doc, page_id) = make_doc(stream);
+            let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+            assert!(!frags.is_empty());
+            let f = &frags[0];
+
+            // tm_x_scale = 5, tm_y_scale = 2
+            let xs = f.tm_x_scale.unwrap_or(f32::NAN);
+            assert!((xs - 5.0).abs() < 0.01, "tm_x_scale should be 5, got {xs}");
+            assert!((f.tm_y_scale - 2.0).abs() < 0.01, "tm_y_scale should be 2, got {}", f.tm_y_scale);
+
+            // height (font_size) uses y_scale=2
+            assert!((f.height - 2.0).abs() < 0.01, "height should be ≈2 (y_scale), got {}", f.height);
+
+            // width uses x_scale=5, so width > height
+            assert!(
+                f.width > f.height,
+                "width (x_scale=5 based) should exceed height (y_scale=2 based); w={} h={}",
+                f.width, f.height
+            );
+        }
+
+        // Test C: no Tm → tm_x_scale = None
+        {
+            let stream = b"BT /F1 12 Tf 100 700 Td (A) Tj ET".to_vec();
+            let (doc, page_id) = make_doc(stream);
+            let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+            assert!(!frags.is_empty());
+            for f in &frags {
+                assert!(
+                    f.tm_x_scale.is_none(),
+                    "no Tm → tm_x_scale should be None, got {:?}",
+                    f.tm_x_scale
+                );
+            }
         }
     }
 }
