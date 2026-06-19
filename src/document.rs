@@ -237,6 +237,14 @@ pub struct FragmentReplaceOpts {
     /// Minimum font size (PDF points) used when `shrink_to_fit` is `true`.
     /// Ignored when `shrink_to_fit` is `false`.  Default `4.0`.
     pub min_font_size: f32,
+    /// When `true`, perform a dry run: count how many `Tj`/`TJ` operators
+    /// *would* be suppressed without actually writing any content stream.
+    /// New text is **not** queued as a `PendingOp`.  Default `false`.
+    ///
+    /// Useful for pre-flight checks — call with `dry_run: true` first to
+    /// confirm the operators are reachable, then make the real call (or fall
+    /// back to overlay mode if the count is 0).
+    pub dry_run: bool,
 }
 
 impl Default for FragmentReplaceOpts {
@@ -248,8 +256,31 @@ impl Default for FragmentReplaceOpts {
             color: None,
             shrink_to_fit: false,
             min_font_size: 4.0,
+            dry_run: false,
         }
     }
+}
+
+/// Reason why a [`TextFragment`](crate::TextFragment) cannot be suppressed
+/// by [`PageHandle::replace_text_fragments`].
+///
+/// Returned by [`PageHandle::can_suppress_fragment`].
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FragmentReplaceFailureReason {
+    /// Neither `source_stream` nor `source_xobject` is set — source tracking
+    /// was unavailable when this fragment was extracted (e.g. came from a
+    /// deeply nested Form XObject or an old PDF structure).
+    NoSourceInfo,
+    /// `source_stream` index is out of range for this page's `/Contents` array.
+    StreamIndexOutOfRange,
+    /// The XObject identified by `source_xobject` could not be found in the document.
+    XObjectNotFound,
+    /// No `Tj`/`TJ` operator with `op.end == source_op_end` was found in the
+    /// stream.  The stream may have already been rewritten by a previous call.
+    OperatorNotFound,
+    /// The stream could not be decompressed.
+    DecompressFailed,
 }
 
 /// Raw font data stored before subsetting.
@@ -3350,6 +3381,90 @@ pub struct PageHandle<'doc> {
     page_id: ObjectId,
 }
 
+/// Count how many `Tj`/`TJ` operators in an object's stream have their
+/// end-offset in `target_op_ends`, without modifying the stream.
+fn count_ops_in_object(
+    doc: &lopdf::Document,
+    obj_id: lopdf::ObjectId,
+    target_op_ends: &std::collections::HashSet<usize>,
+) -> usize {
+    let Ok(obj) = doc.get_object(obj_id) else { return 0 };
+    let Ok(stream) = obj.as_stream() else { return 0 };
+    let stream_bytes = if stream.dict.get(b"Filter").is_ok() {
+        let mut owned = stream.clone();
+        if owned.decompress().is_err() { return 0; }
+        owned.content
+    } else {
+        stream.content.clone()
+    };
+    crate::replace::parse_ops(&stream_bytes)
+        .iter()
+        .filter(|op| (op.keyword == b"Tj" || op.keyword == b"TJ") && target_op_ends.contains(&op.end))
+        .count()
+}
+
+/// Decompress an object's stream, suppress all `Tj`/`TJ` operators whose
+/// `parse_ops` end-offset is in `target_op_ends` by replacing them with
+/// `() Tj`, and write the rebuilt bytes back.  Returns the count of
+/// operators suppressed.  A no-op (returns 0) if the object cannot be
+/// found, is not a stream, or cannot be decompressed.
+fn suppress_ops_in_object(
+    doc: &mut lopdf::Document,
+    obj_id: lopdf::ObjectId,
+    target_op_ends: &std::collections::HashSet<usize>,
+) -> usize {
+    use lopdf::Object;
+
+    let stream_bytes = {
+        let Ok(obj) = doc.get_object(obj_id) else { return 0 };
+        let Ok(stream) = obj.as_stream() else { return 0 };
+        if stream.dict.get(b"Filter").is_ok() {
+            let mut owned = stream.clone();
+            if owned.decompress().is_err() {
+                return 0;
+            }
+            owned.content
+        } else {
+            stream.content.clone()
+        }
+    };
+
+    let ops = crate::replace::parse_ops(&stream_bytes);
+    let mut new_bytes: Vec<u8> = Vec::with_capacity(stream_bytes.len() + 64);
+    let mut prev_end = 0usize;
+    let mut suppressed = 0usize;
+
+    for op in &ops {
+        if op.start > prev_end {
+            new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
+        }
+        let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
+            && target_op_ends.contains(&op.end);
+        if is_target {
+            new_bytes.extend_from_slice(b"() Tj");
+            suppressed += 1;
+        } else {
+            new_bytes.extend_from_slice(&stream_bytes[op.start..op.end]);
+        }
+        prev_end = op.end;
+    }
+    if prev_end < stream_bytes.len() {
+        new_bytes.extend_from_slice(&stream_bytes[prev_end..]);
+    }
+
+    if suppressed > 0
+        && let Ok(obj) = doc.get_object_mut(obj_id)
+        && let Ok(stream) = obj.as_stream_mut()
+    {
+        stream.dict.remove(b"Filter");
+        stream.dict.remove(b"DecodeParms");
+        stream.dict.set("Length", Object::Integer(new_bytes.len() as i64));
+        stream.content = new_bytes;
+        stream.allows_compression = false;
+    }
+    suppressed
+}
+
 impl<'doc> PageHandle<'doc> {
     /// Queues a single invisible text placement on this page.
     ///
@@ -3863,20 +3978,15 @@ impl<'doc> PageHandle<'doc> {
     /// glyph is no longer rendered.  `new_text` is then queued as a new visible
     /// text run at the position of the first trackable fragment.
     ///
-    /// This is particularly useful for PDFs that render each character as a
-    /// separate Tj (e.g. PScript5/Distiller Type3 layouts), where
-    /// [`replace_text`](PageHandle::replace_text) cannot match the logical line.
+    /// Equivalent to [`replace_text_fragments_opts`] with
+    /// [`FragmentReplaceOpts::default()`].
     ///
-    /// Returns the number of operators suppressed.
-    ///
-    /// # Errors
-    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
-    /// Suppress the `Tj`/`TJ` operators that produced `fragments` and place
-    /// `new_text` at the position of the first fragment.
-    ///
-    /// Equivalent to calling
-    /// [`replace_text_fragments_opts`](PageHandle::replace_text_fragments_opts)
-    /// with [`FragmentReplaceOpts::default()`].
+    /// **Offset stability warning:** This method rewrites the content stream in-place.
+    /// Calling it multiple times on the same page with fragments from the same stream
+    /// invalidates the `source_op_end` byte offsets of any fragments not yet processed.
+    /// To suppress multiple logical lines safely in a single pass, use
+    /// [`replace_text_fragments_batch`](PageHandle::replace_text_fragments_batch)
+    /// instead.
     pub fn replace_text_fragments(
         &mut self,
         fragments: &[crate::extract::TextFragment],
@@ -3909,69 +4019,11 @@ impl<'doc> PageHandle<'doc> {
         font: FontHandle,
         opts: FragmentReplaceOpts,
     ) -> Result<usize> {
-        use lopdf::Object;
         use std::collections::{HashMap, HashSet};
 
         if self.doc.raw_fonts.get(font.0 as usize).is_none() {
             return Err(Error::InvalidFont(font.0));
         }
-
-        // Helper: decompress, suppress targeted ops, write back — returns count suppressed.
-        // This closure is used for both page-stream and XObject objects.
-        let suppress_in_object =
-            |doc: &mut lopdf::Document,
-             obj_id: lopdf::ObjectId,
-             target_op_ends: &HashSet<usize>|
-             -> usize {
-                let stream_bytes = {
-                    let Ok(obj) = doc.get_object(obj_id) else { return 0 };
-                    let Ok(stream) = obj.as_stream() else { return 0 };
-                    if stream.dict.get(b"Filter").is_ok() {
-                        let mut owned = stream.clone();
-                        if owned.decompress().is_err() {
-                            return 0;
-                        }
-                        owned.content
-                    } else {
-                        stream.content.clone()
-                    }
-                };
-
-                let ops = crate::replace::parse_ops(&stream_bytes);
-                let mut new_bytes: Vec<u8> = Vec::with_capacity(stream_bytes.len() + 64);
-                let mut prev_end = 0usize;
-                let mut suppressed = 0usize;
-
-                for op in &ops {
-                    if op.start > prev_end {
-                        new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
-                    }
-                    let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
-                        && target_op_ends.contains(&op.end);
-                    if is_target {
-                        new_bytes.extend_from_slice(b"() Tj");
-                        suppressed += 1;
-                    } else {
-                        new_bytes.extend_from_slice(&stream_bytes[op.start..op.end]);
-                    }
-                    prev_end = op.end;
-                }
-                if prev_end < stream_bytes.len() {
-                    new_bytes.extend_from_slice(&stream_bytes[prev_end..]);
-                }
-
-                if suppressed > 0
-                    && let Ok(obj) = doc.get_object_mut(obj_id)
-                    && let Ok(stream) = obj.as_stream_mut()
-                {
-                    stream.dict.remove(b"Filter");
-                    stream.dict.remove(b"DecodeParms");
-                    stream.dict.set("Length", Object::Integer(new_bytes.len() as i64));
-                    stream.content = new_bytes;
-                    stream.allows_compression = false;
-                }
-                suppressed
-            };
 
         let mut total_suppressed = 0usize;
 
@@ -3988,8 +4040,11 @@ impl<'doc> PageHandle<'doc> {
             crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
         for (stream_idx, target_op_ends) in &by_stream {
             let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
-            total_suppressed +=
-                suppress_in_object(&mut self.doc.inner, stream_id, target_op_ends);
+            total_suppressed += if opts.dry_run {
+                count_ops_in_object(&self.doc.inner, stream_id, target_op_ends)
+            } else {
+                suppress_ops_in_object(&mut self.doc.inner, stream_id, target_op_ends)
+            };
         }
 
         // --- Form XObject stream suppression ---
@@ -4002,12 +4057,15 @@ impl<'doc> PageHandle<'doc> {
             }
         }
         for (xobj_id, target_op_ends) in &by_xobj {
-            total_suppressed +=
-                suppress_in_object(&mut self.doc.inner, *xobj_id, target_op_ends);
+            total_suppressed += if opts.dry_run {
+                count_ops_in_object(&self.doc.inner, *xobj_id, target_op_ends)
+            } else {
+                suppress_ops_in_object(&mut self.doc.inner, *xobj_id, target_op_ends)
+            };
         }
 
-        // --- New text placement ---
-        if !new_text.is_empty() && total_suppressed > 0 {
+        // --- New text placement (skipped in dry-run mode) ---
+        if !opts.dry_run && !new_text.is_empty() && total_suppressed > 0 {
             let anchor = fragments
                 .iter()
                 .find(|f| f.source_stream.is_some() || f.source_xobject.is_some())
@@ -4073,6 +4131,236 @@ impl<'doc> PageHandle<'doc> {
         }
 
         Ok(total_suppressed)
+    }
+
+    /// Replace text for multiple logical lines in a single content-stream pass.
+    ///
+    /// Unlike calling [`replace_text_fragments`] or [`replace_text_fragments_opts`]
+    /// repeatedly, this method collects **all** suppression targets up-front and
+    /// rewrites each content stream **exactly once**.  This prevents byte-offset
+    /// shift: after one rewrite, subsequent entries that target the same stream would
+    /// reference stale `source_op_end` values and silently miss their operators.
+    ///
+    /// `entries` is a slice of `(fragments, new_text)` pairs — each pair represents
+    /// one logical line or table cell.  All entries share the same `font` and `opts`.
+    ///
+    /// ## Cross-stream behaviour
+    ///
+    /// Fragments may come from **different** source streams (different indices in the
+    /// page `/Contents` array) or from different Form XObjects.  Each unique stream is
+    /// rewritten exactly once regardless of how many entries reference it, so the
+    /// single-pass guarantee holds per stream:
+    ///
+    /// - Entries whose fragments span multiple `source_stream` indices (e.g. a visual
+    ///   line whose characters are split across two `/Contents` streams) are handled
+    ///   correctly — both streams are suppressed in the same batch call.
+    /// - If `opts.dry_run` is `true`, no streams are written; the return value is the
+    ///   count of operators that *would* be suppressed (useful for pre-flight checks).
+    ///
+    /// Returns the total number of `Tj`/`TJ` operators suppressed (or that would be
+    /// suppressed when `dry_run = true`) across all entries and streams.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
+    pub fn replace_text_fragments_batch(
+        &mut self,
+        entries: &[(&[crate::extract::TextFragment], &str)],
+        font: FontHandle,
+        opts: FragmentReplaceOpts,
+    ) -> Result<usize> {
+        use std::collections::{HashMap, HashSet};
+
+        if self.doc.raw_fonts.get(font.0 as usize).is_none() {
+            return Err(Error::InvalidFont(font.0));
+        }
+
+        // Pre-collect ALL targets across ALL entries before any stream is written.
+        let mut by_stream: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut by_xobj: HashMap<(u32, u16), HashSet<usize>> = HashMap::new();
+
+        for (fragments, _) in entries {
+            for frag in *fragments {
+                if let (Some(sidx), Some(_), Some(op_end)) =
+                    (frag.source_stream, frag.source_op_start, frag.source_op_end)
+                {
+                    by_stream.entry(sidx).or_default().insert(op_end);
+                }
+                if let (Some(xobj_id), Some(_), Some(op_end)) =
+                    (frag.source_xobject, frag.source_op_start, frag.source_op_end)
+                {
+                    by_xobj.entry(xobj_id).or_default().insert(op_end);
+                }
+            }
+        }
+
+        // Single pass per stream — no offset shift between entries.
+        let mut total_suppressed = 0usize;
+        let stream_ids =
+            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+
+        for (stream_idx, target_op_ends) in &by_stream {
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            total_suppressed += if opts.dry_run {
+                count_ops_in_object(&self.doc.inner, stream_id, target_op_ends)
+            } else {
+                suppress_ops_in_object(&mut self.doc.inner, stream_id, target_op_ends)
+            };
+        }
+        for (xobj_id, target_op_ends) in &by_xobj {
+            total_suppressed += if opts.dry_run {
+                count_ops_in_object(&self.doc.inner, *xobj_id, target_op_ends)
+            } else {
+                suppress_ops_in_object(&mut self.doc.inner, *xobj_id, target_op_ends)
+            };
+        }
+
+        if opts.dry_run {
+            return Ok(total_suppressed);
+        }
+
+        // Pre-compute text placements (immutable borrows only — kept in a Vec
+        // so push_op's mutable borrow of self doesn't conflict).
+        struct EntryPlacement {
+            x: f32,
+            lines: Vec<(f32, String)>, // (y, text) per line
+            fs: f32,
+            color: Color,
+        }
+
+        let placements: Vec<EntryPlacement> = {
+            let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
+            let face = ttf_parser::Face::parse(font_bytes, 0).ok();
+
+            let mut result = Vec::new();
+            for (fragments, new_text) in entries {
+                if new_text.is_empty() {
+                    continue;
+                }
+                let anchor = fragments
+                    .iter()
+                    .find(|f| f.source_stream.is_some() || f.source_xobject.is_some())
+                    .or_else(|| fragments.first());
+                let Some(frag) = anchor else { continue };
+
+                let fs_initial = opts.font_size.unwrap_or(frag.font_size).max(1.0);
+                let ay = frag.y + opts.y_offset;
+                let color = opts.color.unwrap_or(Color::Rgb([0.0, 0.0, 0.0]));
+
+                let fs = if opts.shrink_to_fit {
+                    if let Some(max_w) = opts.max_width {
+                        let min_fs = opts.min_font_size.max(1.0);
+                        let mut candidate = fs_initial;
+                        loop {
+                            let w = calculate_text_width(new_text, font_bytes, candidate)
+                                .unwrap_or(max_w);
+                            if w <= max_w || candidate <= min_fs {
+                                break;
+                            }
+                            candidate = (candidate * max_w / w).max(min_fs);
+                        }
+                        candidate
+                    } else {
+                        fs_initial
+                    }
+                } else {
+                    fs_initial
+                };
+
+                let text_lines: Vec<String> = if let (Some(max_w), Some(face)) =
+                    (opts.max_width, face.as_ref())
+                {
+                    wrap_paragraph(new_text, face, fs, max_w)
+                } else {
+                    vec![(*new_text).to_owned()]
+                };
+
+                let line_height = fs * 1.2;
+                let lines = text_lines
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, l)| (ay - i as f32 * line_height, l))
+                    .collect();
+
+                result.push(EntryPlacement { x: frag.x, lines, fs, color });
+            }
+            result
+        }; // immutable borrows (font_bytes, face) released here
+
+        // Mutable phase: queue PendingOp::Text for each placement.
+        for p in placements {
+            for (ly, line) in p.lines {
+                self.push_op(PendingOp::Text(PendingText {
+                    font,
+                    text: line,
+                    x: p.x,
+                    y: ly,
+                    font_size: p.fs,
+                    render_mode: 0,
+                    color: p.color,
+                    opacity: 1.0,
+                    rotation_degrees: 0.0,
+                    bold: false,
+                    italic: false,
+                }));
+            }
+        }
+
+        Ok(total_suppressed)
+    }
+
+    /// Check whether a single [`TextFragment`](crate::TextFragment) can be
+    /// suppressed by [`replace_text_fragments`](PageHandle::replace_text_fragments)
+    /// without modifying the document.
+    ///
+    /// Returns `Ok(())` if the fragment's source operator is locatable in the
+    /// current (possibly already-rewritten) content stream.
+    /// Returns `Err(reason)` when suppression would silently fail, so callers can
+    /// decide whether to fall back to overlay mode.
+    ///
+    /// This is a read-only inspection — the document is not changed.
+    pub fn can_suppress_fragment(
+        &self,
+        fragment: &crate::extract::TextFragment,
+    ) -> std::result::Result<(), FragmentReplaceFailureReason> {
+        use FragmentReplaceFailureReason as R;
+
+        let Some(op_end) = fragment.source_op_end else {
+            return Err(R::NoSourceInfo);
+        };
+
+        // Locate the stream object.
+        let obj_id: lopdf::ObjectId = if let Some(sidx) = fragment.source_stream {
+            let stream_ids =
+                crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+            *stream_ids.get(sidx).ok_or(R::StreamIndexOutOfRange)?
+        } else if let Some(xobj_id) = fragment.source_xobject {
+            self.doc.inner.get_object(xobj_id).map_err(|_| R::XObjectNotFound)?;
+            xobj_id
+        } else {
+            return Err(R::NoSourceInfo);
+        };
+
+        // Decompress and scan for the operator.
+        let stream_bytes = {
+            let Ok(obj) = self.doc.inner.get_object(obj_id) else {
+                return Err(R::XObjectNotFound);
+            };
+            let Ok(stream) = obj.as_stream() else {
+                return Err(R::XObjectNotFound);
+            };
+            if stream.dict.get(b"Filter").is_ok() {
+                let mut owned = stream.clone();
+                owned.decompress().map_err(|_| R::DecompressFailed)?;
+                owned.content
+            } else {
+                stream.content.clone()
+            }
+        };
+
+        let found = crate::replace::parse_ops(&stream_bytes).iter().any(|op| {
+            op.end == op_end && (op.keyword == b"Tj" || op.keyword == b"TJ")
+        });
+        if found { Ok(()) } else { Err(R::OperatorNotFound) }
     }
 
     /// Adds a clickable URL link annotation to this page.

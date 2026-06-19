@@ -911,3 +911,141 @@ fn replace_text_fragments_xobject() {
         "replacement text not found: {after:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// replace_text_fragments_batch
+// ---------------------------------------------------------------------------
+
+/// Build a per-character PDF with two independent text lines on one page.
+fn make_two_line_per_char_pdf(line1: &str, line2: &str) -> Vec<u8> {
+    use lopdf::{Dictionary, Document as LDoc, Object, Stream};
+
+    let mut doc = LDoc::new();
+
+    let mut font_d = Dictionary::new();
+    font_d.set("Type", Object::Name(b"Font".to_vec()));
+    font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font_d));
+
+    // Build content stream: line1 at y=700, line2 at y=680, one Tj per char each.
+    let mut content = Vec::<u8>::new();
+    for (i, ch) in line1.chars().enumerate() {
+        content.extend_from_slice(
+            format!("BT /F1 12 Tf {} 700 Td ({ch}) Tj ET\n", 72.0 + i as f32 * 8.0).as_bytes(),
+        );
+    }
+    for (i, ch) in line2.chars().enumerate() {
+        content.extend_from_slice(
+            format!("BT /F1 12 Tf {} 680 Td ({ch}) Tj ET\n", 72.0 + i as f32 * 8.0).as_bytes(),
+        );
+    }
+
+    let content_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
+
+    let mut font_dict = Dictionary::new();
+    font_dict.set("F1", Object::Reference(font_id));
+    let mut page_res = Dictionary::new();
+    page_res.set("Font", Object::Dictionary(font_dict));
+
+    let mut page_d = Dictionary::new();
+    page_d.set("Type", Object::Name(b"Page".to_vec()));
+    page_d.set("MediaBox", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0),
+        Object::Integer(595), Object::Integer(842),
+    ]));
+    page_d.set("Resources", Object::Dictionary(page_res));
+    page_d.set("Contents", Object::Reference(content_id));
+    let page_id = doc.add_object(Object::Dictionary(page_d));
+
+    let mut pages_d = Dictionary::new();
+    pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+    pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages_d.set("Count", Object::Integer(1));
+    let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+        d.set("Parent", Object::Reference(pages_id));
+    }
+
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    buf
+}
+
+#[test]
+fn replace_text_fragments_batch_two_lines() {
+    let pdf = make_two_line_per_char_pdf("Hello", "World");
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+
+    let all_frags = doc.extract_text_runs(1).unwrap();
+
+    // Split fragments by y-coordinate: ~700 = line1, ~680 = line2
+    let line1: Vec<_> = all_frags.iter().filter(|f| f.y > 690.0).cloned().collect();
+    let line2: Vec<_> = all_frags.iter().filter(|f| f.y <= 690.0).cloned().collect();
+
+    assert_eq!(line1.len(), 5, "expected 5 frags for 'Hello'");
+    assert_eq!(line2.len(), 5, "expected 5 frags for 'World'");
+
+    let font = doc.embed_font(FONT).unwrap();
+
+    let entries: Vec<(&[harumi::TextFragment], &str)> = vec![
+        (&line1, "你好"),
+        (&line2, "世界"),
+    ];
+    let suppressed = doc
+        .page(1).unwrap()
+        .replace_text_fragments_batch(&entries, font, harumi::FragmentReplaceOpts::default())
+        .unwrap();
+
+    assert_eq!(suppressed, 10, "expected 10 ops suppressed (5 per line)");
+
+    let out = doc.save_to_bytes().unwrap();
+    let reloaded = Document::from_bytes(&out).unwrap();
+    let after: String = reloaded
+        .extract_text_runs(1).unwrap()
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(!after.contains("Hello"), "original line 1 still present: {after:?}");
+    assert!(!after.contains("World"), "original line 2 still present: {after:?}");
+    assert!(after.contains("你好"), "translated line 1 missing: {after:?}");
+    assert!(after.contains("世界"), "translated line 2 missing: {after:?}");
+}
+
+#[test]
+fn can_suppress_fragment_ok_and_not_found() {
+    let pdf = make_per_char_pdf("Hi");
+    let mut doc = Document::from_bytes(&pdf).unwrap();
+    let frags = doc.extract_text_runs(1).unwrap();
+    assert_eq!(frags.len(), 2);
+
+    // Before any suppression → Ok
+    for f in &frags {
+        assert!(
+            doc.page(1).unwrap().can_suppress_fragment(f).is_ok(),
+            "expected Ok before suppression"
+        );
+    }
+
+    // After suppressing, the operator is gone → OperatorNotFound
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1).unwrap().replace_text_fragments(&frags, "", font).unwrap();
+
+    for f in &frags {
+        let r = doc.page(1).unwrap().can_suppress_fragment(f);
+        assert_eq!(
+            r,
+            Err(harumi::FragmentReplaceFailureReason::OperatorNotFound),
+            "expected OperatorNotFound after suppression"
+        );
+    }
+}
