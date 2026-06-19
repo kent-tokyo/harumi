@@ -1815,3 +1815,86 @@ harumi-ai がフラグメント間スペース挿入要否を判断できるよ�
 - [x] `cargo test` — 全件パス
 - [x] `cargo clippy` — 0 警告
 - [x] `cargo publish` — crates.io v1.5.11 公開済み
+
+---
+
+## バグ修正（v1.5.12）— 2026-06-17
+
+### AES-256 暗号化 PDF のストリームスキップ + ExtractionWarning API（完了）
+
+- [x] `page_content_streams()` / `decode_form_xobject()` — `decompress()` 失敗時に raw content へフォールバック（PScript5/Distiller AES-256 PDF 対応）
+- [x] `ExtractionWarning` / `WarningKind` 構造体追加（`StreamDecompressFailed` / `XObjectSkipped`）
+- [x] `Document::extract_text_runs_verbose()` 公開 API 追加
+- [x] `TextFragment.tf_font_size` / `TextFragment.tm_y_scale` 新フィールド追加
+- [x] `TextFragment.space_advance` 新フィールド追加（U+0020 の advance width）
+- [x] ゼロ advance width フォールバック（0.5em/文字）
+- [x] `cargo publish` — crates.io v1.5.12 公開済み
+
+---
+
+## バグ修正（v1.5.13）— 2026-06-18
+
+### XObject フォント解決バグ修正 PScript5/Distiller PDF（完了）
+
+**根本原因**: `xobject_fonts()` が `/Resources` dict は存在するが `/Font` サブエントリがない
+XObject に対して空の HashMap を返し、テキストが全量ドロップされていた。
+
+- [x] `xobject_fonts()` — ページフォントをベースに XObject 固有フォントをオーバーレイする方式に変更
+- [x] 回帰テスト `extract_xobject_font_from_page_resources` 追加
+- [x] `cargo publish` — crates.io v1.5.13 公開済み
+
+---
+
+## バグ修正（v1.5.14）— 2026-06-18
+
+### クロスストリーム BT/ET テキスト状態の引き継ぎ（完了）
+
+**根本原因**: `parse_content_stream()` が呼ばれるたびに `in_bt`・フォント名・テキスト位置を
+ローカル変数として初期化していた。Distiller 製 PDF が単一の BT…ET ブロックを複数の
+Contents ストリームに分割する場合、後続ストリームの Tj がすべて無視されていた。
+
+- [x] `ParseCarryState` に `in_bt`・`font_name`・`tf_font_size`・`font_size`・`tm_y_scale`・`text_x`・`text_y` を追加
+- [x] `parse_content_stream()` で先頭に state から読み込み、末尾に書き戻す
+- [x] 回帰テスト `extract_cross_stream_bt_tj` 追加
+- [x] `cargo publish` — crates.io v1.5.14 公開済み
+
+---
+
+## 機能追加（v1.5.15）— 2026-06-18
+
+### オペレータ対応付け + replace_text_fragments API（完了）
+
+**背景**: PScript5/Distiller 製 SDS PDF では供給者情報が 1 文字ずつ `BT (ch) Tj ET` で
+描かれており、`replace_text("元テキスト", "訳文")` が文字列検索に失敗する。
+元 operator を直接抑制し訳文を配置する API が必要。
+
+#### TextFragment ソーストラッキング
+
+- [x] `tokenize()` を `Vec<(Token, usize)>` に変更（各トークンのバイトオフセットを付与）
+- [x] `TextFragment` に 3 フィールド追加：
+  - `pub source_stream: Option<usize>` — Contents 配列の 0 始まりインデックス
+  - `pub source_op_start: Option<usize>` — Tj/TJ キーワードの先頭バイトオフセット
+  - `pub source_op_end: Option<usize>` — キーワード末尾の次バイト（start+2）
+- [x] `parse_content_stream()` に `stream_idx: Option<usize>` パラメータ追加
+- [x] Tj/TJ 処理時に `decode_chars_to_fragment()` へ source 情報を渡す
+
+#### replace_text_fragments API
+
+- [x] `extract.rs` に `page_content_stream_ids()` ヘルパー追加（Contents の ObjectId 列を返す）
+- [x] `document.rs` に `PageHandle::replace_text_fragments(fragments, new_text, font)` 追加
+  - `source_op_end` でターゲット Op を特定
+  - `parse_ops()` でストリームを再解析
+  - ターゲット Tj/TJ を `() Tj` に置換してストリームを再構築
+  - `stream.dict.remove(b"Filter")` で非圧縮で書き戻し
+  - `PendingOp::Text` で新テキストを最初のフラグメント位置に配置
+  - 抑制したオペレータ数を返す
+- [x] 統合テスト `replace_text_fragments_suppresses_source_ops` 追加
+  - 1 文字ずつ Tj の PDF を合成
+  - replace_text_fragments 後に元テキスト消去・新テキスト存在を確認
+
+#### テスト・検証
+
+- [x] `cargo test --all-features` — 全件パス（63 ユニット + 統合テスト）
+- [x] `cargo clippy --all-features -- -D warnings` — 0 警告
+- [x] `cargo semver-checks` — 互換確認（TextFragment は #[non_exhaustive]）
+- [ ] `cargo publish` — crates.io v1.5.15 未公開

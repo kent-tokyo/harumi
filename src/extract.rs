@@ -102,6 +102,25 @@ pub struct TextFragment {
     /// `source_op_end` to suppress this fragment's originating operator inside the
     /// XObject stream.
     pub source_xobject: Option<(u32, u16)>,
+    /// X coordinate of the most recent `Tm` operator in the enclosing BT block,
+    /// in PDF points (page space, same coordinate system as [`x`](Self::x)).
+    ///
+    /// Unlike `x`, this value **does not advance** after `Tj`/`TJ` rendering or
+    /// `Td`/`TD` relative moves — it is updated only when a new `Tm` sets an
+    /// absolute text position.
+    ///
+    /// **Use case — column alignment:** PDFs that lay out vertically-aligned labels
+    /// using a single BT block with `Td 0 -line_height` between rows accumulate
+    /// glyph advances in `x`, causing row-by-row x drift.  All fragments in the
+    /// same BT block share the same `tm_origin_x`, which is the intended left-margin
+    /// anchor.  Use `tm_origin_x` instead of `x` when placing replacement text for
+    /// column-aligned content.
+    ///
+    /// `None` when no `Tm` operator preceded the first `Tj` in this BT block.
+    pub tm_origin_x: Option<f32>,
+    /// Y coordinate of the most recent `Tm` operator.
+    /// Paired with [`tm_origin_x`](Self::tm_origin_x); see its documentation.
+    pub tm_origin_y: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2709,6 +2728,16 @@ struct ParseCarryState {
     text_x: f32,
     /// Current text Y position.
     text_y: f32,
+    /// X coordinate from the most recent `Tm` operator (column anchor).
+    /// Updated only on `Tm`, never on `Td`/`TD` or after glyph advances.
+    /// Carried across stream boundaries alongside `text_x/y`.
+    tm_origin_x: f32,
+    /// Y coordinate from the most recent `Tm` operator.
+    tm_origin_y: f32,
+    /// `true` once a `Tm` operator has been seen in the current BT block.
+    /// Reset to `false` on `BT`.  When `false`, `tm_origin_x/y` are not exposed
+    /// in `TextFragment::tm_origin_x` (both remain `None`).
+    tm_origin_set: bool,
 }
 
 impl Default for ParseCarryState {
@@ -2726,6 +2755,9 @@ impl Default for ParseCarryState {
             tm_y_scale: 1.0,
             text_x: 0.0,
             text_y: 0.0,
+            tm_origin_x: 0.0,
+            tm_origin_y: 0.0,
+            tm_origin_set: false,
         }
     }
 }
@@ -2742,13 +2774,14 @@ fn parse_content_stream(
     let mut stack: Vec<(Token, usize)> = Vec::new();
     // Read text state from carry so that BT blocks split across stream boundaries
     // (a Distiller/PScript5 pattern) are handled correctly.
-    let mut in_bt        = state.in_bt;
-    let mut font_name    = state.font_name.clone();
-    let mut tf_font_size = state.tf_font_size;
-    let mut font_size    = state.font_size;
-    let mut tm_y_scale   = state.tm_y_scale;
-    let mut x            = state.text_x;
-    let mut y            = state.text_y;
+    let mut in_bt          = state.in_bt;
+    let mut font_name      = state.font_name.clone();
+    let mut tf_font_size   = state.tf_font_size;
+    let mut font_size      = state.font_size;
+    let mut tm_y_scale     = state.tm_y_scale;
+    let mut x              = state.text_x;
+    let mut y              = state.text_y;
+    let mut tm_origin_set  = state.tm_origin_set;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
@@ -2759,6 +2792,7 @@ fn parse_content_stream(
                     in_bt = true;
                     x = 0.0;
                     y = 0.0;
+                    tm_origin_set = false;
                     stack.clear();
                 }
                 b"ET" => {
@@ -2801,6 +2835,12 @@ fn parse_content_stream(
                     {
                         x = ex;
                         y = fy;
+                        // Record the Tm-set position as the column anchor.
+                        // Unlike x/y, tm_origin is NOT updated by Td or Tj advances,
+                        // so it stays at the Tm-set position even as x drifts.
+                        state.tm_origin_x = ex;
+                        state.tm_origin_y = fy;
+                        tm_origin_set = true;
                     }
                     // Compute effective font size from the Tm y-scale:
                     // y_scale = sqrt(c² + d²) handles both scaling and rotation.
@@ -2897,6 +2937,12 @@ fn parse_content_stream(
                         let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let (px, py) = apply_ctm(ctm, x, y);
                         let scale = ctm_scale(ctm);
+                        let (tm_ox, tm_oy) = if tm_origin_set {
+                            let (ox, oy) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
+                            (Some(ox), Some(oy))
+                        } else {
+                            (None, None)
+                        };
                         if let Some(frag) = decode_chars_to_fragment(
                             &char_bytes,
                             &font_name,
@@ -2912,6 +2958,8 @@ fn parse_content_stream(
                             op_start,
                             op_end,
                             xobj_id,
+                            tm_ox,
+                            tm_oy,
                         ) {
                             // frag.width is page-space; advance local x cursor by local width.
                             let local_advance =
@@ -2928,6 +2976,12 @@ fn parse_content_stream(
                     if let Some((Token::Array(items), _)) = stack.pop() {
                         let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let scale = ctm_scale(ctm);
+                        let (tm_ox, tm_oy) = if tm_origin_set {
+                            let (ox, oy) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
+                            (Some(ox), Some(oy))
+                        } else {
+                            (None, None)
+                        };
                         let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
@@ -2948,6 +3002,8 @@ fn parse_content_stream(
                                         op_start,
                                         op_end,
                                         xobj_id,
+                                        tm_ox,
+                                        tm_oy,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -2980,13 +3036,14 @@ fn parse_content_stream(
     }
 
     // Write text state back so the next stream on this page inherits it.
-    state.in_bt        = in_bt;
-    state.font_name    = font_name;
-    state.tf_font_size = tf_font_size;
-    state.font_size    = font_size;
-    state.tm_y_scale   = tm_y_scale;
-    state.text_x       = x;
-    state.text_y       = y;
+    state.in_bt          = in_bt;
+    state.font_name      = font_name;
+    state.tf_font_size   = tf_font_size;
+    state.font_size      = font_size;
+    state.tm_y_scale     = tm_y_scale;
+    state.text_x         = x;
+    state.text_y         = y;
+    state.tm_origin_set  = tm_origin_set;
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
@@ -3005,6 +3062,8 @@ fn decode_chars_to_fragment(
     source_op_start: Option<usize>,
     source_op_end: Option<usize>,
     source_xobject: Option<(u32, u16)>,
+    tm_origin_x: Option<f32>,
+    tm_origin_y: Option<f32>,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -3083,6 +3142,8 @@ fn decode_chars_to_fragment(
         source_op_start,
         source_op_end,
         source_xobject,
+        tm_origin_x,
+        tm_origin_y,
     })
 }
 
@@ -3330,6 +3391,8 @@ mod tests {
             source_op_start: None,
             source_op_end: None,
             source_xobject: None,
+            tm_origin_x: None,
+            tm_origin_y: None,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -3362,6 +3425,8 @@ mod tests {
             source_op_start: None,
             source_op_end: None,
             source_xobject: None,
+            tm_origin_x: None,
+            tm_origin_y: None,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -3384,6 +3449,8 @@ mod tests {
             source_op_start: None,
             source_op_end: None,
             source_xobject: None,
+            tm_origin_x: None,
+            tm_origin_y: None,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3412,6 +3479,8 @@ mod tests {
             source_op_start: None,
             source_op_end: None,
             source_xobject: None,
+            tm_origin_x: None,
+            tm_origin_y: None,
         }
     }
 
@@ -4039,5 +4108,156 @@ mod tests {
         // y_max = max(700+9, 680+10.5) = 709
         let expected_y_max = f32::max(700.0 + 12.0 * 0.75, 680.0 + 14.0 * 0.75);
         assert!((h - (expected_y_max - expected_y_min)).abs() < eps, "h={h}");
+    }
+
+    // Regression: in a single BT block, Tm sets the column anchor (tm_origin_x).
+    // Subsequent Td+Tj rows drift in x but ALL share the same tm_origin_x.
+    // This models PDFs like GHS SDS where vertically-aligned labels are produced by
+    //   Tm → Tj → Td → Tj → Td → …
+    // within one BT block (no fresh Tm per row).
+    #[test]
+    fn tm_origin_preserves_column_anchor() {
+        use lopdf::{Document, Stream};
+
+        let mut doc = Document::new();
+
+        // Type1 font (ASCII, StandardEncoding).
+        let mut font_d = Dictionary::new();
+        font_d.set("Type", Object::Name(b"Font".to_vec()));
+        font_d.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font_d));
+
+        // Single BT block: Tm sets x=100, then Td moves to next line (x accumulates).
+        // Row 1: "AB" at x=100; after Tj, x ≈ 100 + advance
+        // Td 0 -14 keeps x; Row 2: "C" starts at x ≈ 100 + advance (drifted)
+        // All fragments must have tm_origin_x = 100.
+        let stream_bytes = b"BT /F1 12 Tf 100 700 Td (AB) Tj 0 -14 Td (C) Tj ET".to_vec();
+
+        let content_id =
+            doc.add_object(Object::Stream(Stream::new(Dictionary::new(), stream_bytes)));
+
+        let mut font_dict = Dictionary::new();
+        font_dict.set("F1", Object::Reference(font_id));
+        let mut page_res = Dictionary::new();
+        page_res.set("Font", Object::Dictionary(font_dict));
+
+        let mut page_d = Dictionary::new();
+        page_d.set("Type", Object::Name(b"Page".to_vec()));
+        page_d.set("MediaBox", Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]));
+        page_d.set("Resources", Object::Dictionary(page_res));
+        page_d.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_d));
+
+        let mut pages_d = Dictionary::new();
+        pages_d.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_d.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages_d));
+
+        if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        assert!(!frags.is_empty(), "expected fragments");
+
+        // All fragments must have tm_origin_x set to 100.0 (the Td-set x in this case,
+        // because Td with absolute operands acts as initial positioning before Tm).
+        // Actually: "100 700 Td" is NOT a Tm — it's a Td with tx=100, ty=700.
+        // Td doesn't set tm_origin. tm_origin_x is only set by Tm.
+        // So tm_origin_x should be None for all fragments (no Tm was used).
+        for f in &frags {
+            assert!(
+                f.tm_origin_x.is_none(),
+                "no Tm in stream → tm_origin_x should be None, got {:?}",
+                f.tm_origin_x
+            );
+        }
+
+        // Now test with actual Tm operator.
+        let mut doc2 = Document::new();
+        let font_id2 = doc2.add_object(Object::Dictionary({
+            let mut d = lopdf::Dictionary::new();
+            d.set("Type", Object::Name(b"Font".to_vec()));
+            d.set("Subtype", Object::Name(b"Type1".to_vec()));
+            d.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+            d
+        }));
+
+        // BT block with Tm → Tj → Td → Tj
+        // After Tm, tm_origin_x = 100 (in page space).
+        // After first Tj, x advances; Td keeps x; second Tj starts at drifted x.
+        // Both fragments should have tm_origin_x = 100.
+        let stream2 = b"BT /F1 12 Tf 1 0 0 1 100 700 Tm (AB) Tj 0 -14 Td (C) Tj ET".to_vec();
+        let cid2 = doc2.add_object(Object::Stream(Stream::new(Dictionary::new(), stream2)));
+
+        let mut fd2 = lopdf::Dictionary::new();
+        fd2.set("F1", Object::Reference(font_id2));
+        let mut pr2 = lopdf::Dictionary::new();
+        pr2.set("Font", Object::Dictionary(fd2));
+
+        let mut pg2 = lopdf::Dictionary::new();
+        pg2.set("Type", Object::Name(b"Page".to_vec()));
+        pg2.set("MediaBox", Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]));
+        pg2.set("Resources", Object::Dictionary(pr2));
+        pg2.set("Contents", Object::Reference(cid2));
+        let page_id2 = doc2.add_object(Object::Dictionary(pg2));
+
+        let mut ps2 = lopdf::Dictionary::new();
+        ps2.set("Type", Object::Name(b"Pages".to_vec()));
+        ps2.set("Kids", Object::Array(vec![Object::Reference(page_id2)]));
+        ps2.set("Count", Object::Integer(1));
+        let pages_id2 = doc2.add_object(Object::Dictionary(ps2));
+
+        if let Ok(obj) = doc2.get_object_mut(page_id2) && let Ok(d) = obj.as_dict_mut() {
+            d.set("Parent", Object::Reference(pages_id2));
+        }
+
+        let mut cat2 = lopdf::Dictionary::new();
+        cat2.set("Type", Object::Name(b"Catalog".to_vec()));
+        cat2.set("Pages", Object::Reference(pages_id2));
+        let cat_id2 = doc2.add_object(Object::Dictionary(cat2));
+        doc2.trailer.set("Root", Object::Reference(cat_id2));
+
+        let frags2 = extract_text_runs_from_page(&doc2, page_id2).unwrap();
+        assert!(!frags2.is_empty(), "expected fragments with Tm");
+
+        // All fragments from same BT block with same Tm must share tm_origin_x = 100.
+        for f in &frags2 {
+            let ox = f.tm_origin_x.unwrap_or(f32::NAN);
+            assert!(
+                (ox - 100.0).abs() < 0.5,
+                "tm_origin_x should be ~100, got {ox} for {:?}",
+                f.text
+            );
+        }
+
+        // The second row (after Td) must have x > 100 (drift), but tm_origin_x stays 100.
+        let rows: Vec<_> = frags2.iter().collect();
+        if rows.len() >= 2 {
+            let first_row_end_x = rows[0].x + rows[0].width;
+            let second_row_x = rows[rows.len() - 1].x;
+            assert!(
+                second_row_x > 100.0,
+                "second row x should have drifted from 100, got {second_row_x}"
+            );
+            assert!(
+                (second_row_x - first_row_end_x).abs() < 5.0,
+                "second row starts where first row ended (Td with tx=0 keeps x)"
+            );
+        }
     }
 }
