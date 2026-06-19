@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.17] — 2026-06-19
+
+### Added (harumi)
+
+- **`text_fragment_bounds(fragments: &[TextFragment]) -> Option<[f32; 4]>`** (`src/extract.rs`) —
+  Returns the axis-aligned bounding box `[x, y, width, height]` in PDF points
+  covering all fragments in the slice.  Each fragment's vertical extent is
+  estimated as baseline ± `font_size × 0.25/0.75` (descender/ascender
+  approximation, accurate for most Latin and CJK fonts).  Returns `None` for an
+  empty slice.  Useful for computing the cover rectangle needed to erase original
+  text in overlay fallback mode.  Exported from the top-level crate.
+
+- **`FragmentReplaceOpts.shrink_to_fit: bool`** (`src/document.rs`) —
+  When `true` and `max_width` is set, the replacement font size is reduced
+  proportionally (using `calculate_text_width`) until the text fits on one line
+  within `max_width`.  Size is never reduced below `min_font_size`.  Default `false`.
+
+- **`FragmentReplaceOpts.min_font_size: f32`** (`src/document.rs`) —
+  Floor font size for `shrink_to_fit`.  Default `4.0` pt.
+
+---
+
 ## [1.5.16] — 2026-06-18
 
 ### Added (harumi)
