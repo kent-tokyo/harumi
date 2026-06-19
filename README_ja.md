@@ -123,6 +123,9 @@ doc.save("searchable.pdf")?;
 | 1文字ずつ Tj で描かれた PDF のテキストを置換したい | `page.replace_text_fragments(&frags, new_text, font)` — ソース演算子を `() Tj` で無効化し、最初のフラグメント位置に `new_text` を配置。PScript5/Distiller・Type3 レイアウトで `replace_text()` が一致しない場合の解決策（v1.5.15+） |
 | Tm 行列の水平スケールを取得したい | `TextFragment.tm_x_scale: Option<f32>` — Tm 行列の √(a²+b²)。`font_size=1` + 大スケール Tm を使う PDF でも正しい視覚幅・列オフセットを算出できる（v1.6.0+） |
 | 帳票 PDF の InPlace 翻訳でラベル列と値列の位置を安定して取得したい | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — テキストラインマトリクス（T_lm）の座標。`x`（グリフアドバンス累積）や `tm_origin_x`（Tm 固定）とは異なり、毎 `Td` ごとにリセットされる「行アンカー」。前行のテキスト幅に関係なく常にクリーンな列位置を返す（v1.7.0+） |
+| 翻訳用にソースフラグメント付きのテーブルセルを抽出したい | `extract_table_cells` が返す `TableCell` に `fragments: Vec<TextFragment>` と `bbox() -> [f32; 4]` を追加。`&cell.fragments` + `cell.bbox()` をそのまま `replace_fragments_fit_to_bbox` や `replace_text_fragments_batch_opts` に渡せる（v1.8.0+） |
+| バッチ翻訳でセルごとにフォントサイズ・幅を指定したい | `page.replace_text_fragments_batch_opts(entries, font)` — `BatchEntry` ごとに独自の `FragmentReplaceOpts`（font_size・max_width・shrink_to_fit・color）を指定できる 1 パスバッチ置換（v1.8.0+） |
+| 翻訳文を元セルの bbox に収めて配置したい | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 元テキストを抑制し、セル幅に shrink-to-fit した翻訳文を配置する（v1.8.0+） |
 
 ---
 

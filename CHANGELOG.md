@@ -11,6 +11,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.0] — 2026-06-20
+
+### Added (harumi)
+
+- **`TableCell::fragments: Vec<TextFragment>`** (`src/extract.rs`) —
+  Each cell produced by `extract_table_cells` now carries the source fragments
+  it was built from.  Pass `&cell.fragments` directly to
+  `replace_text_fragments_batch_opts` or `replace_fragments_fit_to_bbox` to
+  suppress originals and place translations without any manual fragment lookup.
+
+- **`TableCell::bbox() -> [f32; 4]`** (`src/extract.rs`) —
+  Convenience method that returns `[x, y, width, height]`.  Intended for
+  direct use as the `bbox` argument to `replace_fragments_fit_to_bbox`.
+
+- **`BatchEntry<'a>`** (`src/document/types.rs`) —
+  One entry for the new `replace_text_fragments_batch_opts` method.  Carries
+  its own `FragmentReplaceOpts`, enabling per-cell `font_size`, `max_width`,
+  `shrink_to_fit`, and `color` in a single batch call.
+
+- **`FitOptions`** (`src/document/types.rs`) —
+  Options struct for `replace_fragments_fit_to_bbox`.  Fields:
+  `shrink_to_fit: bool` (default `true`), `min_font_size: f32` (default `6.0`),
+  `color: Option<Color>` (default black).
+
+- **`PageHandle::replace_text_fragments_batch_opts`** (`src/document/page.rs`) —
+  Like `replace_text_fragments_batch` but each entry carries its own
+  `FragmentReplaceOpts`.  All suppressions are collected in a single pass
+  before any new text is placed, keeping byte offsets stable across entries.
+
+- **`PageHandle::replace_fragments_fit_to_bbox`** (`src/document/page.rs`) —
+  Convenience wrapper that suppresses `fragments` and places `new_text` sized
+  to fit within a cell bounding box.  Derives `max_width` from `bbox[2]`
+  automatically; pass `TableCell::bbox()` directly.
+
+### Changed (harumi)
+
+- **`extract_table_cells` uses `tm_lm_x` for column assignment when available**
+  (`src/extract.rs`) — When a majority of fragments have `tm_lm_x` set (from
+  the v1.7.0 T_lm tracking), columns are derived from the exact T_lm anchors
+  rather than the X-density histogram.  This gives correct label/value column
+  separation for form PDFs that use a single BT block with Td jumps.  Falls
+  back to the histogram for PDFs without scaled Tm.
+
+- **`TableCell` is now `#[non_exhaustive]`** (`src/extract.rs`) —
+  Allows future field additions without a semver-breaking change.
+
+### Internal (no API change)
+
+- **`src/document.rs` split into `src/document/` module** — Pure mechanical
+  refactoring; no public API changes.  The 6857-line file is now four files:
+  `types.rs` (types), `helpers.rs` (utility functions + tests), `page.rs`
+  (`PageHandle` + replace methods), `mod.rs` (`impl Document`).  Maximum file
+  length is now ~3100 lines.
+
+- **`src/extract.rs` tests moved to `src/extract_tests.rs`** — `extract.rs`
+  reduced from 4748 to 3314 lines.  Tests are linked via
+  `#[path = "extract_tests.rs"] mod tests`.
+
+---
+
 ## [1.7.0] — 2026-06-19
 
 ### Added (harumi)

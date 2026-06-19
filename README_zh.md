@@ -120,6 +120,9 @@ doc.save("searchable.pdf")?;
 | 需要替换每字符独立 Tj 的 PDF 文本 | `page.replace_text_fragments(&frags, new_text, font)` — 将源算子替换为 `() Tj` 以抑制原始字形，并在第一个片段位置放置 `new_text`；适用于 PScript5/Distiller 或 Type3 布局中 `replace_text()` 无法匹配的场景（v1.5.15+） |
 | 需要获取 Tm 矩阵的水平缩放因子 | `TextFragment.tm_x_scale: Option<f32>` — Tm 矩阵的 √(a²+b²)；对于使用 `font_size=1` 加大 Tm 缩放的 PDF，可正确计算视觉宽度和列偏移（v1.6.0+） |
 | 需要表单 PDF 原位翻译的稳定列/行锚点 | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — 每次 `Tj` 时的文本行矩阵（T_lm）坐标；每次 `Td` 后重置，不受前行字符宽度影响，标签列和值列始终返回正确位置（v1.7.0+） |
+| 需要提取带源片段的表格单元格用于翻译 | `extract_table_cells` 返回的 `TableCell` 新增 `fragments: Vec<TextFragment>` 和 `bbox() -> [f32; 4]`。将 `&cell.fragments` + `cell.bbox()` 直接传给 `replace_fragments_fit_to_bbox` 或 `replace_text_fragments_batch_opts`（v1.8.0+） |
+| 需要批量翻译时为每个单元格指定不同的字体大小/宽度 | `page.replace_text_fragments_batch_opts(entries, font)` — 每个 `BatchEntry` 携带独立的 `FragmentReplaceOpts`，单次调用即可完成多单元格差异化替换（v1.8.0+） |
+| 需要将翻译文本适配到原始单元格 bbox 内 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 抑制原文并将替换文本按单元格宽度缩放放置（v1.8.0+） |
 
 ---
 

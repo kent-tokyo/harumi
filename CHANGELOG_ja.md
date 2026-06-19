@@ -11,6 +11,63 @@
 
 ---
 
+## [1.8.0] — 2026-06-20
+
+### 追加 (harumi)
+
+- **`TableCell::fragments: Vec<TextFragment>`** (`src/extract.rs`) —
+  `extract_table_cells` が返す各セルにソースフラグメントを含めるようにした。
+  `&cell.fragments` を `replace_text_fragments_batch_opts` や
+  `replace_fragments_fit_to_bbox` に直接渡すことで、元テキストの抑制と
+  翻訳配置をフラグメント再検索なしに行える。
+
+- **`TableCell::bbox() -> [f32; 4]`** (`src/extract.rs`) —
+  `[x, y, width, height]` を返す便利メソッド。`replace_fragments_fit_to_bbox`
+  の `bbox` 引数にそのまま渡せる。
+
+- **`BatchEntry<'a>`** (`src/document/types.rs`) —
+  `replace_text_fragments_batch_opts` の 1 エントリ型。
+  エントリごとに独自の `FragmentReplaceOpts`（font_size・max_width・shrink_to_fit 等）
+  を持てる。
+
+- **`FitOptions`** (`src/document/types.rs`) —
+  `replace_fragments_fit_to_bbox` のオプション構造体。
+  `shrink_to_fit: bool`（デフォルト true）、`min_font_size: f32`（デフォルト 6.0）、
+  `color: Option<Color>`（デフォルト黒）。
+
+- **`PageHandle::replace_text_fragments_batch_opts`** (`src/document/page.rs`) —
+  `replace_text_fragments_batch` のエントリごと opts 版。全抑制対象を
+  1 パスで収集してから配置するため、エントリ数が多くてもバイトオフセットがずれない。
+
+- **`PageHandle::replace_fragments_fit_to_bbox`** (`src/document/page.rs`) —
+  `fragments` を抑制し、`new_text` をセル幅に収めて配置する便利ラッパー。
+  `bbox[2]`（幅）を自動的に `max_width` として使用。`TableCell::bbox()` を直接渡せる。
+
+### 変更 (harumi)
+
+- **`extract_table_cells` が `tm_lm_x` で列を決定するよう改善** (`src/extract.rs`) —
+  フラグメントの過半数が `tm_lm_x` を持つ場合（v1.7.0 の T_lm 追跡による）、
+  X 密度ヒストグラムではなく T_lm アンカーで列を割り当てる。
+  Td ジャンプで列を切り替える帳票 PDF でラベル列・値列が正確に分離される。
+  均一 Tm を持たない PDF はヒストグラムにフォールバック。
+
+- **`TableCell` が `#[non_exhaustive]` に変更** (`src/extract.rs`) —
+  将来のフィールド追加を semver 互換にするため。
+
+### 内部変更（API 変更なし）
+
+- **`src/document.rs` を `src/document/` モジュールに分割** —
+  純粋なリファクタリング。公開 API は一切変更なし。6857 行のファイルが
+  `types.rs`（型定義）・`helpers.rs`（ユーティリティ+テスト）・
+  `page.rs`（PageHandle）・`mod.rs`（impl Document）の 4 ファイルに。
+  最大ファイル長が約 3100 行に。
+
+- **`src/extract.rs` のテストを `src/extract_tests.rs` に分離** —
+  `extract.rs` が 4748 行 → 3314 行に削減。
+  `#[path = "extract_tests.rs"] mod tests` でリンク。
+
+---
+
 ## [1.7.0] — 2026-06-19
 
 ### 追加 (harumi)

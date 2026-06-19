@@ -122,6 +122,9 @@ doc.save("searchable.pdf")?;
 | 문자별 Tj로 그려진 PDF 텍스트를 교체하고 싶다 | `page.replace_text_fragments(&frags, new_text, font)` — 소스 연산자를 `() Tj`로 억제하고 첫 번째 fragment 위치에 `new_text` 배치；PScript5/Distiller·Type3 레이아웃에서 `replace_text()`가 일치하지 않을 때 사용（v1.5.15+） |
 | Tm 행렬의 수평 스케일 인수가 필요하다 | `TextFragment.tm_x_scale: Option<f32>` — Tm 행렬의 √(a²+b²)；`font_size=1` + 대형 Tm 스케일 PDF에서도 올바른 시각적 너비와 열 오프셋 계산 가능（v1.6.0+） |
 | 폼/표 PDF 인플레이스 번역을 위한 안정적인 열/행 앵커가 필요하다 | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — 각 `Tj` 시작 시의 텍스트 라인 행렬(T_lm) 좌표；`Td`마다 리셋되어 이전 행의 글자 너비에 관계없이 레이블 열과 값 열이 항상 정확한 위치를 반환（v1.7.0+） |
+| 번역용 소스 fragment가 포함된 테이블 셀을 추출하고 싶다 | `extract_table_cells`가 반환하는 `TableCell`에 `fragments: Vec<TextFragment>`와 `bbox() -> [f32; 4]` 추가. `&cell.fragments` + `cell.bbox()`를 `replace_fragments_fit_to_bbox`나 `replace_text_fragments_batch_opts`에 직접 전달 가능（v1.8.0+） |
+| 배치 번역에서 셀마다 다른 폰트 크기/너비를 지정하고 싶다 | `page.replace_text_fragments_batch_opts(entries, font)` — 각 `BatchEntry`가 독립적인 `FragmentReplaceOpts`를 가져 한 번의 호출로 셀별 차별화된 교체 가능（v1.8.0+） |
+| 번역 텍스트를 원래 셀 bbox에 맞게 배치하고 싶다 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 원문을 억제하고 셀 너비에 맞게 번역문을 배치（v1.8.0+） |
 
 ---
 
