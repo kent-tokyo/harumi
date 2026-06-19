@@ -3,7 +3,7 @@ members = [".", "harumi-mcp", "harumi-ai"]
 
 [package]
 name = "harumi"
-version = "1.5.17"
+version = "1.5.18"
 edition = "2024"
 rust-version = "1.88"
 authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]

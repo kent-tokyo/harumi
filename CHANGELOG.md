@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.18] — 2026-06-19
+
+### Added (harumi)
+
+- **`PageHandle::replace_text_fragments_batch(entries, font, opts)`** (`src/document.rs`) —
+  Replaces text for multiple logical lines in a single content-stream pass.
+  All suppression targets are collected up-front before any stream is written,
+  so each content stream is rewritten exactly once.  This eliminates the
+  byte-offset shift that occurs when `replace_text_fragments` is called
+  repeatedly on the same stream; subsequent callers no longer see stale
+  `source_op_end` values.  Fragments from different `source_stream` indices or
+  Form XObjects are all handled correctly in the same batch call.
+
+- **`FragmentReplaceOpts.dry_run: bool`** (`src/document.rs`) —
+  When `true`, count how many `Tj`/`TJ` operators would be suppressed without
+  writing any content stream or queueing new text.  Both
+  `replace_text_fragments_opts` and `replace_text_fragments_batch` respect this
+  flag.  Useful for pre-flight checks before committing to an in-place
+  replacement.  Default `false`.
+
+- **`FragmentReplaceFailureReason` enum** (`src/document.rs`) —
+  Structured diagnostic returned by `can_suppress_fragment`.  Variants:
+  `NoSourceInfo`, `StreamIndexOutOfRange`, `XObjectNotFound`,
+  `OperatorNotFound`, `DecompressFailed`.  Exported from `lib.rs`.
+
+- **`PageHandle::can_suppress_fragment(fragment)`** (`src/document.rs`) —
+  Read-only check: returns `Ok(())` if the fragment's source operator is
+  locatable in the current stream state, or `Err(FragmentReplaceFailureReason)`
+  when it cannot be suppressed.
+
+### Changed (harumi)
+
+- **`replace_text_fragments` doc comment** — offset stability warning added,
+  pointing callers to `replace_text_fragments_batch`.
+
+- **`replace_text_fragments_batch` doc comment** — cross-stream behaviour
+  clarified: fragments spanning multiple `source_stream` indices are all handled
+  in one batch call; `opts.dry_run` is honoured.
+
+- **Internal refactor** — `suppress_ops_in_object` and `count_ops_in_object`
+  extracted as module-level free functions, shared by both
+  `replace_text_fragments_opts` and `replace_text_fragments_batch`.
+
+---
+
 ## [1.5.17] — 2026-06-19
 
 ### Added (harumi)
