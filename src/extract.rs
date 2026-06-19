@@ -131,6 +131,22 @@ pub struct TextFragment {
     /// `None` when no `Tm` operator preceded the first `Tj` in this BT block (same guard
     /// as `tm_origin_x`).
     pub tm_x_scale: Option<f32>,
+    /// X position of the text line matrix (T_lm) at the start of this `Tj`.
+    ///
+    /// Unlike `tm_origin_x` (set only by `Tm` and never changed by `Td`), this field
+    /// reflects the T_lm after every `Td` operator, giving the **row anchor** for each
+    /// Td-based line in a BT block.
+    ///
+    /// **Coordinate layer summary:**
+    /// - `tm_origin_x` — BT-block column anchor; set only by `Tm`
+    /// - `tm_lm_x` — row anchor; updated by both `Tm` and `Td`; use for in-place translation
+    /// - `x` — visual glyph-start position; equals `tm_lm_x` for the first `Tj` after each
+    ///   `Td`, then advances as subsequent `Tj` operators accumulate
+    ///
+    /// `None` when no `Tm` preceded the first `Tj` in this BT block.
+    pub tm_lm_x: Option<f32>,
+    /// Y position of the text line matrix (T_lm). Paired with [`tm_lm_x`](Self::tm_lm_x).
+    pub tm_lm_y: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2751,6 +2767,11 @@ struct ParseCarryState {
     /// X-scale from the most recent `Tm` matrix: √(a² + b²).
     /// Reset to 1.0 on `BT`.  Used to scale `Td` horizontal offsets and glyph widths.
     tm_x_scale: f32,
+    /// Text line matrix (T_lm) x translation.  Updated by `Tm` and by `Td` per PDF spec.
+    /// On `Td`, T_m is reset to T_lm_new; accumulated glyph advances are cleared.
+    tm_lm_x: f32,
+    /// Text line matrix (T_lm) y translation.  Paired with `tm_lm_x`.
+    tm_lm_y: f32,
 }
 
 impl Default for ParseCarryState {
@@ -2772,6 +2793,8 @@ impl Default for ParseCarryState {
             tm_origin_y: 0.0,
             tm_origin_set: false,
             tm_x_scale: 1.0,
+            tm_lm_x: 0.0,
+            tm_lm_y: 0.0,
         }
     }
 }
@@ -2794,6 +2817,8 @@ fn parse_content_stream(
     let mut font_size      = state.font_size;
     let mut tm_y_scale     = state.tm_y_scale;
     let mut tm_x_scale     = state.tm_x_scale;
+    let mut tm_lm_x        = state.tm_lm_x;
+    let mut tm_lm_y        = state.tm_lm_y;
     let mut x              = state.text_x;
     let mut y              = state.text_y;
     let mut tm_origin_set  = state.tm_origin_set;
@@ -2809,6 +2834,8 @@ fn parse_content_stream(
                     y = 0.0;
                     tm_origin_set = false;
                     tm_x_scale = 1.0;
+                    tm_lm_x = 0.0;
+                    tm_lm_y = 0.0;
                     stack.clear();
                 }
                 b"ET" => {
@@ -2833,12 +2860,17 @@ fn parse_content_stream(
                     if let (Some((Token::Number(ty), _)), Some((Token::Number(tx), _))) =
                         (top, second)
                     {
-                        // Td operands are in "unscaled text space"; multiply by the Tm
-                        // matrix scale to convert to user space (before CTM).
-                        // For axis-aligned Tm this is exact; rotated Tm requires the
-                        // full a/b/c/d matrix and is approximated here.
-                        x += tx * tm_x_scale;
-                        y += ty * tm_y_scale;
+                        // PDF spec: Td sets T_lm_new = [[1,0,0],[0,1,0],[tx,ty,1]] × T_lm
+                        // and resets T_m = T_lm_new (clears intra-line glyph-advance drift).
+                        // For axis-aligned Tm: new_lm = tx*tm_x_scale + lm_x, ty*tm_y_scale + lm_y.
+                        // For rotated Tm the full a/b/c/d matrix is required; this is an
+                        // approximation that is exact for the common axis-aligned case.
+                        let new_lm_x = tx * tm_x_scale + tm_lm_x;
+                        let new_lm_y = ty * tm_y_scale + tm_lm_y;
+                        tm_lm_x = new_lm_x;
+                        tm_lm_y = new_lm_y;
+                        x = new_lm_x;
+                        y = new_lm_y;
                     }
                     stack.clear();
                 }
@@ -2855,12 +2887,14 @@ fn parse_content_stream(
                     {
                         x = ex;
                         y = fy;
-                        // Record the Tm-set position as the column anchor.
-                        // Unlike x/y, tm_origin is NOT updated by Td or Tj advances,
-                        // so it stays at the Tm-set position even as x drifts.
+                        // Record the Tm-set position as the BT-block column anchor.
+                        // tm_origin_x is NOT updated by Td; it stays at the Tm value.
                         state.tm_origin_x = ex;
                         state.tm_origin_y = fy;
                         tm_origin_set = true;
+                        // Also reset T_lm to the Tm translation (Td will update from here).
+                        tm_lm_x = ex;
+                        tm_lm_y = fy;
                     }
                     // Compute effective font size from the Tm y-scale:
                     // y_scale = sqrt(c² + d²) handles both scaling and rotation.
@@ -2976,6 +3010,12 @@ fn parse_content_stream(
                             (None, None)
                         };
                         let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
+                            let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
+                            (Some(lx), Some(ly))
+                        } else {
+                            (None, None)
+                        };
                         // x_font_size uses the Tm x-scale for width; font_size (y-scale)
                         // is kept for height.  For uniform Tm they are equal.
                         let x_font_size = tf_font_size * tm_x_scale * scale;
@@ -2998,6 +3038,8 @@ fn parse_content_stream(
                             tm_ox,
                             tm_oy,
                             tm_xs,
+                            tm_lm_ox,
+                            tm_lm_oy,
                         ) {
                             // frag.width is page-space (x-axis); reverse CTM scale to get
                             // local-space advance for the x cursor.
@@ -3022,6 +3064,12 @@ fn parse_content_stream(
                             (None, None)
                         };
                         let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
+                            let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
+                            (Some(lx), Some(ly))
+                        } else {
+                            (None, None)
+                        };
                         let x_font_size = tf_font_size * tm_x_scale * scale;
                         let mut cur_x = x; // local-space cursor
                         for item in items {
@@ -3047,6 +3095,8 @@ fn parse_content_stream(
                                         tm_ox,
                                         tm_oy,
                                         tm_xs,
+                                        tm_lm_ox,
+                                        tm_lm_oy,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -3087,6 +3137,8 @@ fn parse_content_stream(
     state.font_size      = font_size;
     state.tm_y_scale     = tm_y_scale;
     state.tm_x_scale     = tm_x_scale;
+    state.tm_lm_x        = tm_lm_x;
+    state.tm_lm_y        = tm_lm_y;
     state.text_x         = x;
     state.text_y         = y;
     state.tm_origin_set  = tm_origin_set;
@@ -3112,6 +3164,8 @@ fn decode_chars_to_fragment(
     tm_origin_x: Option<f32>,
     tm_origin_y: Option<f32>,
     tm_x_scale: Option<f32>,
+    tm_lm_x: Option<f32>,
+    tm_lm_y: Option<f32>,
 ) -> Option<TextFragment> {
     if char_bytes.is_empty() {
         return None;
@@ -3193,6 +3247,8 @@ fn decode_chars_to_fragment(
         tm_origin_x,
         tm_origin_y,
         tm_x_scale,
+        tm_lm_x,
+        tm_lm_y,
     })
 }
 
@@ -3443,6 +3499,8 @@ mod tests {
             tm_origin_x: None,
             tm_origin_y: None,
             tm_x_scale: None,
+            tm_lm_x: None,
+            tm_lm_y: None,
         }];
         let zones = detect_text_columns(&frags, 595.0);
         assert_eq!(zones.len(), 1);
@@ -3478,6 +3536,8 @@ mod tests {
             tm_origin_x: None,
             tm_origin_y: None,
             tm_x_scale: None,
+            tm_lm_x: None,
+            tm_lm_y: None,
         };
         let right = TextFragment {
             text: "Right".into(),
@@ -3503,6 +3563,8 @@ mod tests {
             tm_origin_x: None,
             tm_origin_y: None,
             tm_x_scale: None,
+            tm_lm_x: None,
+            tm_lm_y: None,
         };
         let zones = detect_text_columns(&[left, right], 595.0);
         assert_eq!(zones.len(), 2, "expected two columns, got {:?}", zones);
@@ -3534,6 +3596,8 @@ mod tests {
             tm_origin_x: None,
             tm_origin_y: None,
             tm_x_scale: None,
+            tm_lm_x: None,
+            tm_lm_y: None,
         }
     }
 
@@ -4298,18 +4362,21 @@ mod tests {
             );
         }
 
-        // The second row (after Td) must have x > 100 (drift), but tm_origin_x stays 100.
+        // Per PDF spec, Td resets T_m to T_lm_new (no glyph-advance drift carries over).
+        // After "0 -14 Td" with Tm scale=1 and T_lm_x=100: new T_lm_x = 0*1 + 100 = 100.
+        // The second row must start at x=100, not at first_row_end_x.
         let rows: Vec<_> = frags2.iter().collect();
         if rows.len() >= 2 {
-            let first_row_end_x = rows[0].x + rows[0].width;
             let second_row_x = rows[rows.len() - 1].x;
             assert!(
-                second_row_x > 100.0,
-                "second row x should have drifted from 100, got {second_row_x}"
+                (second_row_x - 100.0).abs() < 1.0,
+                "after Td(0,-14) x should reset to T_lm_x=100, got {second_row_x}"
             );
+            // tm_lm_x for the second row should also be 100
+            let second_lm_x = rows[rows.len() - 1].tm_lm_x.unwrap_or(f32::NAN);
             assert!(
-                (second_row_x - first_row_end_x).abs() < 5.0,
-                "second row starts where first row ended (Td with tx=0 keeps x)"
+                (second_lm_x - 100.0).abs() < 0.5,
+                "second row tm_lm_x should be 100, got {second_lm_x}"
             );
         }
     }
@@ -4388,13 +4455,21 @@ mod tests {
                 assert!((xs - 10.0).abs() < 0.01, "tm_x_scale should be 10, got {xs}");
             }
 
-            // Second fragment x should be first_x + width_A + 5*10 = 50 + ε + 50
+            // Per PDF spec, Td resets T_m to T_lm_new (glyph-advance of A does NOT carry).
+            // After "5 0 Td" with T_lm_x=50 and tm_x_scale=10: T_lm_x_new = 5*10 + 50 = 100.
+            // B must start at x=100, independent of A's advance.
             let x_b = frags[1].x;
-            let expected_x_b = frags[0].x + frags[0].width + 5.0 * 10.0;
+            let expected_x_b = 50.0 + 5.0 * 10.0; // = 100.0
             assert!(
                 (x_b - expected_x_b).abs() < eps,
-                "Td(5,0) with Tm scale=10 should advance x by 50; got x_B={x_b}, expected≈{expected_x_b}"
+                "Td(5,0) resets T_m to T_lm_new=100; got x_B={x_b}, expected={expected_x_b}"
             );
+            // tm_lm_x for both fragments should equal T_lm at the time of each Tj:
+            // A: T_lm_x=50 (from Tm); B: T_lm_x=100 (after Td)
+            assert!((frags[0].tm_lm_x.unwrap_or(f32::NAN) - 50.0).abs() < 0.5,
+                "A.tm_lm_x should be 50 (Tm anchor), got {:?}", frags[0].tm_lm_x);
+            assert!((frags[1].tm_lm_x.unwrap_or(f32::NAN) - 100.0).abs() < 0.5,
+                "B.tm_lm_x should be 100 (after Td), got {:?}", frags[1].tm_lm_x);
         }
 
         // Test B: non-uniform Tm (x_scale=5, y_scale=2) → width uses x_scale, height uses y_scale
@@ -4436,5 +4511,108 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Regression: form/table PDF with Tm scale + Td column jumps.
+    //
+    // Pattern: single BT block, Tm sets scale, then alternating Td moves
+    // jump between label column (left) and value column (right).
+    // PDF spec says Td resets T_m to T_lm_new, so glyph-advance drift from
+    // the previous Tj does NOT carry into the next row's x position.
+    //
+    // Stream: Tm(10,50,700) → (Label1) Tj → 200 0 Td → (Value1) Tj
+    //                       → -200 -14 Td → (Label2) Tj → 200 0 Td → (Value2) Tj
+    //
+    // Expected column positions:
+    //   Label x ≈ 50           (T_lm_x after Tm or after -200 Td)
+    //   Value x ≈ 50+200*10=2050  (T_lm_x after 200 Td)
+    #[test]
+    fn form_pdf_column_stability() {
+        use lopdf::{Document, Stream};
+
+        let mut doc = Document::new();
+        let mut fd = lopdf::Dictionary::new();
+        fd.set("Type", Object::Name(b"Font".to_vec()));
+        fd.set("Subtype", Object::Name(b"Type1".to_vec()));
+        fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(fd));
+
+        // BT /F1 1 Tf
+        //   10 0 0 10 50 700 Tm   (scale=10, origin=(50,700))
+        //   (Label1) Tj
+        //   200 0 Td              (jump to value column: x = 200*10 + 50 = 2050)
+        //   (Value1) Tj
+        //   -200 -14 Td           (back to label, next row: x = -200*10 + 2050 = 50)
+        //   (Label2) Tj
+        //   200 0 Td              (value column again: x = 200*10 + 50 = 2050)
+        //   (Value2) Tj
+        // ET
+        let stream_bytes =
+            b"BT /F1 1 Tf 10 0 0 10 50 700 Tm \
+              (A) Tj 200 0 Td (B) Tj -200 -14 Td (C) Tj 200 0 Td (D) Tj ET"
+            .to_vec();
+
+        let cid = doc.add_object(Object::Stream(Stream::new(
+            lopdf::Dictionary::new(),
+            stream_bytes,
+        )));
+        let mut font_dict = lopdf::Dictionary::new();
+        font_dict.set("F1", Object::Reference(font_id));
+        let mut res = lopdf::Dictionary::new();
+        res.set("Font", Object::Dictionary(font_dict));
+        let mut pg = lopdf::Dictionary::new();
+        pg.set("Type", Object::Name(b"Page".to_vec()));
+        pg.set("MediaBox", Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]));
+        pg.set("Resources", Object::Dictionary(res));
+        pg.set("Contents", Object::Reference(cid));
+        let page_id = doc.add_object(Object::Dictionary(pg));
+        let mut ps = lopdf::Dictionary::new();
+        ps.set("Type", Object::Name(b"Pages".to_vec()));
+        ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        ps.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(ps));
+        if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+        let mut cat = lopdf::Dictionary::new();
+        cat.set("Type", Object::Name(b"Catalog".to_vec()));
+        cat.set("Pages", Object::Reference(pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+        assert_eq!(frags.len(), 4, "expected 4 fragments A/B/C/D");
+
+        // A = Label1, B = Value1, C = Label2, D = Value2
+        let (a, b, c, d) = (&frags[0], &frags[1], &frags[2], &frags[3]);
+        let eps = 1.0f32;
+
+        // All fragments share the same Tm origin (50, 700).
+        for f in &frags {
+            let ox = f.tm_origin_x.unwrap_or(f32::NAN);
+            assert!((ox - 50.0).abs() < eps, "tm_origin_x should be 50, got {ox} for {:?}", f.text);
+        }
+
+        // Label column (A and C): x ≈ 50 (T_lm reset by Td or Tm)
+        assert!((a.x - 50.0).abs() < eps, "A.x should be ≈50, got {}", a.x);
+        assert!((c.x - 50.0).abs() < eps, "C.x should be ≈50 after -200 Td, got {}", c.x);
+
+        // Value column (B and D): x ≈ 2050 (= 200*10 + 50)
+        let value_x = 200.0 * 10.0 + 50.0;
+        assert!((b.x - value_x).abs() < eps, "B.x should be ≈{value_x}, got {}", b.x);
+        assert!((d.x - value_x).abs() < eps, "D.x should be ≈{value_x}, got {}", d.x);
+
+        // tm_lm_x: A=50, B=2050, C=50, D=2050
+        let a_lm = a.tm_lm_x.unwrap_or(f32::NAN);
+        let b_lm = b.tm_lm_x.unwrap_or(f32::NAN);
+        let c_lm = c.tm_lm_x.unwrap_or(f32::NAN);
+        let d_lm = d.tm_lm_x.unwrap_or(f32::NAN);
+        assert!((a_lm - 50.0).abs() < eps, "A.tm_lm_x should be 50, got {a_lm}");
+        assert!((b_lm - value_x).abs() < eps, "B.tm_lm_x should be {value_x}, got {b_lm}");
+        assert!((c_lm - 50.0).abs() < eps, "C.tm_lm_x should be 50 (row reset), got {c_lm}");
+        assert!((d_lm - value_x).abs() < eps, "D.tm_lm_x should be {value_x}, got {d_lm}");
     }
 }

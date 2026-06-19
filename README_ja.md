@@ -121,6 +121,8 @@ doc.save("searchable.pdf")?;
 | PDF に電子署名を付与したい | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → 署名済み PDF バイト — PKCS#7 DER構造、SHA-256 + RSA署名、ByteRange per spec 対応、v1.2.2+ 完全実装（`digital-signature` feature） |
 | TextFragment がどの PDF 演算子から生成されたか追跡したい | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 元の `Tj`/`TJ` キーワードの Content Stream 内バイトオフセット（v1.5.15+） |
 | 1文字ずつ Tj で描かれた PDF のテキストを置換したい | `page.replace_text_fragments(&frags, new_text, font)` — ソース演算子を `() Tj` で無効化し、最初のフラグメント位置に `new_text` を配置。PScript5/Distiller・Type3 レイアウトで `replace_text()` が一致しない場合の解決策（v1.5.15+） |
+| Tm 行列の水平スケールを取得したい | `TextFragment.tm_x_scale: Option<f32>` — Tm 行列の √(a²+b²)。`font_size=1` + 大スケール Tm を使う PDF でも正しい視覚幅・列オフセットを算出できる（v1.6.0+） |
+| 帳票 PDF の InPlace 翻訳でラベル列と値列の位置を安定して取得したい | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — テキストラインマトリクス（T_lm）の座標。`x`（グリフアドバンス累積）や `tm_origin_x`（Tm 固定）とは異なり、毎 `Td` ごとにリセットされる「行アンカー」。前行のテキスト幅に関係なく常にクリーンな列位置を返す（v1.7.0+） |
 
 ---
 

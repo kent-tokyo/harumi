@@ -117,6 +117,8 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to create and sign a PDF digitally | `doc.add_signature_field(page, rect, options)` + `SigningContext::from_cert_and_key(cert, key)` + `doc.sign_document(context, field_name)` → signed PDF bytes — PKCS#7 DER structure, SHA-256 + RSA signing, ByteRange per spec, full v1.2.2+ support (`digital-signature` feature) |
 | Need to trace which PDF operator produced a TextFragment | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — byte offset of the originating `Tj`/`TJ` keyword in the decompressed content stream (v1.5.15+) |
 | Need to replace per-character text (one glyph per Tj) | `page.replace_text_fragments(&frags, new_text, font)` — suppresses each source `Tj`/`TJ` operator with `() Tj` and places `new_text` at the first fragment's position; works on PScript5/Distiller and Type3 layouts where `replace_text()` cannot match (v1.5.15+) |
+| Need the Tm horizontal scale for non-uniform text matrices | `TextFragment.tm_x_scale: Option<f32>` — √(a²+b²) from the Tm matrix; symmetric to `tm_y_scale`; `None` when no Tm in the current BT block. Lets callers compute correct visual widths and column offsets for PDFs that encode text with `font_size=1` and a large Tm scale (v1.6.0+) |
+| Need a stable column/row anchor for in-place form PDF translation | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — text line matrix (T_lm) position at each `Tj`. Unlike `tm_origin_x` (Tm-only) or `x` (accumulates glyph advances), `tm_lm_x` resets cleanly on every `Td`, so label and value columns always report their correct page position regardless of how much text the previous row contained (v1.7.0+) |
 
 ---
 

@@ -11,6 +11,69 @@
 
 ---
 
+## [1.7.0] — 2026-06-19
+
+### 追加 (harumi)
+
+- **`TextFragment::tm_lm_x / tm_lm_y: Option<f32>`** (`src/extract.rs`) —
+  各 `Tj` 開始時点の*テキストラインマトリクス*（T_lm）の X/Y 座標。
+  `tm_origin_x`（`Tm` のみで更新・`Td` で変化しない）と異なり、`Td` のたびに更新される「行アンカー」。
+  帳票・表 PDF の InPlace 翻訳では、`x` ではなく `tm_lm_x` を配置座標として使う。
+  同一 BT ブロック内で `Tj` が複数続いた後の x は累積前進するが、
+  `tm_lm_x` は常に直前の `Td`（または `Tm`）が設定した行開始位置を返す。
+  BT ブロック内に `Tm` が一度も現れない場合は `None`。
+
+### 修正 (harumi)
+
+- **`Td` / `TD` が PDF 仕様の T_lm セマンティクスに従うよう修正** (`src/extract.rs`) —
+  PDF 仕様では `tx ty Td` は `T_lm_new = [[1,0,0],[0,1,0],[tx,ty,1]] × T_lm` を計算し、
+  テキストカーソル（T_m）を T_lm_new にリセット（行内グリフアドバンス蓄積をクリア）する。
+  旧実装（`x += tx * tm_x_scale`）はカーソル位置からの加算だったため、
+  ラベル列と値列を 1 つの BT ブロック内で `Td` ジャンプで切り替える帳票 PDF で
+  列位置が毎行右にずれていた。修正後、ラベル断片は常に左マージン、値断片は常に
+  値列位置を返す（直前行のテキスト幅に影響されない）。
+  非単位 Tm を使い水平 Td ジャンプを行う PDF では **動作変更** となる（バグ修正）。
+  回帰テスト `form_pdf_column_stability` で帳票 PDF パターンを検証済み。
+
+---
+
+## [1.6.0] — 2026-06-19
+
+### 追加 (harumi)
+
+- **`TextFragment::tm_x_scale: Option<f32>`** (`src/extract.rs`) —
+  `Tm` マトリクスの x スケール係数：√(a² + b²)。
+  既存の `tm_y_scale` フィールドと対称。axis-aligned Tm（回転なし）では
+  グリフアドバンスと `Td` オフセットに適用される水平スケール係数に等しい。
+  `font_size=1` + 大スケール Tm を使う PDF でも正しい視覚サイズを判別できる。
+  BT ブロック内に `Tm` が一度も現れない場合は `None`。
+
+### 修正 (harumi)
+
+- **グリフアドバンス幅が y スケールではなく x スケールで計算されるよう修正** (`src/extract.rs`) —
+  `TextFragment::width` は `tf_font_size × tm_x_scale × ctm_scale`（水平軸スケール）を使用。
+  均一 Tm（a == d、b == c == 0）では結果は同じ。非均一 Tm では横幅が正しく計算される。
+
+- **TJ カーニングが Tm x スケールを使用するよう修正** (`src/extract.rs`) —
+  TJ 配列の数値（カーニング）は「テキスト空間単位の 1/1000」（水平方向）。
+  カーソル前進に y 軸の `font_size` ではなく `tf_font_size × tm_x_scale` を使用。
+
+- **`Tm` なし BT ブロックで `tm_origin_x/y` が `None` になるよう修正** (`src/extract.rs`) —
+  `tm_origin_set` フラグを `ParseCarryState` に追加。`BT` でリセット・`Tm` でセット。
+  `Td` のみの BT ブロックで `Some(0.0)` が返されていたバグを修正。
+
+---
+
+## [1.5.19] — 2026-06-19
+
+### 修正 (harumi)
+
+- **`Tm` なし BT ブロックで `tm_origin_x/y` が `None` になるよう修正** (`src/extract.rs`) —
+  `ParseCarryState::tm_origin_set: bool` フラグを追加（`BT` でリセット・`Tm` でセット）。
+  `Td` のみのストリームが誤って `Some(0.0)` を `tm_origin_x` として返す問題を修正。
+
+---
+
 ## [1.5.12] — 2026-06-17
 
 ### 修正 (harumi)

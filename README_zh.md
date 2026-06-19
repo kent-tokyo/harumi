@@ -118,6 +118,8 @@ doc.save("searchable.pdf")?;
 | 需要为 PDF 创建和签署数字签名 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — 需要 `digital-signature` feature；创建签名字段，生成 RSA PKCS#1 v1.5 签名；完整 PDF 嵌入计划于 v1.2.1 |
 | 需要追踪 TextFragment 来自哪个 PDF 算子 | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 记录原始 `Tj`/`TJ` 关键字在解压后内容流中的字节偏移（v1.5.15+） |
 | 需要替换每字符独立 Tj 的 PDF 文本 | `page.replace_text_fragments(&frags, new_text, font)` — 将源算子替换为 `() Tj` 以抑制原始字形，并在第一个片段位置放置 `new_text`；适用于 PScript5/Distiller 或 Type3 布局中 `replace_text()` 无法匹配的场景（v1.5.15+） |
+| 需要获取 Tm 矩阵的水平缩放因子 | `TextFragment.tm_x_scale: Option<f32>` — Tm 矩阵的 √(a²+b²)；对于使用 `font_size=1` 加大 Tm 缩放的 PDF，可正确计算视觉宽度和列偏移（v1.6.0+） |
+| 需要表单 PDF 原位翻译的稳定列/行锚点 | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — 每次 `Tj` 时的文本行矩阵（T_lm）坐标；每次 `Td` 后重置，不受前行字符宽度影响，标签列和值列始终返回正确位置（v1.7.0+） |
 
 ---
 

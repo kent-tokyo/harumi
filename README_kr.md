@@ -120,6 +120,8 @@ doc.save("searchable.pdf")?;
 | PDF에 디지털 서명을 생성하고 추가하고 싶다 | `doc.add_signature_field(page, rect, options)` + `doc.sign_document(context, field_name)` — `digital-signature` feature 필요；서명 필드 생성, RSA PKCS#1 v1.5 서명 생성；완전한 PDF 임베딩은 v1.2.1 예정 |
 | TextFragment가 어떤 PDF 연산자에서 생성됐는지 추적 | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 원본 `Tj`/`TJ` 키워드의 내용 스트림 내 바이트 오프셋（v1.5.15+） |
 | 문자별 Tj로 그려진 PDF 텍스트를 교체하고 싶다 | `page.replace_text_fragments(&frags, new_text, font)` — 소스 연산자를 `() Tj`로 억제하고 첫 번째 fragment 위치에 `new_text` 배치；PScript5/Distiller·Type3 레이아웃에서 `replace_text()`가 일치하지 않을 때 사용（v1.5.15+） |
+| Tm 행렬의 수평 스케일 인수가 필요하다 | `TextFragment.tm_x_scale: Option<f32>` — Tm 행렬의 √(a²+b²)；`font_size=1` + 대형 Tm 스케일 PDF에서도 올바른 시각적 너비와 열 오프셋 계산 가능（v1.6.0+） |
+| 폼/표 PDF 인플레이스 번역을 위한 안정적인 열/행 앵커가 필요하다 | `TextFragment.tm_lm_x / tm_lm_y: Option<f32>` — 각 `Tj` 시작 시의 텍스트 라인 행렬(T_lm) 좌표；`Td`마다 리셋되어 이전 행의 글자 너비에 관계없이 레이블 열과 값 열이 항상 정확한 위치를 반환（v1.7.0+） |
 
 ---
 

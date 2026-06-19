@@ -11,6 +11,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.0] — 2026-06-19
+
+### Added (harumi)
+
+- **`TextFragment::tm_lm_x / tm_lm_y: Option<f32>`** (`src/extract.rs`) —
+  X/Y position of the *text line matrix* (T_lm) at the start of each `Tj`.
+  Unlike `tm_origin_x` (set only by `Tm` and never moved by `Td`), this field
+  updates on every `Td` operator, giving the **row anchor** for each Td-based
+  line inside a BT block.
+  For in-place translation of form/table PDFs, use `tm_lm_x` as the placement
+  coordinate — it provides a clean column start free of accumulated glyph-advance
+  drift, which `x` accumulates across multiple `Tj` calls on the same line.
+  `None` when no `Tm` was seen before the first `Tj` in the current BT block.
+
+### Fixed (harumi)
+
+- **`Td` / `TD` now correctly implement PDF spec T_lm semantics** (`src/extract.rs`) —
+  Per PDF spec, `tx ty Td` sets
+  `T_lm_new = [[1,0,0],[0,1,0],[tx,ty,1]] × T_lm` and resets the text cursor
+  (`T_m`) to `T_lm_new`, clearing any intra-line glyph-advance accumulation.
+  The previous implementation (`x += tx * tm_x_scale`) instead accumulated from
+  the current cursor, causing column positions to drift by the advance width of
+  all previous glyphs on the same line.
+  After this fix, form/table PDFs that use a single BT block with alternating
+  `Td` jumps between a label column and a value column correctly report each
+  column's clean starting position in `TextFragment::x` and `tm_lm_x`:
+  labels always land at the left margin, values always land at the value column,
+  regardless of how much text the previous row contained.
+  This is a **behavioral change** for PDFs with non-identity Tm and horizontal Td
+  movements; uniform-scale PDFs see correct positions where they previously
+  drifted. The regression test `form_pdf_column_stability` covers this pattern.
+
+---
+
+## [1.6.0] — 2026-06-19
+
+### Added (harumi)
+
+- **`TextFragment::tm_x_scale: Option<f32>`** (`src/extract.rs`) —
+  X-scale factor from the most recent `Tm` matrix: √(a² + b²).  Symmetric to the
+  existing `tm_y_scale` field.  For axis-aligned Tm (no rotation) this equals the
+  horizontal scaling factor applied to glyph advances and `Td` offsets.  Useful
+  for distinguishing the effective visual size from the raw `Tf` font size when a
+  PDF encodes text with `font_size=1` and a large Tm scale factor.
+  `None` when no `Tm` was seen before the first `Tj` in the current BT block.
+
+### Fixed (harumi)
+
+- **Glyph advance width uses Tm x-scale, not y-scale** (`src/extract.rs`) —
+  `TextFragment::width` now uses `tf_font_size × tm_x_scale × ctm_scale` (the
+  horizontal axis scaling) instead of the y-axis `font_size`.  For uniform Tm
+  (a == d, b == c == 0) the result is identical; for non-uniform Tm (different
+  horizontal and vertical scaling) the reported width is now geometrically
+  correct.
+
+- **TJ kerning uses Tm x-scale** (`src/extract.rs`) —
+  Numeric elements in `TJ` arrays are in *thousandths of a text-space unit*
+  (horizontal).  The kern cursor advance now uses `tf_font_size × tm_x_scale`
+  instead of the y-axis `font_size`, fixing cursor drift for non-uniform Tm.
+
+- **`tm_origin_x/y` is `None` when no `Tm` operator precedes the first `Tj`**
+  (`src/extract.rs`) — Previously, the `tm_origin_set` flag was missing, causing
+  Td-only BT blocks (no `Tm`) to expose a spurious `Some(0.0)` as `tm_origin_x`.
+  Regression test `tm_origin_preserves_column_anchor` covers this.
+
+---
+
+## [1.5.19] — 2026-06-19
+
+### Fixed (harumi)
+
+- **`tm_origin_x/y` is `None` when no `Tm` operator precedes the first `Tj`**
+  (`src/extract.rs`) — Added `ParseCarryState::tm_origin_set: bool` flag, reset
+  on `BT` and set on `Tm`.  Fragments produced by streams that use only `Td` (no
+  `Tm`) no longer report a spurious `Some(0.0)` for `tm_origin_x`.
+
+---
+
 ## [1.5.18] — 2026-06-19
 
 ### Added (harumi)
