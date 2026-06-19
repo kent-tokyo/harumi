@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "harumi"
-version = "1.5.18"
+version = "1.5.19"
 dependencies = [
  "axum",
  "cms",
