@@ -122,6 +122,9 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 | Need to extract table cells with source fragments for translation | `extract_table_cells(&frags, w, h)` now returns `TableCell` with `fragments: Vec<TextFragment>` and `bbox() -> [f32; 4]`. Pass `&cell.fragments` + `cell.bbox()` directly to `replace_fragments_fit_to_bbox` or `replace_text_fragments_batch_opts` — no manual fragment lookup needed (v1.8.0+) |
 | Need per-cell font size / width in batch translation | `page.replace_text_fragments_batch_opts(entries, font)` — each `BatchEntry` carries its own `FragmentReplaceOpts`, enabling different `font_size`, `max_width`, `shrink_to_fit`, and `color` per cell in one stable-offset pass (v1.8.0+) |
 | Need to place translated text fitted into the original cell bbox | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — suppresses originals and places replacement sized to cell width with optional shrink-to-fit (v1.8.0+) |
+| Need to measure text width before placing it | `doc.measure_text(text, font, font_size) -> Result<f32>` — advance width in PDF points using the registered font's TTF metrics (v1.9.0+) |
+| Need to plan text layout in a fixed rectangle before drawing | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — pure planning pass; returns wrapped lines, effective font size, `used_rect`, and `overflow_horizontal`/`overflow_vertical` flags; four policies via `OverflowPolicy`: `Shrink`, `WrapThenShrink`, `Truncate`, `Report` (v1.9.0+) |
+| Need to detect overlaps between planned text boxes | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB overlap check; each `Collision` carries `index_a`, `index_b`, and `overlap_rect`; combine with `fit_text_to_box` `used_rect` to pre-flight collisions before mutating content streams (v1.9.0+) |
 
 ---
 
@@ -208,7 +211,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "1.5"
+harumi = "1.9"
 ```
 
 ### Getting Fonts for CJK Support

@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.0] — 2026-06-20
+
+### Added (harumi)
+
+- **`Document::measure_text(text, font, font_size) -> Result<f32>`** (`src/document/mod.rs`) —
+  Returns the total advance width of `text` in PDF points using the font registered as `font`.
+  Parses the original TTF bytes at call time via ttf-parser; characters not covered by the font
+  contribute zero width.  Useful for sizing boxes before drawing.
+
+- **`Document::fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>`** (`src/document/mod.rs`) —
+  Plans how `text` lays out within `rect = [x, y, width, height]` without mutating the document.
+  Returns `FitResult` with the final wrapped lines, effective font size, actual occupied
+  `used_rect`, and per-axis overflow flags (`overflow_horizontal`, `overflow_vertical`).
+  The geometry — `line_height = font_size × 1.2`, `wrap_paragraph` algorithm — is identical to the
+  draw path, so `used_rect` values can be fed directly to `detect_collisions` before drawing.
+
+- **`BoxFitOptions`** (`src/document/types.rs`) —
+  `#[non_exhaustive]` options struct for `fit_text_to_box`.  Fields:
+  `min_font_size: f32` (default `6.0`), `max_lines: Option<usize>` (default `None`),
+  `wrap: bool` (default `true`), `overflow: OverflowPolicy` (default `WrapThenShrink`).
+
+- **`OverflowPolicy`** (`src/document/types.rs`) —
+  `#[non_exhaustive]` enum controlling how `fit_text_to_box` handles text that does not fit:
+  - `Shrink` — shrink font (no wrap) until single line fits in width
+  - `WrapThenShrink` — wrap first; if height still overflows, shrink font and re-wrap
+  - `Truncate` — wrap and drop lines that exceed `max_lines` or the rect height
+  - `Report` — return as-is; only set overflow flags
+
+- **`FitResult`** (`src/document/types.rs`) —
+  `#[non_exhaustive]` result of `fit_text_to_box`:
+  `lines: Vec<String>`, `font_size: f32`, `used_rect: [f32; 4]`,
+  `overflow_horizontal: bool`, `overflow_vertical: bool`.
+  Convenience method `overflow() -> bool` returns the OR of both flags.
+
+- **`PlacedBox::new(rect: [f32; 4]) -> PlacedBox`** (`src/extract.rs`) —
+  Constructor for the `#[non_exhaustive]` `PlacedBox` struct used as input to `detect_collisions`.
+
+- **`detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>`** (`src/extract.rs`) —
+  O(n²) pairwise axis-aligned bounding-box overlap detection.
+  Returns one `Collision { index_a, index_b, overlap_rect }` for every pair of boxes
+  whose intersection has positive area.  Adjacent boxes sharing only an edge are not reported.
+  NaN/Infinity coordinates are treated as non-overlapping.
+
+---
+
 ## [1.8.0] — 2026-06-20
 
 ### Added (harumi)

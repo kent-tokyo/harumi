@@ -123,6 +123,9 @@ doc.save("searchable.pdf")?;
 | 需要提取带源片段的表格单元格用于翻译 | `extract_table_cells` 返回的 `TableCell` 新增 `fragments: Vec<TextFragment>` 和 `bbox() -> [f32; 4]`。将 `&cell.fragments` + `cell.bbox()` 直接传给 `replace_fragments_fit_to_bbox` 或 `replace_text_fragments_batch_opts`（v1.8.0+） |
 | 需要批量翻译时为每个单元格指定不同的字体大小/宽度 | `page.replace_text_fragments_batch_opts(entries, font)` — 每个 `BatchEntry` 携带独立的 `FragmentReplaceOpts`，单次调用即可完成多单元格差异化替换（v1.8.0+） |
 | 需要将翻译文本适配到原始单元格 bbox 内 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 抑制原文并将替换文本按单元格宽度缩放放置（v1.8.0+） |
+| 需要在放置文本前测量其渲染宽度 | `doc.measure_text(text, font, font_size) -> Result<f32>` — 使用已注册字体的 TTF 指标返回 PDF 点单位的前进宽度（v1.9.0+） |
+| 需要在绘制前规划文本在固定矩形中的布局 | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — 纯规划操作，不修改文档；返回折行结果、实际字体大小、`used_rect` 和 `overflow_horizontal`/`overflow_vertical` 标志；通过 `OverflowPolicy` 提供四种策略：`Shrink`、`WrapThenShrink`、`Truncate`、`Report`（v1.9.0+） |
+| 需要检测规划文本框之间的重叠 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) 轴对齐边界框重叠检测；每个 `Collision` 包含 `index_a`、`index_b` 和 `overlap_rect`；结合 `fit_text_to_box` 的 `used_rect` 在修改内容流前预检冲突（v1.9.0+） |
 
 ---
 

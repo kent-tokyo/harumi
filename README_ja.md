@@ -126,6 +126,9 @@ doc.save("searchable.pdf")?;
 | 翻訳用にソースフラグメント付きのテーブルセルを抽出したい | `extract_table_cells` が返す `TableCell` に `fragments: Vec<TextFragment>` と `bbox() -> [f32; 4]` を追加。`&cell.fragments` + `cell.bbox()` をそのまま `replace_fragments_fit_to_bbox` や `replace_text_fragments_batch_opts` に渡せる（v1.8.0+） |
 | バッチ翻訳でセルごとにフォントサイズ・幅を指定したい | `page.replace_text_fragments_batch_opts(entries, font)` — `BatchEntry` ごとに独自の `FragmentReplaceOpts`（font_size・max_width・shrink_to_fit・color）を指定できる 1 パスバッチ置換（v1.8.0+） |
 | 翻訳文を元セルの bbox に収めて配置したい | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 元テキストを抑制し、セル幅に shrink-to-fit した翻訳文を配置する（v1.8.0+） |
+| テキストの描画幅を事前に計測したい | `doc.measure_text(text, font, font_size) -> Result<f32>` — 登録済みフォントの TTF メトリクスを使って PDF ポイント単位のアドバンス幅を返す（v1.9.0+） |
+| テキストを描画する前に矩形へのレイアウトを計画したい | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — ドキュメントを変更せず折り返し・縮小計画だけを行う。行リスト・実効フォントサイズ・`used_rect`・`overflow_horizontal`/`overflow_vertical` フラグを返す。`OverflowPolicy` で 4 ポリシー: `Shrink`・`WrapThenShrink`・`Truncate`・`Report`（v1.9.0+） |
+| 配置予定テキストボックス同士の衝突を検出したい | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) の AABB 重複検出。各 `Collision` に `index_a`・`index_b`・`overlap_rect` を持つ。`fit_text_to_box` の `used_rect` と組み合わせ、コンテントストリーム変更前に衝突をプリフライト検査できる（v1.9.0+） |
 
 ---
 

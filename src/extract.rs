@@ -327,9 +327,9 @@ pub struct Collision {
 /// use harumi::{PlacedBox, detect_collisions};
 ///
 /// let boxes = vec![
-///     PlacedBox { rect: [0.0, 0.0, 100.0, 50.0] },
-///     PlacedBox { rect: [80.0, 0.0, 100.0, 50.0] },  // overlaps first by 20 pt
-///     PlacedBox { rect: [200.0, 0.0, 50.0, 50.0] },  // no overlap
+///     PlacedBox::new([0.0, 0.0, 100.0, 50.0]),
+///     PlacedBox::new([80.0, 0.0, 100.0, 50.0]),  // overlaps first by 20 pt
+///     PlacedBox::new([200.0, 0.0, 50.0, 50.0]),  // no overlap
 /// ];
 /// let collisions = detect_collisions(&boxes);
 /// assert_eq!(collisions.len(), 1);

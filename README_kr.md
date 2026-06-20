@@ -125,6 +125,9 @@ doc.save("searchable.pdf")?;
 | 번역용 소스 fragment가 포함된 테이블 셀을 추출하고 싶다 | `extract_table_cells`가 반환하는 `TableCell`에 `fragments: Vec<TextFragment>`와 `bbox() -> [f32; 4]` 추가. `&cell.fragments` + `cell.bbox()`를 `replace_fragments_fit_to_bbox`나 `replace_text_fragments_batch_opts`에 직접 전달 가능（v1.8.0+） |
 | 배치 번역에서 셀마다 다른 폰트 크기/너비를 지정하고 싶다 | `page.replace_text_fragments_batch_opts(entries, font)` — 각 `BatchEntry`가 독립적인 `FragmentReplaceOpts`를 가져 한 번의 호출로 셀별 차별화된 교체 가능（v1.8.0+） |
 | 번역 텍스트를 원래 셀 bbox에 맞게 배치하고 싶다 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 원문을 억제하고 셀 너비에 맞게 번역문을 배치（v1.8.0+） |
+| 텍스트를 배치하기 전에 렌더링 너비를 측정하고 싶다 | `doc.measure_text(text, font, font_size) -> Result<f32>` — 등록된 폰트의 TTF 메트릭을 사용해 PDF 포인트 단위의 어드밴스 너비를 반환（v1.9.0+） |
+| 그리기 전에 고정 사각형 안의 텍스트 레이아웃을 계획하고 싶다 | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — 문서를 수정하지 않는 순수 계획 함수; 줄 목록, 실효 폰트 크기, `used_rect`, `overflow_horizontal`/`overflow_vertical` 플래그를 반환; `OverflowPolicy`로 4가지 정책: `Shrink`, `WrapThenShrink`, `Truncate`, `Report`（v1.9.0+） |
+| 배치될 텍스트 박스 간의 겹침을 감지하고 싶다 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB 겹침 감지; 각 `Collision`에 `index_a`, `index_b`, `overlap_rect` 포함; `fit_text_to_box`의 `used_rect`와 결합해 콘텐츠 스트림 수정 전 충돌을 사전 검사（v1.9.0+） |
 
 ---
 
