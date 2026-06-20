@@ -1885,6 +1885,143 @@ impl Document {
         Ok(plans)
     }
 
+    /// Like [`plan_text_for_regions`](Document::plan_text_for_regions) but with
+    /// per-region fitting policies.
+    ///
+    /// `options` maps to `regions` by index.  When `options.len() < regions.len()`,
+    /// the remaining regions use [`RegionTextFitOptions::for_role`](crate::RegionTextFitOptions::for_role)
+    /// with their assigned role.  Pass `&[]` to use role-based defaults for all regions.
+    ///
+    /// The effective fitting rectangle is derived from each region's `source_bbox` and
+    /// `usable_rect` according to [`BaselinePolicy`](crate::BaselinePolicy) and
+    /// [`WidthPolicy`](crate::WidthPolicy):
+    ///
+    /// | `baseline`                 | y / height used                     |
+    /// |----------------------------|-------------------------------------|
+    /// | `PreserveSourceBaseline`   | `source_bbox[1]` / `source_bbox[3]` |
+    /// | `TopAlignToRegion`         | `usable_rect[1]` / `usable_rect[3]` |
+    /// | `CenterInRegion`           | centred slot within `usable_rect`   |
+    ///
+    /// | `width`                  | width used                                           |
+    /// |--------------------------|------------------------------------------------------|
+    /// | `SourceLineWidth`        | `source_bbox[2]`                                     |
+    /// | `RegionUsableWidth` /    | `usable_rect[2]`                                     |
+    /// | `ClampToColumn`          |                                                      |
+    /// | `ClampBeforeNextRegion`  | gap to nearest same-row sibling at a higher column   |
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] or [`Error::FontParse`] if `font` is invalid.
+    pub fn plan_text_for_regions_with_policy(
+        &self,
+        regions: &[crate::extract::LayoutRegion],
+        replacements: &[String],
+        font: FontHandle,
+        options: &[crate::extract::RegionTextFitOptions],
+    ) -> Result<Vec<crate::extract::RegionFitPlan>> {
+        use crate::extract::{BaselinePolicy, RegionTextFitOptions, WidthPolicy};
+
+        let raw = self
+            .raw_fonts
+            .get(font.0 as usize)
+            .ok_or(Error::InvalidFont(font.0))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
+
+        let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
+        let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());
+
+        for (i, (region, replacement)) in pairs.iter().enumerate() {
+            let opts = options
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| RegionTextFitOptions::for_role(&region.role));
+
+            // --- Derive x and width ---
+            let base_x = if opts.preserve_source_x {
+                region.source_bbox[0]
+            } else {
+                region.usable_rect[0]
+            };
+            let w = match opts.width {
+                WidthPolicy::SourceLineWidth => region.source_bbox[2],
+                WidthPolicy::RegionUsableWidth | WidthPolicy::ClampToColumn => {
+                    region.usable_rect[2]
+                }
+                WidthPolicy::ClampBeforeNextRegion => {
+                    let min_sib_x = regions
+                        .iter()
+                        .filter(|r| r.row == region.row && r.col > region.col)
+                        .map(|r| r.source_bbox[0])
+                        .fold(f32::INFINITY, f32::min);
+                    if min_sib_x.is_finite() {
+                        (min_sib_x - base_x - 2.0).max(1.0)
+                    } else {
+                        region.usable_rect[2]
+                    }
+                }
+            };
+
+            // --- Derive y and height ---
+            let (eff_y, eff_h) = match opts.baseline {
+                BaselinePolicy::PreserveSourceBaseline => {
+                    (region.source_bbox[1], region.source_bbox[3].max(1.0))
+                }
+                BaselinePolicy::TopAlignToRegion => {
+                    (region.usable_rect[1], region.usable_rect[3])
+                }
+                BaselinePolicy::CenterInRegion => {
+                    let center = region.usable_rect[1] + region.usable_rect[3] / 2.0;
+                    let h = region
+                        .source_bbox[3]
+                        .max(region.usable_rect[3] * 0.5)
+                        .max(1.0);
+                    (center - h / 2.0, h)
+                }
+            };
+
+            let eff_rect = [base_x, eff_y, w.max(1.0), eff_h];
+
+            let font_size = {
+                let sizes: Vec<f32> = region
+                    .fragments
+                    .iter()
+                    .map(|f| f.font_size)
+                    .filter(|fs| fs.is_finite() && *fs > 0.0)
+                    .collect();
+                if sizes.is_empty() { 10.0_f32 } else { sizes.iter().sum::<f32>() / sizes.len() as f32 }
+            };
+
+            let box_opts = types::BoxFitOptions {
+                min_font_size: opts.min_font_size,
+                max_lines: opts.max_lines,
+                ..types::BoxFitOptions::default()
+            };
+
+            let fit = helpers::plan_text_fit(replacement, &face, eff_rect, font_size, &box_opts);
+            fits.push(fit);
+        }
+
+        let placed: Vec<crate::extract::PlacedBox> =
+            fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
+        let all_collisions = crate::extract::detect_collisions(&placed);
+
+        let plans = pairs
+            .into_iter()
+            .enumerate()
+            .zip(fits)
+            .map(|((i, (region, _)), fit)| {
+                let collisions = all_collisions
+                    .iter()
+                    .filter(|c| c.index_a == i || c.index_b == i)
+                    .cloned()
+                    .collect();
+                crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }
+            })
+            .collect();
+
+        Ok(plans)
+    }
+
     /// # Errors
     /// Returns [`Error::PageNotFound`] if `page` is out of range.
     pub fn extract_text_runs(&self, page: u32) -> Result<Vec<crate::extract::TextFragment>> {

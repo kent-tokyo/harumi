@@ -3572,6 +3572,8 @@ pub enum LayoutRegionKind {
 pub struct LayoutRegion {
     /// Structural classification.
     pub kind: LayoutRegionKind,
+    /// Functional role in a translation/editing workflow.
+    pub role: LayoutRegionRole,
     /// 0-based row index within the detected table/grid (`None` for headings/paragraphs).
     pub row: Option<usize>,
     /// 0-based column index (`None` for headings/paragraphs).
@@ -3629,6 +3631,120 @@ pub struct RegionFitPlan {
     /// Collisions between this region's `fit.used_rect` and other regions in the
     /// same planning batch.
     pub collisions: Vec<Collision>,
+}
+
+/// Functional role of a [`LayoutRegion`] in a translation or editing workflow.
+///
+/// Assigned by [`extract_layout_regions`] based on column position, row siblings,
+/// and proximity to the page edge.  Use [`RegionTextFitOptions::for_role`] to get
+/// sensible default fitting policies for each role.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutRegionRole {
+    /// Column-0 cell that has a sibling in a higher column on the same row.
+    /// Typically a form label; default policy preserves source baseline and width.
+    LeftLabel,
+    /// Column ≥ 1 cell that has a col-0 sibling on the same row.
+    /// Typically a form value; default policy clamps width to the column zone.
+    RightValue,
+    /// Single-column or `Paragraph`-kind region.
+    ParagraphBody,
+    /// Region whose `kind` is [`LayoutRegionKind::Heading`].
+    SectionHeading,
+    /// Region whose source bbox is within 8 % of the page top or bottom.
+    HeaderFooter,
+    /// Could not be assigned a more specific role.
+    Unknown,
+}
+
+/// How to anchor replacement text vertically within a layout region.
+///
+/// Used in [`RegionTextFitOptions`] / [`crate::Document::plan_text_for_regions_with_policy`].
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselinePolicy {
+    /// Fit into the source glyph bounding box — preserves the original row baseline.
+    /// This is the safest choice for dense fixed-layout forms.
+    PreserveSourceBaseline,
+    /// Fit into the full `usable_rect` height, top-aligned (v1.10 behaviour).
+    TopAlignToRegion,
+    /// Centre the source-height slot within `usable_rect`.
+    CenterInRegion,
+}
+
+/// How to determine the available width for replacement text.
+///
+/// Used in [`RegionTextFitOptions`] / [`crate::Document::plan_text_for_regions_with_policy`].
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WidthPolicy {
+    /// Keep `source_bbox.width` — no expansion beyond the source glyphs.
+    SourceLineWidth,
+    /// Expand to the full `usable_rect.width` (column gap to the next zone or page edge).
+    RegionUsableWidth,
+    /// Synonym for [`RegionUsableWidth`](WidthPolicy::RegionUsableWidth); alias for clarity.
+    ClampToColumn,
+    /// Extend to just before the nearest same-row sibling at a higher column index.
+    /// Requires a sibling scan at plan time (O(n) per region).
+    ClampBeforeNextRegion,
+}
+
+/// Per-region fitting policy for [`crate::Document::plan_text_for_regions_with_policy`].
+///
+/// Construct with `RegionTextFitOptions::default()` or
+/// [`RegionTextFitOptions::for_role`] and override fields as needed.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct RegionTextFitOptions {
+    /// Vertical placement strategy. Default [`BaselinePolicy::PreserveSourceBaseline`].
+    pub baseline: BaselinePolicy,
+    /// Horizontal width strategy. Default [`WidthPolicy::SourceLineWidth`].
+    pub width: WidthPolicy,
+    /// Minimum font size in PDF points. Default `6.0`.
+    pub min_font_size: f32,
+    /// Maximum number of wrapped lines. `None` = unlimited. Default `None`.
+    pub max_lines: Option<usize>,
+    /// When `true`, keep the source `x` coordinate; when `false`, align to the column
+    /// zone's `x_start`. Default `true`.
+    pub preserve_source_x: bool,
+}
+
+impl Default for RegionTextFitOptions {
+    fn default() -> Self {
+        Self {
+            baseline: BaselinePolicy::PreserveSourceBaseline,
+            width: WidthPolicy::SourceLineWidth,
+            min_font_size: 6.0,
+            max_lines: None,
+            preserve_source_x: true,
+        }
+    }
+}
+
+impl RegionTextFitOptions {
+    /// Return sensible defaults for a given [`LayoutRegionRole`].
+    ///
+    /// Pass `&[]` as the `options` slice to
+    /// [`Document::plan_text_for_regions_with_policy`](crate::Document::plan_text_for_regions_with_policy)
+    /// to use these role-based defaults automatically for every region.
+    pub fn for_role(role: &LayoutRegionRole) -> Self {
+        match role {
+            LayoutRegionRole::RightValue | LayoutRegionRole::SectionHeading => Self {
+                baseline: BaselinePolicy::PreserveSourceBaseline,
+                width: WidthPolicy::ClampToColumn,
+                preserve_source_x: true,
+                ..Self::default()
+            },
+            LayoutRegionRole::ParagraphBody => Self {
+                baseline: BaselinePolicy::TopAlignToRegion,
+                width: WidthPolicy::RegionUsableWidth,
+                preserve_source_x: false,
+                ..Self::default()
+            },
+            // LeftLabel / HeaderFooter / Unknown → safest defaults (preserve source baseline + width)
+            _ => Self::default(),
+        }
+    }
 }
 
 /// Detect layout regions on a page, inferring the usable area for each cell.
@@ -3722,6 +3838,13 @@ pub fn extract_layout_regions(
         }
     }
 
+    // ---- 5b. Row → column-set map for role detection -------------------------
+    let mut row_cols: std::collections::BTreeMap<usize, std::collections::BTreeSet<usize>> =
+        std::collections::BTreeMap::new();
+    for cell in &cells {
+        row_cols.entry(cell.row).or_default().insert(cell.col);
+    }
+
     // ---- 6. Build LayoutRegion per cell --------------------------------------
     let mut regions: Vec<LayoutRegion> = Vec::with_capacity(cells.len());
 
@@ -3779,8 +3902,39 @@ pub fn extract_layout_regions(
             LayoutRegionKind::TableCell
         };
 
+        // --- Role classification ---
+        let role = match &kind {
+            LayoutRegionKind::Heading(_) => LayoutRegionRole::SectionHeading,
+            _ => {
+                let top_y = source_bbox[1] + source_bbox[3];
+                let bot_y = source_bbox[1];
+                if page_height > 0.0
+                    && (top_y > page_height * 0.92 || bot_y < page_height * 0.08)
+                {
+                    LayoutRegionRole::HeaderFooter
+                } else if let Some(cols) = row_cols.get(&cell.row) {
+                    let has_higher = cols.iter().any(|&c| c > cell.col);
+                    let has_lower = cols.iter().any(|&c| c < cell.col);
+                    if cell.col == 0 && has_higher {
+                        LayoutRegionRole::LeftLabel
+                    } else if cell.col > 0 && has_lower {
+                        LayoutRegionRole::RightValue
+                    } else if matches!(kind, LayoutRegionKind::Paragraph) {
+                        LayoutRegionRole::ParagraphBody
+                    } else {
+                        LayoutRegionRole::Unknown
+                    }
+                } else if matches!(kind, LayoutRegionKind::Paragraph) {
+                    LayoutRegionRole::ParagraphBody
+                } else {
+                    LayoutRegionRole::Unknown
+                }
+            }
+        };
+
         regions.push(LayoutRegion {
             kind,
+            role,
             row: Some(cell.row),
             col: Some(cell.col),
             text: cell.text,

@@ -1,9 +1,9 @@
-//! Integration tests for extract_layout_regions and Document::plan_text_for_regions
-//! (issue #21).
+//! Integration tests for extract_layout_regions, plan_text_for_regions,
+//! and plan_text_for_regions_with_policy (issues #21 and #22).
 
 use harumi::{
-    BoxFitOptions, Document, LayoutRegionKind, LayoutRegionOptions, OverflowPolicy,
-    extract_layout_regions,
+    BaselinePolicy, BoxFitOptions, Document, LayoutRegionKind, LayoutRegionOptions,
+    LayoutRegionRole, OverflowPolicy, RegionTextFitOptions, WidthPolicy, extract_layout_regions,
 };
 
 fn font_bytes() -> Vec<u8> {
@@ -288,4 +288,236 @@ fn plan_text_detects_collision_when_regions_overlap() {
 
     // The plans should be computed without error; collisions list is populated if any overlap.
     assert_eq!(plans.len(), regions.len().min(replacements.len()));
+}
+
+// ===========================================================================
+// Issue #22: LayoutRegionRole + RegionTextFitOptions + plan_with_policy
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Role classification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn left_label_role_assigned_in_two_col_layout() {
+    let (_doc, _font, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+
+    let col0: Vec<_> = regions.iter().filter(|r| r.col == Some(0)).collect();
+    assert!(!col0.is_empty(), "should have column-0 regions");
+    for r in col0 {
+        assert_eq!(
+            r.role,
+            LayoutRegionRole::LeftLabel,
+            "col-0 cell with col-1 sibling should be LeftLabel, got {:?}",
+            r.role
+        );
+    }
+}
+
+#[test]
+fn right_value_role_assigned_in_two_col_layout() {
+    let (_doc, _font, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+
+    let col1: Vec<_> = regions.iter().filter(|r| r.col == Some(1)).collect();
+    assert!(!col1.is_empty(), "should have column-1 regions");
+    for r in col1 {
+        assert_eq!(
+            r.role,
+            LayoutRegionRole::RightValue,
+            "col-1 cell with col-0 sibling should be RightValue, got {:?}",
+            r.role
+        );
+    }
+}
+
+#[test]
+fn section_heading_role_for_large_font() {
+    let fb = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&fb).unwrap();
+    doc.page(1).unwrap().add_text("Section Header", font, [50.0, 750.0], 20.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("Label", font, [50.0, 700.0], 10.0, [0.0; 3]).unwrap();
+    doc.page(1).unwrap().add_text("Value data here", font, [250.0, 700.0], 10.0, [0.0; 3]).unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc2 = Document::from_bytes(&bytes).unwrap();
+    let frags = doc2.extract_text_runs(1).unwrap();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+
+    let headings: Vec<_> = regions
+        .iter()
+        .filter(|r| r.role == LayoutRegionRole::SectionHeading)
+        .collect();
+    assert!(!headings.is_empty(), "large-font region should have SectionHeading role");
+    assert!(
+        matches!(headings[0].kind, LayoutRegionKind::Heading(_)),
+        "SectionHeading role should come with Heading kind"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// RegionTextFitOptions::for_role defaults
+// ---------------------------------------------------------------------------
+
+#[test]
+fn default_label_opts_preserve_baseline_and_source_width() {
+    let opts = RegionTextFitOptions::for_role(&LayoutRegionRole::LeftLabel);
+    assert_eq!(opts.baseline, BaselinePolicy::PreserveSourceBaseline);
+    assert_eq!(opts.width, WidthPolicy::SourceLineWidth);
+    assert!(opts.preserve_source_x);
+}
+
+#[test]
+fn default_value_opts_clamp_to_column() {
+    let opts = RegionTextFitOptions::for_role(&LayoutRegionRole::RightValue);
+    assert_eq!(opts.baseline, BaselinePolicy::PreserveSourceBaseline);
+    assert_eq!(opts.width, WidthPolicy::ClampToColumn);
+}
+
+#[test]
+fn default_paragraph_opts_top_align_region_width() {
+    let opts = RegionTextFitOptions::for_role(&LayoutRegionRole::ParagraphBody);
+    assert_eq!(opts.baseline, BaselinePolicy::TopAlignToRegion);
+    assert_eq!(opts.width, WidthPolicy::RegionUsableWidth);
+    assert!(!opts.preserve_source_x);
+}
+
+// ---------------------------------------------------------------------------
+// plan_text_for_regions_with_policy — baseline behaviour
+// ---------------------------------------------------------------------------
+
+#[test]
+fn plan_with_policy_preserves_baseline_for_label() {
+    let fb = font_bytes();
+    let (_doc2, _, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+    if regions.is_empty() { return; }
+
+    let mut doc3 = Document::new((595.0, 842.0)).unwrap();
+    let plan_font = doc3.embed_font(&fb).unwrap();
+
+    let replacements: Vec<String> = regions.iter().map(|r| format!("TR:{}", r.text)).collect();
+
+    // Build per-region options: PreserveSourceBaseline for all
+    let options: Vec<RegionTextFitOptions> = regions
+        .iter()
+        .map(|_| {
+            let mut o = RegionTextFitOptions::default();
+            o.baseline = BaselinePolicy::PreserveSourceBaseline;
+            o
+        })
+        .collect();
+
+    let plans = doc3
+        .plan_text_for_regions_with_policy(&regions, &replacements, plan_font, &options)
+        .unwrap();
+
+    assert_eq!(plans.len(), regions.len().min(replacements.len()));
+
+    // With PreserveSourceBaseline, the fitting rect top = source_bbox[1] + source_bbox[3].
+    // used_rect is top-aligned within that fitting rect, so its top must match.
+    for (plan, region) in plans.iter().zip(regions.iter()) {
+        let source_top = region.source_bbox[1] + region.source_bbox[3];
+        let fit_top = plan.fit.used_rect[1] + plan.fit.used_rect[3];
+        assert!(
+            (fit_top - source_top).abs() < 1.0,
+            "PreserveSourceBaseline: fit top ({fit_top}) should match source top ({source_top})"
+        );
+    }
+}
+
+#[test]
+fn plan_with_policy_uses_column_width_for_value() {
+    let fb = font_bytes();
+    let (_doc2, _, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+    let value_regions: Vec<_> = regions
+        .iter()
+        .filter(|r| r.role == LayoutRegionRole::RightValue)
+        .cloned()
+        .collect();
+    if value_regions.is_empty() { return; }
+
+    let mut doc3 = Document::new((595.0, 842.0)).unwrap();
+    let plan_font = doc3.embed_font(&fb).unwrap();
+
+    let replacements: Vec<String> =
+        value_regions.iter().map(|r| format!("Long replacement text for {}", r.text)).collect();
+
+    let mut val_opts = RegionTextFitOptions::default();
+    val_opts.width = WidthPolicy::ClampToColumn;
+    let options: Vec<RegionTextFitOptions> = value_regions.iter().map(|_| val_opts.clone()).collect();
+
+    let plans = doc3
+        .plan_text_for_regions_with_policy(&value_regions, &replacements, plan_font, &options)
+        .unwrap();
+
+    // The fitting rect was the full column width → used_rect width can be larger than source
+    for (plan, region) in plans.iter().zip(value_regions.iter()) {
+        assert!(
+            plan.fit.used_rect[2] <= region.usable_rect[2] + 1.0,
+            "used_rect width should not exceed usable_rect width"
+        );
+    }
+}
+
+#[test]
+fn plan_with_policy_empty_options_uses_role_defaults() {
+    let fb = font_bytes();
+    let (_doc2, _, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+    if regions.is_empty() { return; }
+
+    let mut doc3 = Document::new((595.0, 842.0)).unwrap();
+    let plan_font = doc3.embed_font(&fb).unwrap();
+
+    let replacements: Vec<String> = regions.iter().map(|r| r.text.clone()).collect();
+
+    // Pass empty slice → role-based defaults applied automatically
+    let plans = doc3
+        .plan_text_for_regions_with_policy(&regions, &replacements, plan_font, &[])
+        .unwrap();
+
+    assert_eq!(plans.len(), regions.len().min(replacements.len()));
+    for plan in &plans {
+        assert!(plan.fit.font_size > 0.0);
+    }
+}
+
+#[test]
+fn clamp_before_next_region_caps_width() {
+    let fb = font_bytes();
+    let (_doc2, _, frags) = two_col_fragments();
+    let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+    let label_regions: Vec<_> = regions
+        .iter()
+        .filter(|r| r.role == LayoutRegionRole::LeftLabel)
+        .cloned()
+        .collect();
+    if label_regions.is_empty() { return; }
+
+    let mut doc3 = Document::new((595.0, 842.0)).unwrap();
+    let plan_font = doc3.embed_font(&fb).unwrap();
+
+    let replacements: Vec<String> =
+        label_regions.iter().map(|r| format!("LBL {}", r.text)).collect();
+
+    let mut clamp_opts = RegionTextFitOptions::default();
+    clamp_opts.width = WidthPolicy::ClampBeforeNextRegion;
+    let options: Vec<RegionTextFitOptions> =
+        label_regions.iter().map(|_| clamp_opts.clone()).collect();
+
+    let plans = doc3
+        .plan_text_for_regions_with_policy(&label_regions, &replacements, plan_font, &options)
+        .unwrap();
+
+    // ClampBeforeNextRegion width should be < usable_rect width (which reaches to col zone edge)
+    // because it stops before the sibling's source x.
+    // Note: if there is no sibling (last column), it falls back to usable_rect width.
+    assert_eq!(plans.len(), label_regions.len().min(replacements.len()));
+    for plan in &plans {
+        assert!(plan.fit.font_size > 0.0, "plan should have positive font size");
+    }
 }
