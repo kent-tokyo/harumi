@@ -104,16 +104,16 @@ pub(crate) mod pdf_incremental;
 
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
-    AttachmentInfo, BatchEntry, Color, Document, FieldType, FitOptions, FormField,
-    FragmentReplaceFailureReason, FragmentReplaceOpts, PageHandle, PdfMetadata, ReplaceOptions,
-    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, font_covers_char,
-    glyph_advance_pt, wrap_paragraph,
+    AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
+    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PageHandle,
+    PdfMetadata, ReplaceOptions, TextFieldOptions, TextRun, VerticalAlign, calculate_text_width,
+    font_covers_char, glyph_advance_pt, wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{
-    ColumnZone, ExtractionWarning, GroupingStrategy, TableCell, TextFragment, TextGroup,
-    WarningKind, detect_text_columns, extract_table_cells, group_text_fragments,
-    merge_short_cjk_tails, sort_by_reading_order, text_fragment_bounds,
+    Collision, ColumnZone, ExtractionWarning, GroupingStrategy, PlacedBox, TableCell, TextFragment,
+    TextGroup, WarningKind, detect_collisions, detect_text_columns, extract_table_cells,
+    group_text_fragments, merge_short_cjk_tails, sort_by_reading_order, text_fragment_bounds,
 };
 pub use font::FontHandle;
 

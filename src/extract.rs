@@ -285,6 +285,83 @@ pub fn text_fragment_bounds(fragments: &[TextFragment]) -> Option<[f32; 4]> {
     Some([x_min, y_min, (x_max - x_min).max(0.0), (y_max - y_min).max(0.0)])
 }
 
+/// A positioned rectangle for collision detection.
+///
+/// Coordinates follow the standard PDF convention: `[x, y, width, height]` in PDF points,
+/// bottom-left origin.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default)]
+pub struct PlacedBox {
+    /// `[x, y, width, height]` in PDF points.
+    pub rect: [f32; 4],
+}
+
+impl PlacedBox {
+    /// Construct a [`PlacedBox`] from a `[x, y, width, height]` rectangle in PDF points.
+    pub fn new(rect: [f32; 4]) -> Self {
+        Self { rect }
+    }
+}
+
+/// A pair of overlapping [`PlacedBox`]es returned by [`detect_collisions`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct Collision {
+    /// Index of the first box in the input slice.
+    pub index_a: usize,
+    /// Index of the second box in the input slice.
+    pub index_b: usize,
+    /// The intersection rectangle `[x, y, width, height]`.
+    pub overlap_rect: [f32; 4],
+}
+
+/// Detect pairwise axis-aligned bounding-box overlaps between `boxes`.
+///
+/// Returns one [`Collision`] entry for every pair `(i, j)` where `i < j` and
+/// the two boxes intersect.  Adjacent boxes that only share an edge are **not**
+/// considered overlapping (the intersection would have zero area).
+///
+/// # Example
+///
+/// ```rust
+/// use harumi::{PlacedBox, detect_collisions};
+///
+/// let boxes = vec![
+///     PlacedBox { rect: [0.0, 0.0, 100.0, 50.0] },
+///     PlacedBox { rect: [80.0, 0.0, 100.0, 50.0] },  // overlaps first by 20 pt
+///     PlacedBox { rect: [200.0, 0.0, 50.0, 50.0] },  // no overlap
+/// ];
+/// let collisions = detect_collisions(&boxes);
+/// assert_eq!(collisions.len(), 1);
+/// assert_eq!(collisions[0].index_a, 0);
+/// assert_eq!(collisions[0].index_b, 1);
+/// ```
+pub fn detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision> {
+    let mut out = Vec::new();
+    for (i, box_a) in boxes.iter().enumerate() {
+        let [ax, ay, aw, ah] = box_a.rect;
+        let ax2 = ax + aw;
+        let ay2 = ay + ah;
+        for (j, box_b) in boxes.iter().enumerate().skip(i + 1) {
+            let [bx, by, bw, bh] = box_b.rect;
+            let bx2 = bx + bw;
+            let by2 = by + bh;
+            let ox = ax.max(bx);
+            let oy = ay.max(by);
+            let ox2 = ax2.min(bx2);
+            let oy2 = ay2.min(by2);
+            if ox2 > ox && oy2 > oy {
+                out.push(Collision {
+                    index_a: i,
+                    index_b: j,
+                    overlap_rect: [ox, oy, ox2 - ox, oy2 - oy],
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Sort text fragments by reading order: top-to-bottom, then left-to-right.
 ///
 /// Fragments returned by [`crate::Document::extract_text_runs`] are in content-stream order.

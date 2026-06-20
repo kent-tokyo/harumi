@@ -278,6 +278,72 @@ impl Default for FitOptions {
     }
 }
 
+/// Options for [`Document::fit_text_to_box`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct BoxFitOptions {
+    /// Minimum font size (PDF points) when shrinking. Default `6.0`.
+    pub min_font_size: f32,
+    /// Maximum number of lines to keep. `None` = unlimited. Default `None`.
+    pub max_lines: Option<usize>,
+    /// Whether to wrap text at word/character boundaries. Default `true`.
+    pub wrap: bool,
+    /// Policy for handling text that overflows the rectangle. Default [`OverflowPolicy::WrapThenShrink`].
+    pub overflow: OverflowPolicy,
+}
+
+impl Default for BoxFitOptions {
+    fn default() -> Self {
+        Self {
+            min_font_size: 6.0,
+            max_lines: None,
+            wrap: true,
+            overflow: OverflowPolicy::WrapThenShrink,
+        }
+    }
+}
+
+/// How [`Document::fit_text_to_box`] handles text that does not fit.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverflowPolicy {
+    /// Shrink the font size (no wrap) until the single-line text fits within the rectangle width.
+    Shrink,
+    /// Wrap first; if total wrapped height still exceeds the rectangle, shrink the font and re-wrap.
+    WrapThenShrink,
+    /// Wrap, then drop lines that exceed `max_lines` or the rectangle height.
+    Truncate,
+    /// Return the layout as-is and report overflow via [`FitResult::overflow_horizontal`] /
+    /// [`FitResult::overflow_vertical`], without modifying text or font size.
+    Report,
+}
+
+/// Result of [`Document::fit_text_to_box`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct FitResult {
+    /// Wrapped (and possibly truncated or re-wrapped after shrinking) lines.
+    pub lines: Vec<String>,
+    /// Font size actually used (may be smaller than the requested size after shrinking).
+    pub font_size: f32,
+    /// Bounding box actually occupied by the text: `[x, y, width, height]` in PDF points.
+    ///
+    /// The rectangle is top-aligned within the requested rect (matching `add_text_box` placement).
+    /// `width` is the widest line actually rendered, capped at the requested rect width.
+    pub used_rect: [f32; 4],
+    /// `true` if any line is wider than the requested rectangle width.
+    pub overflow_horizontal: bool,
+    /// `true` if the total text height exceeds the requested rectangle height.
+    pub overflow_vertical: bool,
+}
+
+impl FitResult {
+    /// `true` if either horizontal or vertical overflow occurred.
+    pub fn overflow(&self) -> bool {
+        self.overflow_horizontal || self.overflow_vertical
+    }
+}
+
 /// Reason why a [`TextFragment`](crate::TextFragment) cannot be suppressed
 /// by [`PageHandle::replace_text_fragments`].
 ///

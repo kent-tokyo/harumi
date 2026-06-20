@@ -3,9 +3,9 @@ mod helpers;
 mod page;
 
 pub use types::{
-    AttachmentInfo, BatchEntry, Color, Document, FieldType, FitOptions, FormField,
-    FragmentReplaceFailureReason, FragmentReplaceOpts, PdfMetadata, ReplaceOptions,
-    TextFieldOptions, TextRun,
+    AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
+    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PdfMetadata,
+    ReplaceOptions, TextFieldOptions, TextRun,
 };
 pub use page::{PageHandle, VerticalAlign};
 pub use helpers::{calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph};
@@ -1767,6 +1767,54 @@ impl Document {
     /// [`save_to_bytes`](Document::save_to_bytes) and reload first if you need
     /// to read back text you just added.
     ///
+    /// Measure the rendered width of `text` using the font registered as `font`.
+    ///
+    /// Returns the total advance width in PDF points.  Characters not covered by the font
+    /// contribute zero width.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
+    /// Returns [`Error::FontParse`] if the raw font bytes cannot be parsed.
+    pub fn measure_text(&self, text: &str, font: FontHandle, font_size: f32) -> Result<f32> {
+        let raw = self
+            .raw_fonts
+            .get(font.0 as usize)
+            .ok_or(Error::InvalidFont(font.0))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
+        Ok(helpers::text_width_with_face(text, &face, font_size))
+    }
+
+    /// Plan how `text` lays out within `rect` using `font`, without mutating the document.
+    ///
+    /// `rect` = `[x, y, width, height]` in PDF points (bottom-left origin).
+    ///
+    /// Returns a [`FitResult`](crate::FitResult) describing the wrapped/shrunk lines,
+    /// final font size, actual occupied rectangle, and horizontal/vertical overflow flags.
+    /// The geometry (`line_height = font_size * 1.2`, `wrap_paragraph` algorithm) is
+    /// identical to the draw path, so collision checks on the returned `used_rect` reflect
+    /// what would actually be rendered.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] if `font` was not registered on this document.
+    /// Returns [`Error::FontParse`] if the raw font bytes cannot be parsed.
+    pub fn fit_text_to_box(
+        &self,
+        text: &str,
+        font: FontHandle,
+        rect: [f32; 4],
+        font_size: f32,
+        opts: types::BoxFitOptions,
+    ) -> Result<types::FitResult> {
+        let raw = self
+            .raw_fonts
+            .get(font.0 as usize)
+            .ok_or(Error::InvalidFont(font.0))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
+        Ok(helpers::plan_text_fit(text, &face, rect, font_size, &opts))
+    }
+
     /// # Errors
     /// Returns [`Error::PageNotFound`] if `page` is out of range.
     pub fn extract_text_runs(&self, page: u32) -> Result<Vec<crate::extract::TextFragment>> {

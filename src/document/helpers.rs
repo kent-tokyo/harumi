@@ -653,6 +653,111 @@ pub fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f
     lines
 }
 
+/// Compute how `text` lays out inside a rectangle with the given font face, without
+/// mutating any document state.  Used by [`crate::Document::fit_text_to_box`].
+///
+/// `line_height = fs * 1.2` — matches the constant in `replace_text_fragments_opts`.
+pub(super) fn plan_text_fit(
+    text: &str,
+    face: &ttf_parser::Face<'_>,
+    rect: [f32; 4],
+    initial_font_size: f32,
+    opts: &super::types::BoxFitOptions,
+) -> super::types::FitResult {
+    use super::types::{FitResult, OverflowPolicy};
+
+    let [rx, ry, rw, rh] = rect;
+    let fs0 = initial_font_size.max(opts.min_font_size.max(0.1));
+
+    let line_height = |fs: f32| fs * 1.2_f32;
+
+    let (lines, fs) = match opts.overflow {
+        OverflowPolicy::Shrink => {
+            // No wrap — shrink until single line fits in width.
+            let mut fs = fs0;
+            let min_fs = opts.min_font_size.max(0.1);
+            loop {
+                let w = text_width_with_face(text, face, fs);
+                if w <= rw || fs <= min_fs {
+                    break;
+                }
+                fs = (fs * rw / w).max(min_fs);
+            }
+            (vec![text.to_owned()], fs)
+        }
+        OverflowPolicy::WrapThenShrink => {
+            let min_fs = opts.min_font_size.max(0.1);
+            let mut fs = fs0;
+            let mut lines = if opts.wrap {
+                wrap_paragraph(text, face, fs, rw)
+            } else {
+                vec![text.to_owned()]
+            };
+            // Shrink until total height fits or we hit min_font_size.
+            loop {
+                let total_h = lines.len() as f32 * line_height(fs);
+                if total_h <= rh || fs <= min_fs {
+                    break;
+                }
+                let factor = rh / total_h;
+                fs = (fs * factor).max(min_fs);
+                lines = if opts.wrap {
+                    wrap_paragraph(text, face, fs, rw)
+                } else {
+                    vec![text.to_owned()]
+                };
+            }
+            (lines, fs)
+        }
+        OverflowPolicy::Truncate => {
+            let lines = if opts.wrap {
+                wrap_paragraph(text, face, fs0, rw)
+            } else {
+                vec![text.to_owned()]
+            };
+            let lh = line_height(fs0);
+            let max_by_height = if lh > 0.0 && rh > 0.0 {
+                (rh / lh).floor() as usize
+            } else {
+                lines.len()
+            };
+            let cap = opts.max_lines.unwrap_or(usize::MAX).min(max_by_height);
+            let truncated: Vec<String> = lines.into_iter().take(cap.max(1)).collect();
+            (truncated, fs0)
+        }
+        OverflowPolicy::Report => {
+            let lines = if opts.wrap {
+                wrap_paragraph(text, face, fs0, rw)
+            } else {
+                vec![text.to_owned()]
+            };
+            let lines = if let Some(max) = opts.max_lines {
+                lines.into_iter().take(max.max(1)).collect()
+            } else {
+                lines
+            };
+            (lines, fs0)
+        }
+    };
+
+    let lh = line_height(fs);
+    let used_h = lines.len() as f32 * lh;
+    let used_w = lines
+        .iter()
+        .map(|l| text_width_with_face(l, face, fs))
+        .fold(0.0_f32, f32::max)
+        .min(rw);
+
+    // Top-aligned within the requested rect (matching add_text_box placement).
+    let used_rect = [rx, ry + rh - used_h, used_w, used_h];
+
+    let overflow_horizontal =
+        lines.iter().any(|l| text_width_with_face(l, face, fs) > rw);
+    let overflow_vertical = used_h > rh;
+
+    FitResult { lines, font_size: fs, used_rect, overflow_horizontal, overflow_vertical }
+}
+
 pub(super) fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {
     let root_ref = doc.trailer.get(b"Root")?.as_reference()?;
     let catalog = doc.get_object(root_ref)?.as_dict()?;
