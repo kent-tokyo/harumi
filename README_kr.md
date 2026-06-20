@@ -127,11 +127,15 @@ doc.save("searchable.pdf")?;
 | 번역 텍스트를 원래 셀 bbox에 맞게 배치하고 싶다 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 원문을 억제하고 셀 너비에 맞게 번역문을 배치（v1.8.0+） |
 | 텍스트를 배치하기 전에 렌더링 너비를 측정하고 싶다 | `doc.measure_text(text, font, font_size) -> Result<f32>` — 등록된 폰트의 TTF 메트릭을 사용해 PDF 포인트 단위의 어드밴스 너비를 반환（v1.9.0+） |
 | 그리기 전에 고정 사각형 안의 텍스트 레이아웃을 계획하고 싶다 | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — 문서를 수정하지 않는 순수 계획 함수; 줄 목록, 실효 폰트 크기, `used_rect`, `overflow_horizontal`/`overflow_vertical` 플래그를 반환; `OverflowPolicy`로 4가지 정책: `Shrink`, `WrapThenShrink`, `Truncate`, `Report`（v1.9.0+） |
-| 배치될 텍스트 박스 간의 겹침을 감지하고 싶다 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB 겹침 감지; 각 `Collision`에 `index_a`, `index_b`, `overlap_rect` 포함; `fit_text_to_box`의 `used_rect`와 결합해 콘텐츠 스트림 수정 전 충돌을 사전 검사（v1.9.0+） |
+| 배치될 텍스트 박스 간의 겹침을 감지하고 싶다 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB 겹침 감지; 각 `Collision`에 `index_a`, `index_b`, `overlap_rect`, `overlap_area`（pt² 단위의 겹침 면적） 포함; `fit_text_to_box`의 `used_rect`와 결합해 콘텐츠 스트림 수정 전 충돌을 사전 검사（v1.9.0+） |
 | 교체 텍스트에 원본 글리프 너비가 아닌 전체 열 너비가 필요하다 | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 각 셀에 `source_bbox`(글리프 경계)와 `usable_rect`(사용 가능 영역)를 함께 반환; `usable_rect.width`는 다음 열 시작 위치까지 확장되어 번역문이 원본 레이블 너비가 아닌 실제 열 너비를 사용할 수 있음（v1.10.0+） |
 | 그리기 전에 레이아웃 셀에 번역문 배치를 일괄 계획하고 싶다 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — `fit_text_to_box`로 각 번역문을 `region.usable_rect`에 맞추고 영역 간 충돌을 감지하여 `RegionFitPlan { region, fit, collisions }`를 반환; 레이아웃·피팅·충돌 감지를 한 번의 호출로 완결（v1.10.0+） |
 | 폼 PDF 번역에서 원본 기준선을 유지하고 열 너비를 안전하게 제어하고 싶다 | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — 영역별 `RegionTextFitOptions`: `BaselinePolicy::PreserveSourceBaseline`으로 원래 행 위치 유지, `WidthPolicy::SourceLineWidth`로 레이블이 값 열로 확장되는 것 방지; `RegionTextFitOptions::for_role(&region.role)`로 역할별 기본값 취득; `&[]` 전달로 모든 영역에 자동 적용（v1.11.0+） |
 | 영역이 레이블, 값, 제목, 본문 중 어느 것인지 알고 싶다 | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`; `extract_layout_regions`이 열 위치, 행 인접 셀, 페이지 경계 근접도를 기반으로 자동 할당（v1.11.0+） |
+| 충돌의 구조적 관계 분류가 필요한 경우 (같은 행, 인접 행, 헤더/푸터 등) | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 각 `Collision`에 `CollisionKind`（`SameRegion`·`SameRow`·`AdjacentRow`·`SameColumn`·`HeaderFooter`·`Unknown`）와 각 영역의 `LayoutRegionRole`을 부여；`plan_text_for_regions*`의 `RegionFitPlan.collisions`가 직접 `Vec<ClassifiedCollision>`을 반환（v1.12.0+） |
+| 텍스트 배치 결과（축소/오버플로우/잘림）를 알고 싶은 경우 | `FitResult::status: PlacementStatus` — `Ok`（조정 없이 맞음）、`Shrunk`（폰트 축소, 하한선 이상）、`ShrunkToMin`（`min_font_size` 하한선 도달, 여전히 오버플로우 가능）、`Overflow`（`OverflowPolicy::Report` 하에서 오버플로우）、`Truncated`（`OverflowPolicy::Truncate` 또는 `Report + max_lines`에서 줄 잘림）；개별 플래그 확인 없이 단일 신호로 사용 가능（v1.13.0+） |
+| 번역 레이아웃의 페이지 수준 품질 게이트가 필요한 경우 | `PageFitSummary::from_plans(plans) -> PageFitSummary` — `RegionFitPlan` 배치 집계；필드: `overflow_count`·`collision_count`·`shrunk_count`·`worst_overlap_area`·`worst_overlap_rect`；최종 PDF 작성 전 품질 판단에 사용（v1.13.0+） |
+| PDF에서 레이아웃 충돌과 텍스트 배치를 시각적으로 디버깅하고 싶은 경우 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 색상별 스트로크 사각형 그리기（파란색=소스 bbox, 녹색=배치 텍스트, 빨간색=충돌 겹침）；`DebugOverlayOptions`로 색상과 선 너비 설정；NaN/잘못된 좌표는 자동 건너뜀（`draw` feature, v1.13.0+） |
 
 ---
 
@@ -816,6 +820,18 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.5.13** | XObject 폰트 해석 버그 수정（PScript5/Distiller PDF）：`xobject_fonts()`가 페이지 수준 폰트를 기반으로 사용하도록 변경；Form XObject에 `/Resources`는 있지만 `/Font` 하위 항목이 없는 경우（Distiller PDF의 전형적인 구조）텍스트 전체 누락 수정 |
 | **v1.5.14** | 크로스 스트림 BT/ET 상태 유지：`in_bt`・현재 폰트・텍스트 위치를 `ParseCarryState`에 이동해 스트림 경계를 초월해 보존；Distiller PDF가 단일 BT…ET 블록을 여러 `/Contents` 배열 스트림으로 분할할 때 후속 스트림의 `Tj` 전체 누락 수정 |
 | **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 연산자 수준 소스 추적；`PageHandle::replace_text_fragments(fragments, new_text, font)` — 소스 Tj/TJ를 `() Tj`로 억제하고 번역 텍스트 배치；PScript5/Distiller·Type3 문자별 PDF의 InPlace 번역 가능 |
+| **v1.5.16** | `TextFragment.source_xobject`；`replace_text_fragments_opts` + `FragmentReplaceOpts`；Form XObject 스트림 재작성 지원 |
+| **v1.5.17** | `text_fragment_bounds` — 어센더/디센더 추정 포함 경계 상자；`FragmentReplaceOpts.shrink_to_fit` + `min_font_size` |
+| **v1.5.18** | `replace_text_fragments_batch` — 단일 패스 배치 교체；`dry_run` 사전 확인；`FragmentReplaceFailureReason` + `can_suppress_fragment` |
+| **v1.5.19** | Td 전용 BT 블록에서 `tm_origin_x/y`가 `Some(0.0)`을 잘못 보고하던 버그 수정 |
+| **v1.6.0** | `TextFragment::tm_x_scale` — Tm 행렬 X 스케일；비균일 Tm에서 자간 및 TJ 커닝 수정 |
+| **v1.7.0** | `TextFragment.tm_lm_x / tm_lm_y` — 텍스트 라인 행렬 좌표（Td에서 초기화）；양식 PDF 번역의 안정적인 열/행 앵커 |
+| **v1.8.0** | `TableCell.fragments` + `bbox()`；`replace_text_fragments_batch_opts` with `BatchEntry`；`replace_fragments_fit_to_bbox` |
+| **v1.9.0** | `measure_text`；`fit_text_to_box` + `FitResult` + `BoxFitOptions` / `OverflowPolicy`；`detect_collisions` + `PlacedBox` + `Collision` |
+| **v1.10.0** | `extract_layout_regions` + `LayoutRegion`（`source_bbox` + `usable_rect`）；`plan_text_for_regions` → `Vec<RegionFitPlan>` |
+| **v1.11.0** | `LayoutRegionRole`；`BaselinePolicy` + `WidthPolicy` + `RegionTextFitOptions`；`plan_text_for_regions_with_policy`；헤더/푸터 근접 감지 NaN 보호 |
+| **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 구조적 충돌 분류；`RegionFitPlan.collisions`를 `Vec<ClassifiedCollision>`으로 변경 |
+| **v1.13.0** | `Collision::overlap_area`（pt² 심각도 필드）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；버그 수정: Report+max_lines Truncated 상태, WrapThenShrink 하한 폰트 오버플로우, Truncate rh=0 잘못된 Ok, NaN 좌표 보호 |
 
 ---
 

@@ -128,11 +128,15 @@ doc.save("searchable.pdf")?;
 | 翻訳文を元セルの bbox に収めて配置したい | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 元テキストを抑制し、セル幅に shrink-to-fit した翻訳文を配置する（v1.8.0+） |
 | テキストの描画幅を事前に計測したい | `doc.measure_text(text, font, font_size) -> Result<f32>` — 登録済みフォントの TTF メトリクスを使って PDF ポイント単位のアドバンス幅を返す（v1.9.0+） |
 | テキストを描画する前に矩形へのレイアウトを計画したい | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — ドキュメントを変更せず折り返し・縮小計画だけを行う。行リスト・実効フォントサイズ・`used_rect`・`overflow_horizontal`/`overflow_vertical` フラグを返す。`OverflowPolicy` で 4 ポリシー: `Shrink`・`WrapThenShrink`・`Truncate`・`Report`（v1.9.0+） |
-| 配置予定テキストボックス同士の衝突を検出したい | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) の AABB 重複検出。各 `Collision` に `index_a`・`index_b`・`overlap_rect` を持つ。`fit_text_to_box` の `used_rect` と組み合わせ、コンテントストリーム変更前に衝突をプリフライト検査できる（v1.9.0+） |
+| 配置予定テキストボックス同士の衝突を検出したい | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) の AABB 重複検出。各 `Collision` に `index_a`・`index_b`・`overlap_rect`・`overlap_area` を持つ。`fit_text_to_box` の `used_rect` と組み合わせ、コンテントストリーム変更前に衝突をプリフライト検査できる（v1.9.0+） |
 | 置換テキストに元グリフ幅ではなく列全体の幅を使いたい | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 各セルを `source_bbox`（グリフ境界）と `usable_rect`（利用可能領域）の両方付きで返す。`usable_rect.width` は次の列の開始位置まで伸びるため、翻訳文は元ラベル幅ではなく実際の列幅を使えるようになる（v1.10.0+） |
 | レイアウトセルへの翻訳文配置をまとめて計画したい | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 各置換文を `region.usable_rect` に `fit_text_to_box` で収め、領域間の衝突を検出し、`RegionFitPlan { region, fit, collisions }` を返す。レイアウト・フィット・衝突検出を1回のパスで完結（v1.10.0+） |
 | 帳票 PDF 翻訳でベースラインを保持し列幅を安全に扱いたい | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — `RegionTextFitOptions` の `BaselinePolicy::PreserveSourceBaseline` で元ベースラインを維持し、`WidthPolicy::SourceLineWidth` でラベル列が値列に侵食しないよう制御。`RegionTextFitOptions::for_role(&region.role)` でロール別デフォルト取得、`&[]` で全領域に自動適用（v1.11.0+） |
 | 領域がラベル・値・見出し・本文のどれかを知りたい | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`。`extract_layout_regions` が列位置・行シブリング・ページ端近接から自動割り当て（v1.11.0+） |
+| 衝突の構造的関係（同行・隣接行・ヘッダーフッター）を分類したい | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 各 `Collision` に `CollisionKind`（`SameRegion`・`SameRow`・`AdjacentRow`・`SameColumn`・`HeaderFooter`・`Unknown`）と各領域の `LayoutRegionRole` を付加。`plan_text_for_regions*` の `RegionFitPlan.collisions` は `Vec<ClassifiedCollision>` を直接返す（v1.12.0+） |
+| テキスト配置の結果（縮小・オーバーフロー・切り詰め）を知りたい | `FitResult::status: PlacementStatus` — `Ok`（調整なしで収まった）、`Shrunk`（フォント縮小・下限以上）、`ShrunkToMin`（`min_font_size` 下限到達・溢れる場合あり）、`Overflow`（`OverflowPolicy::Report` 時のオーバーフロー）、`Truncated`（`OverflowPolicy::Truncate` または `Report + max_lines` での行切り捨て）。フラグを個別確認せず一つのシグナルとして使用可能（v1.13.0+） |
+| 翻訳レイアウトのページ単位品質ゲートが欲しい | `PageFitSummary::from_plans(plans) -> PageFitSummary` — `RegionFitPlan` バッチの集計。フィールド: `overflow_count`・`collision_count`・`shrunk_count`・`worst_overlap_area`・`worst_overlap_rect`。最終 PDF 書き出し前の品質判定に使用（v1.13.0+） |
+| PDF 上でレイアウト衝突や配置をビジュアルデバッグしたい | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 色付きストローク矩形を描画（青=ソース bbox、緑=配置テキスト、赤=衝突重複）。`DebugOverlayOptions` で色と線幅を設定。NaN/無効座標は自動スキップ（`draw` feature、v1.13.0+） |
 
 ---
 
@@ -933,6 +937,18 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.5.13** | XObject フォント解決バグ修正：`xobject_fonts()` がページレベルのフォントをベースとして使用するよう変更。PScript5/Distiller 製 PDF で Form XObject が `/Resources` を持つが `/Font` サブエントリを持たない場合（フォントがページ側に定義される典型的な構造）のテキスト全ドロップを修正 |
 | **v1.5.14** | クロスストリーム BT/ET 状態の引き継ぎ：`in_bt`・現在のフォント・テキスト位置を `ParseCarryState` に移動し、ストリーム境界をまたいで保持。Distiller 製 PDF が単一の BT…ET ブロックを複数の `/Contents` 配列ストリームに分割するケース（前ストリームで BT が閉じられず後続ストリームで裸の `Tj` が 48 個破棄されるなど）を修正 |
 | **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 各フラグメントを生成した `Tj`/`TJ` のバイトオフセットで追跡；`PageHandle::replace_text_fragments(fragments, new_text, font)` — ソース演算子を `() Tj` で抑制し訳文を配置。1文字単位 Tj の PScript5/Distiller・Type3 PDF の InPlace 翻訳が可能に |
+| **v1.5.16** | `TextFragment.source_xobject: Option<(u32, u16)>` — Form XObject ソース参照；`replace_text_fragments_opts` と `FragmentReplaceOpts`（`font_size`・`max_width`・`y_offset`・`color`）；XObject ストリーム書き換えサポート |
+| **v1.5.17** | `text_fragment_bounds` — アセンダー/ディセンダー推定付き集計バウンディングボックス；`FragmentReplaceOpts.shrink_to_fit` + `min_font_size` |
+| **v1.5.18** | `replace_text_fragments_batch` — シングルパスバッチ置換（バイトオフセットずれなし）；`dry_run` プリフライト；`FragmentReplaceFailureReason` + `can_suppress_fragment` |
+| **v1.5.19** | Td のみ BT ブロックで `tm_origin_x/y` が `Some(0.0)` を誤報告していたバグを修正 |
+| **v1.6.0** | `TextFragment::tm_x_scale` — Tm 行列の X スケール；非均一 Tm での字送り幅・TJ カーニングを修正 |
+| **v1.7.0** | `TextFragment.tm_lm_x / tm_lm_y` — テキストラインマトリクス座標（Td でリセット）；帳票翻訳の安定した列/行アンカー |
+| **v1.8.0** | `TableCell.fragments` + `bbox()`；`replace_text_fragments_batch_opts` with `BatchEntry`；`replace_fragments_fit_to_bbox` |
+| **v1.9.0** | `measure_text`；`fit_text_to_box` + `FitResult` + `BoxFitOptions` / `OverflowPolicy`；`detect_collisions` + `PlacedBox` + `Collision` |
+| **v1.10.0** | `extract_layout_regions` + `LayoutRegion`（`source_bbox` + `usable_rect`）；`plan_text_for_regions` → `Vec<RegionFitPlan>` |
+| **v1.11.0** | `LayoutRegionRole`；`BaselinePolicy` + `WidthPolicy` + `RegionTextFitOptions`；`plan_text_for_regions_with_policy`；HeaderFooter 近接判定の NaN ガード |
+| **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 構造的衝突分類；`RegionFitPlan.collisions` を `Vec<ClassifiedCollision>` に変更 |
+| **v1.13.0** | `Collision::overlap_area`（pt² 重大度フィールド）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；バグ修正: Report+max_lines Truncated ステータス、WrapThenShrink 下限フォントでの溢れ、Truncate rh=0 誤 Ok、NaN 座標ガード |
 
 ---
 

@@ -125,11 +125,15 @@ doc.save("searchable.pdf")?;
 | 需要将翻译文本适配到原始单元格 bbox 内 | `page.replace_fragments_fit_to_bbox(&cell.fragments, text, font, cell.bbox(), FitOptions::default())` — 抑制原文并将替换文本按单元格宽度缩放放置（v1.8.0+） |
 | 需要在放置文本前测量其渲染宽度 | `doc.measure_text(text, font, font_size) -> Result<f32>` — 使用已注册字体的 TTF 指标返回 PDF 点单位的前进宽度（v1.9.0+） |
 | 需要在绘制前规划文本在固定矩形中的布局 | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — 纯规划操作，不修改文档；返回折行结果、实际字体大小、`used_rect` 和 `overflow_horizontal`/`overflow_vertical` 标志；通过 `OverflowPolicy` 提供四种策略：`Shrink`、`WrapThenShrink`、`Truncate`、`Report`（v1.9.0+） |
-| 需要检测规划文本框之间的重叠 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) 轴对齐边界框重叠检测；每个 `Collision` 包含 `index_a`、`index_b` 和 `overlap_rect`；结合 `fit_text_to_box` 的 `used_rect` 在修改内容流前预检冲突（v1.9.0+） |
+| 需要检测规划文本框之间的重叠 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) 轴对齐边界框重叠检测；每个 `Collision` 包含 `index_a`、`index_b`、`overlap_rect` 和 `overlap_area`（预计算重叠面积，单位 pt²）；结合 `fit_text_to_box` 的 `used_rect` 在修改内容流前预检冲突（v1.9.0+） |
 | 替换文本需要完整列宽而非原始字形宽度 | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 为每个单元格同时返回 `source_bbox`（字形边界）和 `usable_rect`（可用区域）；`usable_rect.width` 延伸至下一列起始位置，使译文可以使用真实列宽而非原标签宽度（v1.10.0+） |
 | 需要在绘制前批量规划译文到布局单元格 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 通过 `fit_text_to_box` 将每条译文适配到 `region.usable_rect`，检测跨区域碰撞，返回 `RegionFitPlan { region, fit, collisions }`；一次调用完成布局、适配和碰撞检测（v1.10.0+） |
 | 表单 PDF 翻译需要保留原始基线并安全控制列宽 | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — 每区域 `RegionTextFitOptions`：`BaselinePolicy::PreserveSourceBaseline` 保持原行位置，`WidthPolicy::SourceLineWidth` 防止标签扩展到值列；`RegionTextFitOptions::for_role(&region.role)` 返回角色默认值；传 `&[]` 自动对所有区域应用（v1.11.0+） |
 | 需要知道区域是标签、值、标题还是正文 | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`；`extract_layout_regions` 根据列位置、行相邻单元格和页面边缘位置自动分配（v1.11.0+） |
+| 需要对碰撞进行结构关系分类（同行、相邻行、页眉页脚等） | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 为每个 `Collision` 附加 `CollisionKind`（`SameRegion`、`SameRow`、`AdjacentRow`、`SameColumn`、`HeaderFooter`、`Unknown`）及各区域的 `LayoutRegionRole`；`plan_text_for_regions*` 的 `RegionFitPlan.collisions` 直接返回 `Vec<ClassifiedCollision>`（v1.12.0+） |
+| 需要了解文字排版结果（缩小/溢出/截断） | `FitResult::status: PlacementStatus` — `Ok`（无需调整）、`Shrunk`（字体缩小但在下限以上）、`ShrunkToMin`（已达 `min_font_size` 下限，可能仍溢出）、`Overflow`（`OverflowPolicy::Report` 下溢出）、`Truncated`（`OverflowPolicy::Truncate` 或 `Report + max_lines` 下行被截断）；无需逐一检查各标志位即可做出处置决策（v1.13.0+） |
+| 需要翻译布局的页面级质量门控 | `PageFitSummary::from_plans(plans) -> PageFitSummary` — 对 `RegionFitPlan` 批次进行汇总；字段：`overflow_count`、`collision_count`、`shrunk_count`、`worst_overlap_area`、`worst_overlap_rect`；在写出最终 PDF 前用于质量判断（v1.13.0+） |
+| 需要在 PDF 上可视化调试布局碰撞和文字放置 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 绘制彩色描边矩形（蓝色=源 bbox，绿色=排版文字，红色=碰撞重叠区域）；通过 `DebugOverlayOptions` 配置颜色和线宽；NaN/无效坐标自动跳过（`draw` feature，v1.13.0+） |
 
 ---
 
@@ -815,6 +819,18 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.5.13** | 修复 XObject 字体解析问题（PScript5/Distiller PDF）：`xobject_fonts()` 现以页面级字体为基础，解决 Form XObject 有 `/Resources` 但无 `/Font` 子条目时文本全部丢弃的问题 |
 | **v1.5.14** | 修复跨流 BT/ET 状态：`in_bt`、当前字体和文本位置移入 `ParseCarryState`，跨 `/Contents` 数组流边界保持；修复 Distiller PDF 将单个 BT…ET 块拆分到多个流时（后续流中裸 Tj 被丢弃）的文本提取问题 |
 | **v1.5.15** | `TextFragment.source_stream` / `source_op_start` / `source_op_end` — 算子级来源追踪；`PageHandle::replace_text_fragments(fragments, new_text, font)` — 将源 Tj/TJ 替换为 `() Tj` 以抑制原字形并放置译文；支持 PScript5/Distiller 及 Type3 逐字符 PDF 的原位翻译 |
+| **v1.5.16** | `TextFragment.source_xobject`；`replace_text_fragments_opts` + `FragmentReplaceOpts`；Form XObject 流重写支持 |
+| **v1.5.17** | `text_fragment_bounds` — 含升降部估算的聚合边界框；`FragmentReplaceOpts.shrink_to_fit` + `min_font_size` |
+| **v1.5.18** | `replace_text_fragments_batch` — 单次批量替换；`dry_run` 预检；`FragmentReplaceFailureReason` + `can_suppress_fragment` |
+| **v1.5.19** | 修复仅 Td BT 块中 `tm_origin_x/y` 误报 `Some(0.0)` 的问题 |
+| **v1.6.0** | `TextFragment::tm_x_scale` — Tm 矩阵 X 缩放；修复非均匀 Tm 下的字符间距和 TJ 字偶间距 |
+| **v1.7.0** | `TextFragment.tm_lm_x / tm_lm_y` — 文本行矩阵坐标（Td 重置）；表单 PDF 翻译的稳定列/行锚点 |
+| **v1.8.0** | `TableCell.fragments` + `bbox()`；`replace_text_fragments_batch_opts` with `BatchEntry`；`replace_fragments_fit_to_bbox` |
+| **v1.9.0** | `measure_text`；`fit_text_to_box` + `FitResult` + `BoxFitOptions` / `OverflowPolicy`；`detect_collisions` + `PlacedBox` + `Collision` |
+| **v1.10.0** | `extract_layout_regions` + `LayoutRegion`（`source_bbox` + `usable_rect`）；`plan_text_for_regions` → `Vec<RegionFitPlan>` |
+| **v1.11.0** | `LayoutRegionRole`；`BaselinePolicy` + `WidthPolicy` + `RegionTextFitOptions`；`plan_text_for_regions_with_policy`；页眉页脚邻近检测 NaN 保护 |
+| **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 结构性碰撞分类；`RegionFitPlan.collisions` 改为 `Vec<ClassifiedCollision>` |
+| **v1.13.0** | `Collision::overlap_area`（pt² 严重程度字段）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；Bug 修复：Report+max_lines Truncated 状态、WrapThenShrink 下限字体溢出、Truncate rh=0 误判 Ok、NaN 坐标保护 |
 
 ---
 

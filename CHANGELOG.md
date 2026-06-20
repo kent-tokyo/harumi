@@ -51,6 +51,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`PageFitSummary`) — eliminating the need to reimplement those heuristics
   outside harumi.
 
+### Fixed (harumi)
+
+- **`OverflowPolicy::Report` + `max_lines` silent line drop** (`src/document/helpers.rs`) —
+  When `max_lines` truncated lines under the `Report` policy and the remaining
+  lines fit inside the rect, `overflow_vertical` was `false` and status stayed
+  `Ok`, giving callers no signal that content was dropped.  Status now correctly
+  returns `PlacementStatus::Truncated` when `max_lines` caps output under `Report`.
+
+- **`WrapThenShrink`/`Shrink` reports `Ok` when already at `min_font_size` with overflow**
+  (`src/document/helpers.rs`) —
+  When `initial_font_size == min_font_size` the shrink loop exited immediately
+  (`fs <= min_fs` on the first iteration) without reducing the font, so `fs < fs0`
+  was `false` and status was `Ok` even when `overflow_vertical` was `true`.  The
+  post-hoc fixup now sets `ShrunkToMin` when `fs <= min_fs` and text still
+  overflows, consistent with `PlacementStatus::Ok`'s doc contract ("fit without
+  any adjustments").
+
+- **`OverflowPolicy::Truncate` with `rh == 0` kept all lines with `Ok` status**
+  (`src/document/helpers.rs`) —
+  When `rh == 0` the height-based cap was `else { lines.len() }` (no cap),
+  keeping all lines with `status = Ok` while `overflow_vertical = true`.
+  The else-branch now returns `0` so `cap.max(1)` keeps exactly one line minimum
+  and `PlacementStatus::Truncated` is reported correctly.
+
+- **NaN coordinates in `add_fit_debug_overlay` caused unexpected `Err` mid-loop**
+  (`src/document/page.rs`) —
+  The guard `r[2] > 0.0 && r[3] > 0.0` skipped zero/negative width and height
+  but not NaN x or y.  A malformed PDF with extreme CTM values can produce
+  fragments with NaN coordinates that survive `extract_table_cells` filtering.
+  The guard now checks all four components with `is_finite()`, and `line_width`
+  is validated at function entry rather than per-rect, matching the convention of
+  the rest of `PageHandle`'s draw methods.
+
 ---
 
 ## [1.12.0] — 2026-06-21
