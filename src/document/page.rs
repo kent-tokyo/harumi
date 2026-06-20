@@ -2364,17 +2364,25 @@ impl<'doc> PageHandle<'doc> {
         opts: DebugOverlayOptions,
     ) -> Result<()> {
         let lw = opts.line_width;
+        if !lw.is_finite() {
+            return Err(crate::Error::InvalidInput(
+                "DebugOverlayOptions::line_width must be finite".into(),
+            ));
+        }
+
+        // Guard: only draw a rect if all four coordinates are finite and w/h are positive.
+        let rect_ok = |r: [f32; 4]| r.iter().all(|v| v.is_finite()) && r[2] > 0.0 && r[3] > 0.0;
 
         for plan in fit_plans {
             if let Some(color) = opts.source_box_color {
                 let r = plan.region.source_bbox;
-                if r[2] > 0.0 && r[3] > 0.0 {
+                if rect_ok(r) {
                     self.add_rect_stroke(r, color, lw, 1.0)?;
                 }
             }
             if let Some(color) = opts.placed_box_color {
                 let r = plan.fit.used_rect;
-                if r[2] > 0.0 && r[3] > 0.0 {
+                if rect_ok(r) {
                     self.add_rect_stroke(r, color, lw, 1.0)?;
                 }
             }
@@ -2388,7 +2396,7 @@ impl<'doc> PageHandle<'doc> {
                     let key = (cc.collision.index_a, cc.collision.index_b);
                     if seen.insert(key) {
                         let r = cc.collision.overlap_rect;
-                        if r[2] > 0.0 && r[3] > 0.0 {
+                        if rect_ok(r) {
                             self.add_rect_stroke(r, color, lw, 1.0)?;
                         }
                     }

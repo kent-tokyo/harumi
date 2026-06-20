@@ -726,10 +726,12 @@ pub(super) fn plan_text_fit(
             };
             let original_count = lines.len();
             let lh = line_height(fs0);
+            // When rh <= 0 the box fits nothing; use 0 so cap clamps to 0 and
+            // take(cap.max(1)) keeps exactly one line (the minimum the API guarantees).
             let max_by_height = if lh > 0.0 && rh > 0.0 {
                 (rh / lh).floor() as usize
             } else {
-                lines.len()
+                0
             };
             let cap = opts.max_lines.unwrap_or(usize::MAX).min(max_by_height);
             let truncated: Vec<String> = lines.into_iter().take(cap.max(1)).collect();
@@ -746,13 +748,20 @@ pub(super) fn plan_text_fit(
             } else {
                 vec![text.to_owned()]
             };
-            let lines = if let Some(max) = opts.max_lines {
+            let original_report_count = lines.len();
+            let lines: Vec<String> = if let Some(max) = opts.max_lines {
                 lines.into_iter().take(max.max(1)).collect()
             } else {
                 lines
             };
-            // Status is determined after overflow flags are computed below.
-            (lines, fs0, PlacementStatus::Ok)
+            // Track whether max_lines silently dropped lines; overflow flags are
+            // finalized after this match.
+            let status = if lines.len() < original_report_count {
+                PlacementStatus::Truncated
+            } else {
+                PlacementStatus::Ok
+            };
+            (lines, fs0, status)
         }
     };
 
@@ -771,13 +780,26 @@ pub(super) fn plan_text_fit(
         lines.iter().any(|l| text_width_with_face(l, face, fs) > rw);
     let overflow_vertical = used_h > rh;
 
-    // For Report policy, finalize status based on overflow flags.
-    let status = if matches!(opts.overflow, OverflowPolicy::Report)
-        && (overflow_horizontal || overflow_vertical)
-    {
-        PlacementStatus::Overflow
-    } else {
-        status
+    // Post-hoc status fixups using the computed overflow flags.
+    let status = match opts.overflow {
+        // Report: upgrade Ok→Overflow when text overflows, but don't override Truncated.
+        OverflowPolicy::Report
+            if !matches!(status, PlacementStatus::Truncated)
+                && (overflow_horizontal || overflow_vertical) =>
+        {
+            PlacementStatus::Overflow
+        }
+        // Shrink / WrapThenShrink: when already at min_font_size and text still overflows,
+        // report ShrunkToMin instead of Ok (loop exited because fs <= min_fs, not because
+        // the text fit — e.g. initial_font_size == min_font_size).
+        OverflowPolicy::Shrink | OverflowPolicy::WrapThenShrink
+            if status == PlacementStatus::Ok
+                && fs <= min_fs
+                && (overflow_horizontal || overflow_vertical) =>
+        {
+            PlacementStatus::ShrunkToMin
+        }
+        _ => status,
     };
 
     FitResult { lines, font_size: fs, used_rect, overflow_horizontal, overflow_vertical, status }

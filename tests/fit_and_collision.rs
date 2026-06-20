@@ -475,3 +475,69 @@ fn debug_overlay_no_error_on_empty_plans() {
     let bytes = doc.save_to_bytes().unwrap();
     assert!(!bytes.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Bug-fix regressions (from code-review + security-review, v1.13.0)
+// ---------------------------------------------------------------------------
+
+// Bug: Report + max_lines silently dropped lines → status stayed Ok.
+#[test]
+fn report_policy_with_max_lines_gives_truncated_status() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Report;
+    opts.max_lines = Some(1);
+    // Text that wraps to many lines in a narrow box.
+    let text = "Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa";
+    let result =
+        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 1000.0], 12.0, opts).unwrap();
+    assert_eq!(
+        result.status,
+        PlacementStatus::Truncated,
+        "Report + max_lines must report Truncated when lines are dropped; got {:?}",
+        result.status
+    );
+    assert_eq!(result.lines.len(), 1);
+}
+
+// Bug: WrapThenShrink when initial_font_size == min_font_size but text overflows.
+#[test]
+fn wrap_then_shrink_at_min_font_gives_shrunk_to_min_when_overflow() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::WrapThenShrink;
+    opts.min_font_size = 12.0;
+    // Very tall wrapped text in a tiny box: can't shrink below 12pt, overflow expected.
+    let text = "Line A Line B Line C Line D Line E Line F Line G Line H";
+    let result =
+        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 20.0], 12.0, opts).unwrap();
+    // Should NOT be Ok when text overflows and we're already at the font-size floor.
+    assert_ne!(
+        result.status,
+        PlacementStatus::Ok,
+        "status must not be Ok when at min_font_size and text overflows"
+    );
+    assert_eq!(result.status, PlacementStatus::ShrunkToMin);
+    assert!(result.overflow_vertical);
+}
+
+// Bug: Truncate with rh == 0 kept all lines and returned Ok because else-branch
+// set max_by_height = lines.len() instead of 0.
+#[test]
+fn truncate_zero_height_rect_gives_truncated_status() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Truncate;
+    // Multiple lines in a zero-height rect.
+    let text = "Alpha Beta Gamma Delta Epsilon Zeta";
+    let result =
+        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 0.0], 12.0, opts).unwrap();
+    // Zero-height box should produce Truncated (at least 1 line kept) and overflow.
+    assert_eq!(
+        result.status,
+        PlacementStatus::Truncated,
+        "Truncate with rh=0 must report Truncated; got {:?}",
+        result.status
+    );
+    assert!(result.overflow_vertical);
+}
