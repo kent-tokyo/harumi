@@ -3737,8 +3737,14 @@ pub fn extract_layout_regions(
 
         // --- Vertical (usable_y, usable_h) ---
         let (usable_y, usable_h) = if options.infer_row_heights {
-            let current_top = row_top_map.get(&cell.row).copied().unwrap_or(source_bbox[1] + source_bbox[3]);
-            if let Some(&next_top) = row_top_map.get(&(cell.row + 1)) {
+            let current_top = row_top_map
+                .get(&cell.row)
+                .copied()
+                .filter(|v| v.is_finite())
+                .unwrap_or(source_bbox[1] + source_bbox[3]);
+            // Use checked_add to avoid usize overflow when cell.row == usize::MAX.
+            let next_top = cell.row.checked_add(1).and_then(|r| row_top_map.get(&r)).copied();
+            if let Some(next_top) = next_top {
                 let h = (current_top - next_top).max(source_bbox[3]);
                 (next_top, h)
             } else {

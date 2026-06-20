@@ -128,6 +128,8 @@ doc.save("searchable.pdf")?;
 | 텍스트를 배치하기 전에 렌더링 너비를 측정하고 싶다 | `doc.measure_text(text, font, font_size) -> Result<f32>` — 등록된 폰트의 TTF 메트릭을 사용해 PDF 포인트 단위의 어드밴스 너비를 반환（v1.9.0+） |
 | 그리기 전에 고정 사각형 안의 텍스트 레이아웃을 계획하고 싶다 | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — 문서를 수정하지 않는 순수 계획 함수; 줄 목록, 실효 폰트 크기, `used_rect`, `overflow_horizontal`/`overflow_vertical` 플래그를 반환; `OverflowPolicy`로 4가지 정책: `Shrink`, `WrapThenShrink`, `Truncate`, `Report`（v1.9.0+） |
 | 배치될 텍스트 박스 간의 겹침을 감지하고 싶다 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB 겹침 감지; 각 `Collision`에 `index_a`, `index_b`, `overlap_rect` 포함; `fit_text_to_box`의 `used_rect`와 결합해 콘텐츠 스트림 수정 전 충돌을 사전 검사（v1.9.0+） |
+| 교체 텍스트에 원본 글리프 너비가 아닌 전체 열 너비가 필요하다 | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 각 셀에 `source_bbox`(글리프 경계)와 `usable_rect`(사용 가능 영역)를 함께 반환; `usable_rect.width`는 다음 열 시작 위치까지 확장되어 번역문이 원본 레이블 너비가 아닌 실제 열 너비를 사용할 수 있음（v1.10.0+） |
+| 그리기 전에 레이아웃 셀에 번역문 배치를 일괄 계획하고 싶다 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — `fit_text_to_box`로 각 번역문을 `region.usable_rect`에 맞추고 영역 간 충돌을 감지하여 `RegionFitPlan { region, fit, collisions }`를 반환; 레이아웃·피팅·충돌 감지를 한 번의 호출로 완결（v1.10.0+） |
 
 ---
 

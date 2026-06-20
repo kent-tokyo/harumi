@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.0] — 2026-06-20
+
+### Added (harumi)
+
+- **`extract_layout_regions(fragments, page_width, page_height, options) -> Vec<LayoutRegion>`**
+  (`src/extract.rs`) —
+  Detects layout regions on a page and returns each one with both `source_bbox` (glyph bounds)
+  and `usable_rect` (inferred available area).
+  The key difference from `extract_table_cells`: `usable_rect.width` extends to the **start of
+  the next column** (or the page edge), not just to the end of the source glyphs.
+  A short label like "名前:" (~30 pt) in a 150 pt column gets `usable_rect.width ≈ 148 pt`
+  so `fit_text_to_box` can plan the full replacement without width constraints.
+  `usable_rect.height` spans from the current row's ascender down to the next row's ascender
+  (or a 1.5× source-height estimate for the last row).
+  Internally reuses `extract_table_cells` + `detect_text_columns`.
+
+- **`LayoutRegion`** (`src/extract.rs`) —
+  `#[non_exhaustive]` struct returned by `extract_layout_regions`:
+  `kind: LayoutRegionKind`, `row: Option<usize>`, `col: Option<usize>`, `text: String`,
+  `source_bbox: [f32; 4]`, `usable_rect: [f32; 4]`, `fragments: Vec<TextFragment>`.
+
+- **`LayoutRegionKind`** (`src/extract.rs`) —
+  `#[non_exhaustive]` enum: `Heading(u8)` (levels 1–4 via font-size ratio, same thresholds as
+  `TextChunk`), `Paragraph` (single-column non-tabular), `TableCell`, `Unknown`.
+
+- **`LayoutRegionOptions`** (`src/extract.rs`) —
+  `#[non_exhaustive]` options struct: `infer_row_heights: bool` (default `true`),
+  `infer_column_widths: bool` (default `true`), `margin: f32` (default `2.0` pt).
+  Construct with `LayoutRegionOptions::default()` and override fields.
+
+- **`Document::plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>`**
+  (`src/document/mod.rs`) —
+  Fits each replacement string into `region.usable_rect` via `fit_text_to_box`, then runs
+  `detect_collisions` on all `used_rect`s and attaches the relevant collisions to each plan.
+  Initial font size is derived from the mean of the region's source fragment `font_size` values.
+
+- **`RegionFitPlan`** (`src/extract.rs`) —
+  `#[non_exhaustive]` result of `plan_text_for_regions`:
+  `region: LayoutRegion`, `fit: FitResult`, `collisions: Vec<Collision>`.
+
+---
+
 ## [1.9.0] — 2026-06-20
 
 ### Added (harumi)

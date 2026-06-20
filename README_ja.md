@@ -129,6 +129,8 @@ doc.save("searchable.pdf")?;
 | テキストの描画幅を事前に計測したい | `doc.measure_text(text, font, font_size) -> Result<f32>` — 登録済みフォントの TTF メトリクスを使って PDF ポイント単位のアドバンス幅を返す（v1.9.0+） |
 | テキストを描画する前に矩形へのレイアウトを計画したい | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> Result<FitResult>` — ドキュメントを変更せず折り返し・縮小計画だけを行う。行リスト・実効フォントサイズ・`used_rect`・`overflow_horizontal`/`overflow_vertical` フラグを返す。`OverflowPolicy` で 4 ポリシー: `Shrink`・`WrapThenShrink`・`Truncate`・`Report`（v1.9.0+） |
 | 配置予定テキストボックス同士の衝突を検出したい | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) の AABB 重複検出。各 `Collision` に `index_a`・`index_b`・`overlap_rect` を持つ。`fit_text_to_box` の `used_rect` と組み合わせ、コンテントストリーム変更前に衝突をプリフライト検査できる（v1.9.0+） |
+| 置換テキストに元グリフ幅ではなく列全体の幅を使いたい | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 各セルを `source_bbox`（グリフ境界）と `usable_rect`（利用可能領域）の両方付きで返す。`usable_rect.width` は次の列の開始位置まで伸びるため、翻訳文は元ラベル幅ではなく実際の列幅を使えるようになる（v1.10.0+） |
+| レイアウトセルへの翻訳文配置をまとめて計画したい | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 各置換文を `region.usable_rect` に `fit_text_to_box` で収め、領域間の衝突を検出し、`RegionFitPlan { region, fit, collisions }` を返す。レイアウト・フィット・衝突検出を1回のパスで完結（v1.10.0+） |
 
 ---
 
