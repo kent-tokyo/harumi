@@ -3543,6 +3543,253 @@ fn decode_chars_to_fragment(
 }
 
 // ---------------------------------------------------------------------------
+// Layout region planning
+// ---------------------------------------------------------------------------
+
+/// Classifies the structural role of a [`LayoutRegion`].
+///
+/// `#[non_exhaustive]` — future variants may be added without a semver break.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutRegionKind {
+    /// A heading at the given level (1 = largest, following the same font-size
+    /// thresholds as [`crate::TextChunk`]).
+    Heading(u8),
+    /// A free-standing paragraph (single-column, non-tabular text block).
+    Paragraph,
+    /// A cell inside a detected table or form grid.
+    TableCell,
+    /// Could not be classified with available signals.
+    Unknown,
+}
+
+/// A detected layout region on a page, with both source-text bounds and the
+/// inferred available rectangle for replacement text.
+///
+/// Obtain via [`extract_layout_regions`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LayoutRegion {
+    /// Structural classification.
+    pub kind: LayoutRegionKind,
+    /// 0-based row index within the detected table/grid (`None` for headings/paragraphs).
+    pub row: Option<usize>,
+    /// 0-based column index (`None` for headings/paragraphs).
+    pub col: Option<usize>,
+    /// Concatenated text of all source fragments.
+    pub text: String,
+    /// Bounding box of the *source* glyphs: `[x, y, width, height]` in PDF points.
+    pub source_bbox: [f32; 4],
+    /// Inferred *available* area for replacement text: `[x, y, width, height]`.
+    ///
+    /// Width extends to the start of the next column (or the page edge), not just
+    /// to the end of the source glyphs — this is the key difference from `source_bbox`.
+    /// Height spans from the current row's ascender down to the next row's ascender
+    /// (or a generous estimate for the last row).
+    pub usable_rect: [f32; 4],
+    /// All source fragments (carry `source_op_*` fields for suppression).
+    pub fragments: Vec<TextFragment>,
+}
+
+/// Options for [`extract_layout_regions`].
+///
+/// Construct with `LayoutRegionOptions::default()` and override fields as needed.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LayoutRegionOptions {
+    /// Infer `usable_rect` height from the distance to the adjacent row.
+    /// Default `true`.
+    pub infer_row_heights: bool,
+    /// Infer `usable_rect` width from the gap to the next column (or page edge).
+    /// When `false`, `usable_rect.width` falls back to `source_bbox.width`.
+    /// Default `true`.
+    pub infer_column_widths: bool,
+    /// Padding in PDF points subtracted from the inferred usable dimensions.
+    /// Default `2.0`.
+    pub margin: f32,
+}
+
+impl Default for LayoutRegionOptions {
+    fn default() -> Self {
+        Self { infer_row_heights: true, infer_column_widths: true, margin: 2.0 }
+    }
+}
+
+/// Combines a [`LayoutRegion`] with the [`crate::FitResult`] for its planned
+/// replacement text and any [`Collision`]s against neighbouring regions.
+///
+/// Returned by [`crate::Document::plan_text_for_regions`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct RegionFitPlan {
+    /// The layout region being filled.
+    pub region: LayoutRegion,
+    /// How the replacement text lays out inside `region.usable_rect`.
+    pub fit: crate::document::FitResult,
+    /// Collisions between this region's `fit.used_rect` and other regions in the
+    /// same planning batch.
+    pub collisions: Vec<Collision>,
+}
+
+/// Detect layout regions on a page, inferring the usable area for each cell.
+///
+/// Unlike [`extract_table_cells`], every region carries a `usable_rect` that
+/// extends the width to the start of the next column (or the page edge) rather
+/// than only to the end of the source glyphs.  This lets downstream translation
+/// code call [`crate::Document::fit_text_to_box`] with the full available space
+/// instead of fighting the source-text bounding box.
+///
+/// # Arguments
+///
+/// * `fragments` — output of [`crate::Document::extract_text_runs`], ideally
+///   pre-filtered to the page's visible text.
+/// * `page_width` / `page_height` — from [`crate::PageHandle::size`].
+/// * `options` — inference knobs; `LayoutRegionOptions::default()` is a good start.
+///
+/// # Returns
+///
+/// Regions in reading order (top-to-bottom, left-to-right within each row).
+/// Returns an empty `Vec` when `fragments` is empty or `page_width ≤ 0`.
+pub fn extract_layout_regions(
+    fragments: &[TextFragment],
+    page_width: f32,
+    page_height: f32,
+    options: LayoutRegionOptions,
+) -> Vec<LayoutRegion> {
+    if fragments.is_empty() || page_width <= 0.0 {
+        return vec![];
+    }
+
+    // ---- 1. Visible, sorted fragments -----------------------------------------
+    let visible: Vec<TextFragment> = fragments
+        .iter()
+        .filter(|f| !f.invisible && !f.text.trim().is_empty() && f.font_size.is_finite())
+        .cloned()
+        .collect();
+    if visible.is_empty() {
+        return vec![];
+    }
+
+    // ---- 2. Column detection + usable widths ----------------------------------
+    let zones = detect_text_columns(&visible, page_width);
+    let col_usable_widths: Vec<f32> = zones
+        .iter()
+        .enumerate()
+        .map(|(i, z)| {
+            let right = if i + 1 < zones.len() {
+                zones[i + 1].x_start
+            } else {
+                page_width
+            };
+            (right - z.x_start - options.margin).max(1.0)
+        })
+        .collect();
+
+    // ---- 3. Table cell detection ----------------------------------------------
+    let cells = extract_table_cells(&visible, page_width, page_height);
+    if cells.is_empty() {
+        return vec![];
+    }
+
+    // ---- 4. Median font size for heading classification ----------------------
+    let mut font_sizes: Vec<f32> = visible
+        .iter()
+        .map(|f| f.font_size)
+        .filter(|&fs| (4.0_f32..=48.0).contains(&fs))
+        .collect();
+    font_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_fs = if font_sizes.is_empty() {
+        10.0_f32
+    } else {
+        font_sizes[font_sizes.len() / 2]
+    };
+
+    // ---- 5. Row-top map (row_idx → max ascender y in that row) ---------------
+    let mut row_top_map: std::collections::BTreeMap<usize, f32> =
+        std::collections::BTreeMap::new();
+    for cell in &cells {
+        let top = cell
+            .fragments
+            .iter()
+            .filter(|f| f.font_size.is_finite())
+            .map(|f| f.y + f.font_size * 0.75)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if top.is_finite() {
+            let entry = row_top_map.entry(cell.row).or_insert(top);
+            if top > *entry {
+                *entry = top;
+            }
+        }
+    }
+
+    // ---- 6. Build LayoutRegion per cell --------------------------------------
+    let mut regions: Vec<LayoutRegion> = Vec::with_capacity(cells.len());
+
+    for cell in cells {
+        let source_bbox = text_fragment_bounds(&cell.fragments).unwrap_or(cell.bbox());
+
+        // --- Horizontal (usable_x, usable_w) ---
+        let (usable_x, usable_w) = if options.infer_column_widths && cell.col < col_usable_widths.len() {
+            (zones[cell.col].x_start, col_usable_widths[cell.col])
+        } else {
+            (source_bbox[0], source_bbox[2])
+        };
+
+        // --- Vertical (usable_y, usable_h) ---
+        let (usable_y, usable_h) = if options.infer_row_heights {
+            let current_top = row_top_map.get(&cell.row).copied().unwrap_or(source_bbox[1] + source_bbox[3]);
+            if let Some(&next_top) = row_top_map.get(&(cell.row + 1)) {
+                let h = (current_top - next_top).max(source_bbox[3]);
+                (next_top, h)
+            } else {
+                // Last row: estimate height = 1.5× source height, floor below source
+                let h = (source_bbox[3] * 1.5).max(source_bbox[3]);
+                let y = current_top - h;
+                (y.max(options.margin), h)
+            }
+        } else {
+            (source_bbox[1], source_bbox[3])
+        };
+
+        // --- Kind classification ---
+        let avg_fs = {
+            let sizes: Vec<f32> = cell.fragments.iter().map(|f| f.font_size).filter(|fs| fs.is_finite() && *fs > 0.0).collect();
+            if sizes.is_empty() { median_fs } else { sizes.iter().sum::<f32>() / sizes.len() as f32 }
+        };
+        let ratio = if median_fs > 0.0 { avg_fs / median_fs } else { 1.0 };
+        let is_bold = cell.fragments.iter().any(|f| f.is_bold);
+        let kind = if ratio >= 1.8 || (ratio >= 1.5 && is_bold) {
+            LayoutRegionKind::Heading(1)
+        } else if ratio >= 1.5 {
+            LayoutRegionKind::Heading(2)
+        } else if ratio >= 1.3 {
+            LayoutRegionKind::Heading(3)
+        } else if ratio >= 1.15 || (ratio >= 1.05 && is_bold) {
+            LayoutRegionKind::Heading(4)
+        } else if zones.len() <= 1 && cell.col == 0 {
+            // Single column without tabular siblings → paragraph
+            LayoutRegionKind::Paragraph
+        } else {
+            LayoutRegionKind::TableCell
+        };
+
+        regions.push(LayoutRegion {
+            kind,
+            row: Some(cell.row),
+            col: Some(cell.col),
+            text: cell.text,
+            source_bbox,
+            usable_rect: [usable_x, usable_y, usable_w, usable_h],
+            fragments: cell.fragments,
+        });
+    }
+
+    // Sort by (row asc, col asc) — stable reading order
+    regions.sort_by_key(|r| (r.row.unwrap_or(usize::MAX), r.col.unwrap_or(usize::MAX)));
+    regions
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -111,8 +111,9 @@ pub use document::{
 };
 pub use error::{Error, Result};
 pub use extract::{
-    Collision, ColumnZone, ExtractionWarning, GroupingStrategy, PlacedBox, TableCell, TextFragment,
-    TextGroup, WarningKind, detect_collisions, detect_text_columns, extract_table_cells,
+    Collision, ColumnZone, ExtractionWarning, GroupingStrategy, LayoutRegion, LayoutRegionKind,
+    LayoutRegionOptions, PlacedBox, RegionFitPlan, TableCell, TextFragment, TextGroup, WarningKind,
+    detect_collisions, detect_text_columns, extract_layout_regions, extract_table_cells,
     group_text_fragments, merge_short_cjk_tails, sort_by_reading_order, text_fragment_bounds,
 };
 pub use font::FontHandle;

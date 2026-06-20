@@ -1815,6 +1815,76 @@ impl Document {
         Ok(helpers::plan_text_fit(text, &face, rect, font_size, &opts))
     }
 
+    /// Plan replacement text for a batch of [`LayoutRegion`](crate::LayoutRegion)s,
+    /// fitting each replacement into the region's `usable_rect` and detecting
+    /// collisions between the resulting [`FitResult::used_rect`](crate::FitResult)s.
+    ///
+    /// `regions` and `replacements` are zipped; the shorter slice determines how
+    /// many plans are returned.
+    ///
+    /// The initial font size for each region is derived from the mean `font_size`
+    /// of its source fragments (fallback `10.0`).  [`BoxFitOptions`](crate::BoxFitOptions)
+    /// controls wrapping and shrink-to-fit behaviour.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidFont`] or [`Error::FontParse`] if `font` is invalid.
+    pub fn plan_text_for_regions(
+        &self,
+        regions: &[crate::extract::LayoutRegion],
+        replacements: &[String],
+        font: FontHandle,
+        opts: types::BoxFitOptions,
+    ) -> Result<Vec<crate::extract::RegionFitPlan>> {
+        let raw = self
+            .raw_fonts
+            .get(font.0 as usize)
+            .ok_or(Error::InvalidFont(font.0))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
+
+        let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
+        let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());
+
+        for (region, replacement) in &pairs {
+            let font_size = {
+                let sizes: Vec<f32> = region
+                    .fragments
+                    .iter()
+                    .map(|f| f.font_size)
+                    .filter(|fs| fs.is_finite() && *fs > 0.0)
+                    .collect();
+                if sizes.is_empty() {
+                    10.0_f32
+                } else {
+                    sizes.iter().sum::<f32>() / sizes.len() as f32
+                }
+            };
+            let fit = helpers::plan_text_fit(replacement, &face, region.usable_rect, font_size, &opts);
+            fits.push(fit);
+        }
+
+        // Detect collisions among all used_rects
+        let placed: Vec<crate::extract::PlacedBox> =
+            fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
+        let all_collisions = crate::extract::detect_collisions(&placed);
+
+        let plans = pairs
+            .into_iter()
+            .enumerate()
+            .zip(fits)
+            .map(|((i, (region, _)), fit)| {
+                let collisions = all_collisions
+                    .iter()
+                    .filter(|c| c.index_a == i || c.index_b == i)
+                    .cloned()
+                    .collect();
+                crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }
+            })
+            .collect();
+
+        Ok(plans)
+    }
+
     /// # Errors
     /// Returns [`Error::PageNotFound`] if `page` is out of range.
     pub fn extract_text_runs(&self, page: u32) -> Result<Vec<crate::extract::TextFragment>> {
