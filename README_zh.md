@@ -128,6 +128,8 @@ doc.save("searchable.pdf")?;
 | 需要检测规划文本框之间的重叠 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) 轴对齐边界框重叠检测；每个 `Collision` 包含 `index_a`、`index_b` 和 `overlap_rect`；结合 `fit_text_to_box` 的 `used_rect` 在修改内容流前预检冲突（v1.9.0+） |
 | 替换文本需要完整列宽而非原始字形宽度 | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 为每个单元格同时返回 `source_bbox`（字形边界）和 `usable_rect`（可用区域）；`usable_rect.width` 延伸至下一列起始位置，使译文可以使用真实列宽而非原标签宽度（v1.10.0+） |
 | 需要在绘制前批量规划译文到布局单元格 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 通过 `fit_text_to_box` 将每条译文适配到 `region.usable_rect`，检测跨区域碰撞，返回 `RegionFitPlan { region, fit, collisions }`；一次调用完成布局、适配和碰撞检测（v1.10.0+） |
+| 表单 PDF 翻译需要保留原始基线并安全控制列宽 | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — 每区域 `RegionTextFitOptions`：`BaselinePolicy::PreserveSourceBaseline` 保持原行位置，`WidthPolicy::SourceLineWidth` 防止标签扩展到值列；`RegionTextFitOptions::for_role(&region.role)` 返回角色默认值；传 `&[]` 自动对所有区域应用（v1.11.0+） |
+| 需要知道区域是标签、值、标题还是正文 | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`；`extract_layout_regions` 根据列位置、行相邻单元格和页面边缘位置自动分配（v1.11.0+） |
 
 ---
 

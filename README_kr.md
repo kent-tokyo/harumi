@@ -130,6 +130,8 @@ doc.save("searchable.pdf")?;
 | 배치될 텍스트 박스 간의 겹침을 감지하고 싶다 | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) AABB 겹침 감지; 각 `Collision`에 `index_a`, `index_b`, `overlap_rect` 포함; `fit_text_to_box`의 `used_rect`와 결합해 콘텐츠 스트림 수정 전 충돌을 사전 검사（v1.9.0+） |
 | 교체 텍스트에 원본 글리프 너비가 아닌 전체 열 너비가 필요하다 | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 각 셀에 `source_bbox`(글리프 경계)와 `usable_rect`(사용 가능 영역)를 함께 반환; `usable_rect.width`는 다음 열 시작 위치까지 확장되어 번역문이 원본 레이블 너비가 아닌 실제 열 너비를 사용할 수 있음（v1.10.0+） |
 | 그리기 전에 레이아웃 셀에 번역문 배치를 일괄 계획하고 싶다 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — `fit_text_to_box`로 각 번역문을 `region.usable_rect`에 맞추고 영역 간 충돌을 감지하여 `RegionFitPlan { region, fit, collisions }`를 반환; 레이아웃·피팅·충돌 감지를 한 번의 호출로 완결（v1.10.0+） |
+| 폼 PDF 번역에서 원본 기준선을 유지하고 열 너비를 안전하게 제어하고 싶다 | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — 영역별 `RegionTextFitOptions`: `BaselinePolicy::PreserveSourceBaseline`으로 원래 행 위치 유지, `WidthPolicy::SourceLineWidth`로 레이블이 값 열로 확장되는 것 방지; `RegionTextFitOptions::for_role(&region.role)`로 역할별 기본값 취득; `&[]` 전달로 모든 영역에 자동 적용（v1.11.0+） |
+| 영역이 레이블, 값, 제목, 본문 중 어느 것인지 알고 싶다 | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`; `extract_layout_regions`이 열 위치, 행 인접 셀, 페이지 경계 근접도를 기반으로 자동 할당（v1.11.0+） |
 
 ---
 

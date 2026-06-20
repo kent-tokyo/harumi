@@ -3909,6 +3909,8 @@ pub fn extract_layout_regions(
                 let top_y = source_bbox[1] + source_bbox[3];
                 let bot_y = source_bbox[1];
                 if page_height > 0.0
+                    && top_y.is_finite()
+                    && bot_y.is_finite()
                     && (top_y > page_height * 0.92 || bot_y < page_height * 0.08)
                 {
                     LayoutRegionRole::HeaderFooter

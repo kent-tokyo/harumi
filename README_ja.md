@@ -131,6 +131,8 @@ doc.save("searchable.pdf")?;
 | 配置予定テキストボックス同士の衝突を検出したい | `detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision>` — O(n²) の AABB 重複検出。各 `Collision` に `index_a`・`index_b`・`overlap_rect` を持つ。`fit_text_to_box` の `used_rect` と組み合わせ、コンテントストリーム変更前に衝突をプリフライト検査できる（v1.9.0+） |
 | 置換テキストに元グリフ幅ではなく列全体の幅を使いたい | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — 各セルを `source_bbox`（グリフ境界）と `usable_rect`（利用可能領域）の両方付きで返す。`usable_rect.width` は次の列の開始位置まで伸びるため、翻訳文は元ラベル幅ではなく実際の列幅を使えるようになる（v1.10.0+） |
 | レイアウトセルへの翻訳文配置をまとめて計画したい | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 各置換文を `region.usable_rect` に `fit_text_to_box` で収め、領域間の衝突を検出し、`RegionFitPlan { region, fit, collisions }` を返す。レイアウト・フィット・衝突検出を1回のパスで完結（v1.10.0+） |
+| 帳票 PDF 翻訳でベースラインを保持し列幅を安全に扱いたい | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — `RegionTextFitOptions` の `BaselinePolicy::PreserveSourceBaseline` で元ベースラインを維持し、`WidthPolicy::SourceLineWidth` でラベル列が値列に侵食しないよう制御。`RegionTextFitOptions::for_role(&region.role)` でロール別デフォルト取得、`&[]` で全領域に自動適用（v1.11.0+） |
+| 領域がラベル・値・見出し・本文のどれかを知りたい | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`。`extract_layout_regions` が列位置・行シブリング・ページ端近接から自動割り当て（v1.11.0+） |
 
 ---
 

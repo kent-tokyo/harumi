@@ -11,6 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.11.0] — 2026-06-20
+
+### Added (harumi)
+
+- **`LayoutRegionRole`** (`src/extract.rs`) —
+  Functional role assigned by `extract_layout_regions` based on column position, row siblings,
+  and proximity to the page edge: `LeftLabel` (col 0 with a higher-col sibling), `RightValue`
+  (col ≥ 1 with a col-0 sibling), `ParagraphBody`, `SectionHeading`, `HeaderFooter`, `Unknown`.
+
+- **`LayoutRegion::role`** (`src/extract.rs`) —
+  New field added to `LayoutRegion` (`#[non_exhaustive]` — semver-safe additive change).
+
+- **`BaselinePolicy`** (`src/extract.rs`) —
+  Vertical placement strategy for `RegionTextFitOptions`:
+  `PreserveSourceBaseline` (fits into source glyph rect — safest for dense forms),
+  `TopAlignToRegion` (v1.10 behaviour), `CenterInRegion`.
+
+- **`WidthPolicy`** (`src/extract.rs`) —
+  Horizontal width strategy: `SourceLineWidth`, `RegionUsableWidth`, `ClampToColumn`,
+  `ClampBeforeNextRegion` (extends to just before the nearest same-row sibling).
+
+- **`RegionTextFitOptions`** (`src/extract.rs`) —
+  Per-region fitting policy: `baseline`, `width`, `min_font_size`, `max_lines`,
+  `preserve_source_x`.  `RegionTextFitOptions::for_role(&role)` returns sensible defaults:
+  `LeftLabel` → preserve source baseline + source width;
+  `RightValue` / `SectionHeading` → preserve baseline + clamp to column;
+  `ParagraphBody` → top-align + full usable width.
+
+- **`Document::plan_text_for_regions_with_policy(regions, replacements, font, options)`**
+  (`src/document/mod.rs`) —
+  Like `plan_text_for_regions` but with per-region `RegionTextFitOptions`.
+  If `options.len() < regions.len()`, the remainder use `RegionTextFitOptions::for_role`.
+  Pass `&[]` to use role-based defaults for all regions automatically.
+
+### Fixed (harumi)
+
+- **NaN guard in `HeaderFooter` role detection** (`src/extract.rs`) —
+  `top_y` and `bot_y` are now checked with `.is_finite()` before the page-edge comparison,
+  preventing non-finite `source_bbox` values (from degenerate cells) from producing incorrect
+  `HeaderFooter` classification via `NaN > number` / `Infinity > number` comparisons.
+
+---
+
 ## [1.10.0] — 2026-06-20
 
 ### Added (harumi)
