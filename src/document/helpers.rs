@@ -664,18 +664,18 @@ pub(super) fn plan_text_fit(
     initial_font_size: f32,
     opts: &super::types::BoxFitOptions,
 ) -> super::types::FitResult {
-    use super::types::{FitResult, OverflowPolicy};
+    use super::types::{FitResult, OverflowPolicy, PlacementStatus};
 
     let [rx, ry, rw, rh] = rect;
     let fs0 = initial_font_size.max(opts.min_font_size.max(0.1));
+    let min_fs = opts.min_font_size.max(0.1);
 
     let line_height = |fs: f32| fs * 1.2_f32;
 
-    let (lines, fs) = match opts.overflow {
+    let (lines, fs, status) = match opts.overflow {
         OverflowPolicy::Shrink => {
             // No wrap — shrink until single line fits in width.
             let mut fs = fs0;
-            let min_fs = opts.min_font_size.max(0.1);
             loop {
                 let w = text_width_with_face(text, face, fs);
                 if w <= rw || fs <= min_fs {
@@ -683,10 +683,14 @@ pub(super) fn plan_text_fit(
                 }
                 fs = (fs * rw / w).max(min_fs);
             }
-            (vec![text.to_owned()], fs)
+            let status = if fs < fs0 {
+                if fs <= min_fs { PlacementStatus::ShrunkToMin } else { PlacementStatus::Shrunk }
+            } else {
+                PlacementStatus::Ok
+            };
+            (vec![text.to_owned()], fs, status)
         }
         OverflowPolicy::WrapThenShrink => {
-            let min_fs = opts.min_font_size.max(0.1);
             let mut fs = fs0;
             let mut lines = if opts.wrap {
                 wrap_paragraph(text, face, fs, rw)
@@ -707,7 +711,12 @@ pub(super) fn plan_text_fit(
                     vec![text.to_owned()]
                 };
             }
-            (lines, fs)
+            let status = if fs < fs0 {
+                if fs <= min_fs { PlacementStatus::ShrunkToMin } else { PlacementStatus::Shrunk }
+            } else {
+                PlacementStatus::Ok
+            };
+            (lines, fs, status)
         }
         OverflowPolicy::Truncate => {
             let lines = if opts.wrap {
@@ -715,6 +724,7 @@ pub(super) fn plan_text_fit(
             } else {
                 vec![text.to_owned()]
             };
+            let original_count = lines.len();
             let lh = line_height(fs0);
             let max_by_height = if lh > 0.0 && rh > 0.0 {
                 (rh / lh).floor() as usize
@@ -723,7 +733,12 @@ pub(super) fn plan_text_fit(
             };
             let cap = opts.max_lines.unwrap_or(usize::MAX).min(max_by_height);
             let truncated: Vec<String> = lines.into_iter().take(cap.max(1)).collect();
-            (truncated, fs0)
+            let status = if truncated.len() < original_count {
+                PlacementStatus::Truncated
+            } else {
+                PlacementStatus::Ok
+            };
+            (truncated, fs0, status)
         }
         OverflowPolicy::Report => {
             let lines = if opts.wrap {
@@ -736,7 +751,8 @@ pub(super) fn plan_text_fit(
             } else {
                 lines
             };
-            (lines, fs0)
+            // Status is determined after overflow flags are computed below.
+            (lines, fs0, PlacementStatus::Ok)
         }
     };
 
@@ -755,7 +771,16 @@ pub(super) fn plan_text_fit(
         lines.iter().any(|l| text_width_with_face(l, face, fs) > rw);
     let overflow_vertical = used_h > rh;
 
-    FitResult { lines, font_size: fs, used_rect, overflow_horizontal, overflow_vertical }
+    // For Report policy, finalize status based on overflow flags.
+    let status = if matches!(opts.overflow, OverflowPolicy::Report)
+        && (overflow_horizontal || overflow_vertical)
+    {
+        PlacementStatus::Overflow
+    } else {
+        status
+    };
+
+    FitResult { lines, font_size: fs, used_rect, overflow_horizontal, overflow_vertical, status }
 }
 
 pub(super) fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {

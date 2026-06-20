@@ -1,9 +1,10 @@
 //! Integration tests for Document::fit_text_to_box, Document::measure_text,
-//! detect_collisions (issue #20), and classify_collisions (issue #23).
+//! detect_collisions (issue #20), classify_collisions (issue #23),
+//! and layout quality primitives (issue #24).
 
 use harumi::{
-    BoxFitOptions, ClassifiedCollision, CollisionKind, Document, OverflowPolicy, PlacedBox,
-    classify_collisions, detect_collisions,
+    BoxFitOptions, ClassifiedCollision, CollisionKind, Document, OverflowPolicy, PageFitSummary,
+    PlacedBox, PlacementStatus, classify_collisions, detect_collisions,
 };
 
 fn noto_bytes() -> Vec<u8> {
@@ -334,4 +335,143 @@ fn classify_collisions_public_api_smoke() {
     // Raw collision is still accessible
     assert_eq!(classified[0].collision.index_a, 0);
     assert_eq!(classified[0].collision.index_b, 1);
+}
+
+// ---------------------------------------------------------------------------
+// overlap_area (issue #24)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn detect_collisions_reports_overlap_area() {
+    // Box A: [0, 0, 100, 50]  Box B: [80, 10, 100, 50]
+    // Intersection x: [80, 100] = 20 pt  y: [10, 50] = 40 pt  area = 800 pt²
+    let boxes = vec![
+        PlacedBox::new([0.0, 0.0, 100.0, 50.0]),
+        PlacedBox::new([80.0, 10.0, 100.0, 50.0]),
+    ];
+    let collisions = detect_collisions(&boxes);
+    assert_eq!(collisions.len(), 1);
+    let area = collisions[0].overlap_area;
+    assert!((area - 800.0).abs() < 0.5, "expected ~800 pt², got {area}");
+    // overlap_area must equal overlap_rect[2] * overlap_rect[3]
+    let [_, _, ow, oh] = collisions[0].overlap_rect;
+    assert!((area - ow * oh).abs() < 1e-4);
+}
+
+#[test]
+fn no_collision_has_zero_overlap_area() {
+    let boxes = vec![
+        PlacedBox::new([0.0, 0.0, 50.0, 50.0]),
+        PlacedBox::new([100.0, 0.0, 50.0, 50.0]),
+    ];
+    assert!(detect_collisions(&boxes).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// PlacementStatus (issue #24)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn placement_status_ok_when_text_fits() {
+    let (doc, font) = doc_with_font();
+    let result = doc
+        .fit_text_to_box("Hi", font, [0.0, 0.0, 500.0, 100.0], 12.0, BoxFitOptions::default())
+        .unwrap();
+    assert_eq!(result.status, PlacementStatus::Ok);
+}
+
+#[test]
+fn placement_status_shrunk_when_font_reduced() {
+    let (doc, font) = doc_with_font();
+    // Very wide single-line text forced into a tiny box → Shrink policy should shrink
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Shrink;
+    opts.min_font_size = 1.0;
+    // "A" repeated enough times to force shrinking at 48pt in a 50pt wide box
+    let text = "A".repeat(50);
+    let result = doc.fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 48.0, opts).unwrap();
+    assert!(
+        matches!(result.status, PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin),
+        "expected Shrunk or ShrunkToMin, got {:?}",
+        result.status
+    );
+    assert!(result.font_size < 48.0);
+}
+
+#[test]
+fn placement_status_shrunk_to_min_at_floor() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Shrink;
+    opts.min_font_size = 20.0;
+    // Use a very wide text in a tiny box so shrinking must stop at min_font_size
+    let text = "WWWWWWWWWWWWWWWWWWWWWWWW";
+    let result = doc.fit_text_to_box(text, font, [0.0, 0.0, 10.0, 100.0], 48.0, opts).unwrap();
+    assert_eq!(result.status, PlacementStatus::ShrunkToMin);
+    assert!((result.font_size - 20.0).abs() < 0.5);
+}
+
+#[test]
+fn placement_status_overflow_with_report_policy() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Report;
+    opts.wrap = false;
+    let text = "A".repeat(200);
+    let result = doc.fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 12.0, opts).unwrap();
+    assert_eq!(result.status, PlacementStatus::Overflow);
+    assert!(result.overflow_horizontal);
+}
+
+#[test]
+fn placement_status_ok_with_report_policy_when_fits() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Report;
+    let result =
+        doc.fit_text_to_box("Hi", font, [0.0, 0.0, 500.0, 100.0], 12.0, opts).unwrap();
+    assert_eq!(result.status, PlacementStatus::Ok);
+}
+
+#[test]
+fn placement_status_truncated_when_lines_dropped() {
+    let (doc, font) = doc_with_font();
+    let mut opts = BoxFitOptions::default();
+    opts.overflow = OverflowPolicy::Truncate;
+    opts.max_lines = Some(1);
+    // Wide text in a narrow box forces wrapping into multiple lines; max_lines=1 truncates.
+    let text = "This is a long sentence that will definitely wrap into multiple lines when placed in a narrow box.";
+    let result = doc
+        .fit_text_to_box(text, font, [0.0, 0.0, 80.0, 1000.0], 12.0, opts)
+        .unwrap();
+    assert_eq!(result.status, PlacementStatus::Truncated, "lines: {:?}", result.lines);
+    assert_eq!(result.lines.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// PageFitSummary (issue #24)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn page_fit_summary_empty_plans() {
+    let summary = PageFitSummary::from_plans(&[]);
+    assert_eq!(summary.overflow_count, 0);
+    assert_eq!(summary.collision_count, 0);
+    assert_eq!(summary.shrunk_count, 0);
+    assert_eq!(summary.worst_overlap_area, 0.0);
+    assert!(summary.worst_overlap_rect.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// debug overlay (issue #24, draw feature)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "draw")]
+#[test]
+fn debug_overlay_no_error_on_empty_plans() {
+    use harumi::DebugOverlayOptions;
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    doc.page(1).unwrap().add_fit_debug_overlay(&[], DebugOverlayOptions::default()).unwrap();
+    let bytes = doc.save_to_bytes().unwrap();
+    assert!(!bytes.is_empty());
 }

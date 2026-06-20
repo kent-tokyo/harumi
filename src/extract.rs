@@ -313,6 +313,11 @@ pub struct Collision {
     pub index_b: usize,
     /// The intersection rectangle `[x, y, width, height]`.
     pub overlap_rect: [f32; 4],
+    /// Pre-computed area of [`overlap_rect`](Collision::overlap_rect) in PDF points².
+    ///
+    /// Equals `overlap_rect[2] * overlap_rect[3]`.  Callers can use this directly
+    /// without recomputing to decide collision severity.
+    pub overlap_area: f32,
 }
 
 /// Detect pairwise axis-aligned bounding-box overlaps between `boxes`.
@@ -335,6 +340,7 @@ pub struct Collision {
 /// assert_eq!(collisions.len(), 1);
 /// assert_eq!(collisions[0].index_a, 0);
 /// assert_eq!(collisions[0].index_b, 1);
+/// assert!(collisions[0].overlap_area > 0.0);
 /// ```
 pub fn detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision> {
     let mut out = Vec::new();
@@ -351,10 +357,13 @@ pub fn detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision> {
             let ox2 = ax2.min(bx2);
             let oy2 = ay2.min(by2);
             if ox2 > ox && oy2 > oy {
+                let ow = ox2 - ox;
+                let oh = oy2 - oy;
                 out.push(Collision {
                     index_a: i,
                     index_b: j,
-                    overlap_rect: [ox, oy, ox2 - ox, oy2 - oy],
+                    overlap_rect: [ox, oy, ow, oh],
+                    overlap_area: ow * oh,
                 });
             }
         }
@@ -3767,6 +3776,86 @@ pub struct RegionFitPlan {
     /// in the same planning batch.  Each entry carries the raw geometric [`Collision`]
     /// plus a [`CollisionKind`] and the roles of the two colliding regions.
     pub collisions: Vec<ClassifiedCollision>,
+}
+
+/// Page-level aggregate quality summary derived from a batch of [`RegionFitPlan`]s.
+///
+/// Build one with [`PageFitSummary::from_plans`] after calling
+/// [`Document::plan_text_for_regions`] or
+/// [`Document::plan_text_for_regions_with_policy`].  Use the summary to decide
+/// whether a translated page meets quality gates before writing the final PDF.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use harumi::{Document, PageFitSummary};
+/// # fn main() -> harumi::Result<()> {
+/// # let doc = Document::from_bytes(&[])?;
+/// # let plans = vec![];
+/// let summary = PageFitSummary::from_plans(&plans);
+/// if summary.collision_count > 0 || summary.overflow_count > 0 {
+///     // inspect plans and adjust placement
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct PageFitSummary {
+    /// Number of regions where [`FitResult::overflow`] is `true`.
+    pub overflow_count: usize,
+    /// Number of unique classified collisions across all regions in the batch.
+    ///
+    /// Each `(index_a, index_b)` pair is counted once, even if it appears in
+    /// multiple `RegionFitPlan.collisions` lists.
+    pub collision_count: usize,
+    /// Number of regions where [`FitResult::status`] is [`PlacementStatus::Shrunk`]
+    /// or [`PlacementStatus::ShrunkToMin`].
+    pub shrunk_count: usize,
+    /// The largest [`Collision::overlap_area`] across all unique collisions, or `0.0`
+    /// if there are none.
+    pub worst_overlap_area: f32,
+    /// The [`Collision::overlap_rect`] of the worst (largest-area) collision,
+    /// or `None` if there are no collisions.
+    pub worst_overlap_rect: Option<[f32; 4]>,
+}
+
+impl PageFitSummary {
+    /// Compute a summary from a slice of [`RegionFitPlan`]s returned by a planning call.
+    pub fn from_plans(plans: &[RegionFitPlan]) -> Self {
+        use crate::document::PlacementStatus;
+        use std::collections::HashSet;
+
+        let overflow_count = plans.iter().filter(|p| p.fit.overflow()).count();
+        let shrunk_count = plans
+            .iter()
+            .filter(|p| {
+                matches!(p.fit.status, PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin)
+            })
+            .count();
+
+        let mut seen: HashSet<(usize, usize)> = HashSet::new();
+        let mut worst_area = 0.0_f32;
+        let mut worst_rect: Option<[f32; 4]> = None;
+
+        for plan in plans {
+            for cc in &plan.collisions {
+                let key = (cc.collision.index_a, cc.collision.index_b);
+                if seen.insert(key) && cc.collision.overlap_area > worst_area {
+                    worst_area = cc.collision.overlap_area;
+                    worst_rect = Some(cc.collision.overlap_rect);
+                }
+            }
+        }
+
+        Self {
+            overflow_count,
+            collision_count: seen.len(),
+            shrunk_count,
+            worst_overlap_area: worst_area,
+            worst_overlap_rect: worst_rect,
+        }
+    }
 }
 
 /// Functional role of a [`LayoutRegion`] in a translation or editing workflow.

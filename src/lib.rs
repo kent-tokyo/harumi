@@ -106,20 +106,23 @@ pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PageHandle,
-    PdfMetadata, ReplaceOptions, TextFieldOptions, TextRun, VerticalAlign, calculate_text_width,
-    font_covers_char, glyph_advance_pt, wrap_paragraph,
+    PdfMetadata, PlacementStatus, ReplaceOptions, TextFieldOptions, TextRun, VerticalAlign,
+    calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{
     BaselinePolicy, ClassifiedCollision, Collision, CollisionKind, ColumnZone, ExtractionWarning,
     GroupingStrategy, LayoutRegion, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
-    PlacedBox, RegionFitPlan, RegionTextFitOptions, TableCell, TextFragment, TextGroup,
-    WarningKind, WidthPolicy,
+    PageFitSummary, PlacedBox, RegionFitPlan, RegionTextFitOptions, TableCell, TextFragment,
+    TextGroup, WarningKind, WidthPolicy,
     classify_collisions, detect_collisions, detect_text_columns, extract_layout_regions,
     extract_table_cells, group_text_fragments, merge_short_cjk_tails, sort_by_reading_order,
     text_fragment_bounds,
 };
 pub use font::FontHandle;
+
+#[cfg(feature = "draw")]
+pub use document::DebugOverlayOptions;
 
 #[cfg(feature = "image")]
 pub use extract_image::{PageImage, PageImageFormat};

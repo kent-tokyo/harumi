@@ -1646,7 +1646,7 @@ fn make_region_for_classify(
 }
 
 fn make_collision_for_classify(index_a: usize, index_b: usize) -> Collision {
-    Collision { index_a, index_b, overlap_rect: [0.0, 0.0, 10.0, 10.0] }
+    Collision { index_a, index_b, overlap_rect: [0.0, 0.0, 10.0, 10.0], overlap_area: 100.0 }
 }
 
 #[test]

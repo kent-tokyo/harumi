@@ -5,10 +5,13 @@ mod page;
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PdfMetadata,
-    ReplaceOptions, TextFieldOptions, TextRun,
+    PlacementStatus, ReplaceOptions, TextFieldOptions, TextRun,
 };
 pub use page::{PageHandle, VerticalAlign};
 pub use helpers::{calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph};
+
+#[cfg(feature = "draw")]
+pub use page::DebugOverlayOptions;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},

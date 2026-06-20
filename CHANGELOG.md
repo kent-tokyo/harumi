@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.13.0] — 2026-06-21
+
+### Added (harumi)
+
+- **`Collision::overlap_area`** (`src/extract.rs`) —
+  Pre-computed area of `overlap_rect` in PDF points².  Callers can use this
+  directly without recomputing to assess collision severity or rank overlaps.
+  `#[non_exhaustive]` — additive, not breaking.
+
+- **`PlacementStatus`** enum (`src/document/types.rs`) —
+  High-level outcome of a `fit_text_to_box` call: `Ok`, `Shrunk`, `ShrunkToMin`,
+  `Overflow` (only with `OverflowPolicy::Report`), `Truncated` (only with
+  `OverflowPolicy::Truncate`).  Lets callers decide whether to accept a placement,
+  retry with different options, or fall back to shorter text without re-examining
+  all overflow flags.
+
+- **`FitResult::status`** (`src/document/types.rs`) —
+  New field of type `PlacementStatus` on `FitResult`.  `#[non_exhaustive]` —
+  additive, not breaking.
+
+- **`PageFitSummary`** (`src/extract.rs`) —
+  Page-level aggregate quality summary derived from a batch of `RegionFitPlan`s via
+  `PageFitSummary::from_plans`.  Fields: `overflow_count`, `collision_count`,
+  `shrunk_count`, `worst_overlap_area`, `worst_overlap_rect`.  Use as a quality
+  gate before writing the final translated PDF.
+
+- **`DebugOverlayOptions`** and **`PageHandle::add_fit_debug_overlay`** (`src/document/page.rs`,
+  `draw` feature) —
+  Draws colored stroke rectangles on a page to visualise source boxes, planned
+  placement boxes, and collision overlap regions from a set of `RegionFitPlan`s.
+  Useful for diagnosing layout quality of translated PDFs without an external PDF
+  viewer.
+
+### Fixes (issue #24)
+
+- Callers can now measure collision severity (`overlap_area`), query placement
+  outcomes (`PlacementStatus`), and get page-level layout diagnostics
+  (`PageFitSummary`) — eliminating the need to reimplement those heuristics
+  outside harumi.
+
+---
+
 ## [1.12.0] — 2026-06-21
 
 ### Added (harumi)

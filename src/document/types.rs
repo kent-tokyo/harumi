@@ -318,6 +318,27 @@ pub enum OverflowPolicy {
     Report,
 }
 
+/// Outcome of a [`Document::fit_text_to_box`] placement.
+///
+/// Returned as [`FitResult::status`].  Callers can use this to decide whether
+/// to accept the placement, try a different policy, or fall back to a shorter text.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlacementStatus {
+    /// Text fit inside the rectangle without any adjustments.
+    Ok,
+    /// Font size was reduced from the requested value but remains above
+    /// [`BoxFitOptions::min_font_size`].
+    Shrunk,
+    /// Font size was reduced all the way to [`BoxFitOptions::min_font_size`] and
+    /// the text may still overflow.
+    ShrunkToMin,
+    /// Text overflows the rectangle (only possible with [`OverflowPolicy::Report`]).
+    Overflow,
+    /// One or more lines were dropped (only possible with [`OverflowPolicy::Truncate`]).
+    Truncated,
+}
+
 /// Result of [`Document::fit_text_to_box`].
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -335,6 +356,11 @@ pub struct FitResult {
     pub overflow_horizontal: bool,
     /// `true` if the total text height exceeds the requested rectangle height.
     pub overflow_vertical: bool,
+    /// High-level outcome of the fitting operation.
+    ///
+    /// Use this to decide whether to accept the placement, retry with different options,
+    /// or fall back to a shorter text.  See [`PlacementStatus`] for the full decision tree.
+    pub status: PlacementStatus,
 }
 
 impl FitResult {

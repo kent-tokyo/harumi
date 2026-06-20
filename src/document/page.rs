@@ -1902,8 +1902,42 @@ impl<'doc> PageHandle<'doc> {
 }
 
 // ---------------------------------------------------------------------------
-// draw feature: add_rect, add_line
+// draw feature: DebugOverlayOptions, add_rect, add_fit_debug_overlay, …
 // ---------------------------------------------------------------------------
+
+/// Display options for [`PageHandle::add_fit_debug_overlay`].
+///
+/// Each color is `Some([r, g, b])` in `0.0..=1.0`.  Setting a field to `None`
+/// skips that overlay layer entirely.
+#[cfg(feature = "draw")]
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct DebugOverlayOptions {
+    /// Stroke color for the source text bounding box (`region.source_bbox`).
+    /// Default: blue `[0.2, 0.6, 1.0]`.
+    pub source_box_color: Option<Color>,
+    /// Stroke color for the planned placement box (`fit.used_rect`).
+    /// Default: green `[0.1, 0.8, 0.1]`.
+    pub placed_box_color: Option<Color>,
+    /// Stroke color for collision overlap rectangles.
+    /// Default: red `[1.0, 0.1, 0.1]`.
+    pub collision_box_color: Option<Color>,
+    /// Stroke line width in PDF points.  Default: `0.5`.
+    pub line_width: f32,
+}
+
+#[cfg(feature = "draw")]
+impl Default for DebugOverlayOptions {
+    fn default() -> Self {
+        Self {
+            source_box_color: Some(Color::Rgb([0.2, 0.6, 1.0])),
+            placed_box_color: Some(Color::Rgb([0.1, 0.8, 0.1])),
+            collision_box_color: Some(Color::Rgb([1.0, 0.1, 0.1])),
+            line_width: 0.5,
+        }
+    }
+}
+
 #[cfg(feature = "draw")]
 impl<'doc> PageHandle<'doc> {
     /// Overlays a filled rectangle on this page.
@@ -2297,6 +2331,71 @@ impl<'doc> PageHandle<'doc> {
                 italic: false,
             });
         }
+        Ok(())
+    }
+
+    /// Draws debug overlay rectangles on this page showing source boxes,
+    /// placement boxes, and collision rectangles from a set of [`RegionFitPlan`]s.
+    ///
+    /// Useful for visually inspecting layout quality after a planning pass —
+    /// e.g. load the original PDF, call `plan_text_for_regions_with_policy`, then
+    /// call this method on the same page to produce an annotated copy.
+    ///
+    /// The overlay respects `opts.source_box_color`, `opts.placed_box_color`, and
+    /// `opts.collision_box_color`.  Set any of them to `None` to skip that layer.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::{Document, DebugOverlayOptions};
+    /// # fn main() -> harumi::Result<()> {
+    /// # let mut doc = Document::from_bytes(&[])?;
+    /// # let font = doc.embed_font(&[])?;
+    /// # let regions = vec![];
+    /// # let replacements = vec![];
+    /// let plans = doc.plan_text_for_regions_with_policy(&regions, &replacements, font, &[])?;
+    /// doc.page(1)?.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())?;
+    /// doc.save("debug.pdf")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn add_fit_debug_overlay(
+        &mut self,
+        fit_plans: &[crate::RegionFitPlan],
+        opts: DebugOverlayOptions,
+    ) -> Result<()> {
+        let lw = opts.line_width;
+
+        for plan in fit_plans {
+            if let Some(color) = opts.source_box_color {
+                let r = plan.region.source_bbox;
+                if r[2] > 0.0 && r[3] > 0.0 {
+                    self.add_rect_stroke(r, color, lw, 1.0)?;
+                }
+            }
+            if let Some(color) = opts.placed_box_color {
+                let r = plan.fit.used_rect;
+                if r[2] > 0.0 && r[3] > 0.0 {
+                    self.add_rect_stroke(r, color, lw, 1.0)?;
+                }
+            }
+        }
+
+        // Draw collision rects — deduplicate by (index_a, index_b) across plans.
+        if let Some(color) = opts.collision_box_color {
+            let mut seen = std::collections::HashSet::new();
+            for plan in fit_plans {
+                for cc in &plan.collisions {
+                    let key = (cc.collision.index_a, cc.collision.index_b);
+                    if seen.insert(key) {
+                        let r = cc.collision.overlap_rect;
+                        if r[2] > 0.0 && r[3] > 0.0 {
+                            self.add_rect_stroke(r, color, lw, 1.0)?;
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
