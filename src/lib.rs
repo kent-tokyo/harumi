@@ -111,11 +111,13 @@ pub use document::{
 };
 pub use error::{Error, Result};
 pub use extract::{
-    BaselinePolicy, Collision, ColumnZone, ExtractionWarning, GroupingStrategy, LayoutRegion,
-    LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole, PlacedBox, RegionFitPlan,
-    RegionTextFitOptions, TableCell, TextFragment, TextGroup, WarningKind, WidthPolicy,
-    detect_collisions, detect_text_columns, extract_layout_regions, extract_table_cells,
-    group_text_fragments, merge_short_cjk_tails, sort_by_reading_order, text_fragment_bounds,
+    BaselinePolicy, ClassifiedCollision, Collision, CollisionKind, ColumnZone, ExtractionWarning,
+    GroupingStrategy, LayoutRegion, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
+    PlacedBox, RegionFitPlan, RegionTextFitOptions, TableCell, TextFragment, TextGroup,
+    WarningKind, WidthPolicy,
+    classify_collisions, detect_collisions, detect_text_columns, extract_layout_regions,
+    extract_table_cells, group_text_fragments, merge_short_cjk_tails, sort_by_reading_order,
+    text_fragment_bounds,
 };
 pub use font::FontHandle;
 

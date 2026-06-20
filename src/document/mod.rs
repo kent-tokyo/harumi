@@ -1867,15 +1867,16 @@ impl Document {
         let placed: Vec<crate::extract::PlacedBox> =
             fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
         let all_collisions = crate::extract::detect_collisions(&placed);
+        let all_classified = crate::extract::classify_collisions(regions, &all_collisions);
 
         let plans = pairs
             .into_iter()
             .enumerate()
             .zip(fits)
             .map(|((i, (region, _)), fit)| {
-                let collisions = all_collisions
+                let collisions = all_classified
                     .iter()
-                    .filter(|c| c.index_a == i || c.index_b == i)
+                    .filter(|cc| cc.collision.index_a == i || cc.collision.index_b == i)
                     .cloned()
                     .collect();
                 crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }
@@ -2004,15 +2005,16 @@ impl Document {
         let placed: Vec<crate::extract::PlacedBox> =
             fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
         let all_collisions = crate::extract::detect_collisions(&placed);
+        let all_classified = crate::extract::classify_collisions(regions, &all_collisions);
 
         let plans = pairs
             .into_iter()
             .enumerate()
             .zip(fits)
             .map(|((i, (region, _)), fit)| {
-                let collisions = all_collisions
+                let collisions = all_classified
                     .iter()
-                    .filter(|c| c.index_a == i || c.index_b == i)
+                    .filter(|cc| cc.collision.index_a == i || cc.collision.index_b == i)
                     .cloned()
                     .collect();
                 crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }

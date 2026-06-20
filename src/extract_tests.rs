@@ -1622,3 +1622,136 @@ fn tc_char_spacing_shifts_x_cursor() {
         "Tc=10 should push B.x at least 10 pt further right; no_tc={b_x_no_tc}, with_tc={b_x_with_tc}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// classify_collisions — unit tests
+// (in-crate: struct literals are legal here via `use super::*`)
+// ---------------------------------------------------------------------------
+
+fn make_region_for_classify(
+    row: Option<usize>,
+    col: Option<usize>,
+    role: LayoutRegionRole,
+) -> LayoutRegion {
+    LayoutRegion {
+        kind: LayoutRegionKind::TableCell,
+        role,
+        row,
+        col,
+        text: String::new(),
+        source_bbox: [0.0, 0.0, 50.0, 10.0],
+        usable_rect: [0.0, 0.0, 50.0, 10.0],
+        fragments: vec![],
+    }
+}
+
+fn make_collision_for_classify(index_a: usize, index_b: usize) -> Collision {
+    Collision { index_a, index_b, overlap_rect: [0.0, 0.0, 10.0, 10.0] }
+}
+
+#[test]
+fn classify_same_region() {
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::LeftLabel),
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::RightValue),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].kind, CollisionKind::SameRegion);
+}
+
+#[test]
+fn classify_same_row() {
+    let regions = vec![
+        make_region_for_classify(Some(2), Some(0), LayoutRegionRole::LeftLabel),
+        make_region_for_classify(Some(2), Some(1), LayoutRegionRole::RightValue),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::SameRow);
+}
+
+#[test]
+fn classify_adjacent_row() {
+    let regions = vec![
+        make_region_for_classify(Some(3), Some(0), LayoutRegionRole::Unknown),
+        make_region_for_classify(Some(4), Some(0), LayoutRegionRole::Unknown),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::AdjacentRow);
+}
+
+#[test]
+fn classify_adjacent_row_reversed_indices() {
+    let regions = vec![
+        make_region_for_classify(Some(5), Some(0), LayoutRegionRole::Unknown),
+        make_region_for_classify(Some(4), Some(0), LayoutRegionRole::Unknown),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::AdjacentRow);
+}
+
+#[test]
+fn classify_same_column() {
+    let regions = vec![
+        make_region_for_classify(Some(1), Some(1), LayoutRegionRole::Unknown),
+        make_region_for_classify(Some(3), Some(1), LayoutRegionRole::Unknown),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::SameColumn);
+}
+
+#[test]
+fn classify_header_footer_trumps_same_row() {
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::HeaderFooter),
+        make_region_for_classify(Some(0), Some(1), LayoutRegionRole::RightValue),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::HeaderFooter);
+}
+
+#[test]
+fn classify_header_footer_on_index_b() {
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown),
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::HeaderFooter),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::HeaderFooter);
+}
+
+#[test]
+fn classify_unknown_no_row_col() {
+    let regions = vec![
+        make_region_for_classify(None, None, LayoutRegionRole::ParagraphBody),
+        make_region_for_classify(None, None, LayoutRegionRole::ParagraphBody),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].kind, CollisionKind::Unknown);
+}
+
+#[test]
+fn classify_out_of_bounds_index_yields_unknown() {
+    let regions = vec![make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown)];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 99)]);
+    assert_eq!(result[0].kind, CollisionKind::Unknown);
+    assert!(result[0].region_b.is_none());
+}
+
+#[test]
+fn classify_region_roles_propagated() {
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::LeftLabel),
+        make_region_for_classify(Some(1), Some(0), LayoutRegionRole::RightValue),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].region_a, Some(LayoutRegionRole::LeftLabel));
+    assert_eq!(result[0].region_b, Some(LayoutRegionRole::RightValue));
+}
+
+#[test]
+fn classify_empty_collisions_returns_empty() {
+    let regions = vec![make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown)];
+    let result = classify_collisions(&regions, &[]);
+    assert!(result.is_empty());
+}

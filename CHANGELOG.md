@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.12.0] — 2026-06-21
+
+### Added (harumi)
+
+- **`CollisionKind`** (`src/extract.rs`) —
+  Structural classification of the relationship between two overlapping `LayoutRegion`s:
+  `SameRegion` (same row and col), `SameRow`, `AdjacentRow`, `SameColumn`,
+  `HeaderFooter` (either region has that role), `Unknown`.
+  `#[non_exhaustive]` — future variants are semver-safe additions.
+
+- **`ClassifiedCollision`** (`src/extract.rs`) —
+  Wraps a raw `Collision` with a `CollisionKind` and the `LayoutRegionRole`
+  of each side (`region_a`, `region_b`).  Roles are `None` when the collision
+  index is out of range.
+
+- **`classify_collisions(regions: &[LayoutRegion], collisions: &[Collision]) -> Vec<ClassifiedCollision>`**
+  (`src/extract.rs`) —
+  Annotates each raw collision with structural context.  Classification priority:
+  `HeaderFooter` (role check) → `SameRegion` → `SameRow` → `AdjacentRow` → `SameColumn` → `Unknown`.
+  Downstream callers can use `CollisionKind` to decide whether to shrink, shorten, reflow,
+  or accept a placement — replacing ad-hoc structural heuristics outside harumi.
+
+### Changed (harumi)
+
+- **`RegionFitPlan.collisions`** — type changed from `Vec<Collision>` to
+  `Vec<ClassifiedCollision>`.  Callers that previously read `.collisions` as
+  `Vec<Collision>` must update: access `.collision` inside each entry for the raw geometry,
+  or use `.kind` / `.region_a` / `.region_b` for structural context.
+  Both `plan_text_for_regions` and `plan_text_for_regions_with_policy` now call
+  `classify_collisions` internally and return classified results.
+
+---
+
 ## [1.11.0] — 2026-06-20
 
 ### Added (harumi)

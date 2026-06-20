@@ -362,6 +362,141 @@ pub fn detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision> {
     out
 }
 
+/// Structural relationship between two overlapping [`LayoutRegion`]s.
+///
+/// Returned as part of [`ClassifiedCollision`] by [`classify_collisions`].
+///
+/// Classification priority (highest wins):
+/// 1. [`HeaderFooter`](CollisionKind::HeaderFooter) — either region has that role.
+/// 2. [`SameRegion`](CollisionKind::SameRegion) — same `row` **and** same `col`.
+/// 3. [`SameRow`](CollisionKind::SameRow) — same `row` index.
+/// 4. [`AdjacentRow`](CollisionKind::AdjacentRow) — rows differ by exactly 1.
+/// 5. [`SameColumn`](CollisionKind::SameColumn) — same `col`, different rows.
+/// 6. [`Unknown`](CollisionKind::Unknown) — insufficient info or out-of-range index.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollisionKind {
+    /// Both regions share the same `row` **and** the same `col` index —
+    /// they map to the same layout cell.
+    SameRegion,
+    /// Both regions share the same `row` index but differ in `col`.
+    SameRow,
+    /// The `row` indices differ by exactly 1.
+    AdjacentRow,
+    /// Both regions share the same `col` index but differ in `row`.
+    SameColumn,
+    /// At least one region has [`LayoutRegionRole::HeaderFooter`].
+    HeaderFooter,
+    /// Insufficient row/column information or out-of-range collision index.
+    Unknown,
+}
+
+/// A [`Collision`] annotated with the structural relationship between
+/// the two overlapping [`LayoutRegion`]s.
+///
+/// Returned by [`classify_collisions`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ClassifiedCollision {
+    /// The raw geometric collision (indices and overlap rect).
+    pub collision: Collision,
+    /// Structural classification of the overlap.
+    pub kind: CollisionKind,
+    /// Role of the region at `collision.index_a`, or `None` if out of bounds.
+    pub region_a: Option<LayoutRegionRole>,
+    /// Role of the region at `collision.index_b`, or `None` if out of bounds.
+    pub region_b: Option<LayoutRegionRole>,
+}
+
+/// Annotate each [`Collision`] with a [`CollisionKind`] by comparing the
+/// [`LayoutRegion`] metadata (row, col, role) at the collision indices.
+///
+/// `regions` must be the same slice that produced the [`PlacedBox`]es passed to
+/// [`detect_collisions`] — `collision.index_a` and `index_b` are indices into it.
+/// Out-of-range indices yield [`CollisionKind::Unknown`] with `region_a`/`region_b`
+/// set to `None`.
+///
+/// # Example
+///
+/// ```rust
+/// use harumi::{PlacedBox, detect_collisions, classify_collisions};
+///
+/// let boxes = vec![
+///     PlacedBox::new([0.0, 0.0, 100.0, 50.0]),
+///     PlacedBox::new([80.0, 0.0, 100.0, 50.0]),
+/// ];
+/// let collisions = detect_collisions(&boxes);
+/// // With an empty regions slice, indices are out of range → Unknown
+/// let classified = classify_collisions(&[], &collisions);
+/// assert_eq!(classified.len(), 1);
+/// use harumi::CollisionKind;
+/// assert_eq!(classified[0].kind, CollisionKind::Unknown);
+/// ```
+pub fn classify_collisions(
+    regions: &[LayoutRegion],
+    collisions: &[Collision],
+) -> Vec<ClassifiedCollision> {
+    collisions
+        .iter()
+        .map(|c| {
+            let ra = regions.get(c.index_a);
+            let rb = regions.get(c.index_b);
+            ClassifiedCollision {
+                collision: c.clone(),
+                kind: classify_collision_kind(ra, rb),
+                region_a: ra.map(|r| r.role.clone()),
+                region_b: rb.map(|r| r.role.clone()),
+            }
+        })
+        .collect()
+}
+
+fn classify_collision_kind(
+    ra: Option<&LayoutRegion>,
+    rb: Option<&LayoutRegion>,
+) -> CollisionKind {
+    use CollisionKind::*;
+
+    if matches!(ra.map(|r| &r.role), Some(LayoutRegionRole::HeaderFooter))
+        || matches!(rb.map(|r| &r.role), Some(LayoutRegionRole::HeaderFooter))
+    {
+        return HeaderFooter;
+    }
+
+    let row_a = ra.and_then(|r| r.row);
+    let row_b = rb.and_then(|r| r.row);
+    let col_a = ra.and_then(|r| r.col);
+    let col_b = rb.and_then(|r| r.col);
+
+    if let (Some(ra_row), Some(rb_row), Some(ra_col), Some(rb_col)) =
+        (row_a, row_b, col_a, col_b)
+        && ra_row == rb_row
+        && ra_col == rb_col
+    {
+        return SameRegion;
+    }
+
+    if let (Some(ra_row), Some(rb_row)) = (row_a, row_b)
+        && ra_row == rb_row
+    {
+        return SameRow;
+    }
+
+    if let (Some(ra_row), Some(rb_row)) = (row_a, row_b)
+        && ra_row.abs_diff(rb_row) == 1
+    {
+        return AdjacentRow;
+    }
+
+    if let (Some(ra_col), Some(rb_col)) = (col_a, col_b)
+        && ra_col == rb_col
+    {
+        return SameColumn;
+    }
+
+    Unknown
+}
+
 /// Sort text fragments by reading order: top-to-bottom, then left-to-right.
 ///
 /// Fragments returned by [`crate::Document::extract_text_runs`] are in content-stream order.
@@ -3628,9 +3763,10 @@ pub struct RegionFitPlan {
     pub region: LayoutRegion,
     /// How the replacement text lays out inside `region.usable_rect`.
     pub fit: crate::document::FitResult,
-    /// Collisions between this region's `fit.used_rect` and other regions in the
-    /// same planning batch.
-    pub collisions: Vec<Collision>,
+    /// Classified collisions between this region's `fit.used_rect` and other regions
+    /// in the same planning batch.  Each entry carries the raw geometric [`Collision`]
+    /// plus a [`CollisionKind`] and the roles of the two colliding regions.
+    pub collisions: Vec<ClassifiedCollision>,
 }
 
 /// Functional role of a [`LayoutRegion`] in a translation or editing workflow.

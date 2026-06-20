@@ -1,7 +1,10 @@
 //! Integration tests for Document::fit_text_to_box, Document::measure_text,
-//! and detect_collisions (issue #20).
+//! detect_collisions (issue #20), and classify_collisions (issue #23).
 
-use harumi::{BoxFitOptions, Document, OverflowPolicy, PlacedBox, detect_collisions};
+use harumi::{
+    BoxFitOptions, ClassifiedCollision, CollisionKind, Document, OverflowPolicy, PlacedBox,
+    classify_collisions, detect_collisions,
+};
 
 fn noto_bytes() -> Vec<u8> {
     std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf")
@@ -307,4 +310,28 @@ fn fit_results_can_be_checked_for_collision() {
         result_a.used_rect,
         result_b.used_rect
     );
+}
+
+// ---------------------------------------------------------------------------
+// classify_collisions — integration smoke (public API, issue #23)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn classify_collisions_public_api_smoke() {
+    let boxes = vec![
+        PlacedBox::new([0.0, 0.0, 100.0, 50.0]),
+        PlacedBox::new([80.0, 0.0, 100.0, 50.0]),
+    ];
+    let raw = detect_collisions(&boxes);
+    assert_eq!(raw.len(), 1);
+
+    // Empty regions slice: both indices are out of range → Unknown
+    let classified: Vec<ClassifiedCollision> = classify_collisions(&[], &raw);
+    assert_eq!(classified.len(), 1);
+    assert_eq!(classified[0].kind, CollisionKind::Unknown);
+    assert!(classified[0].region_a.is_none());
+    assert!(classified[0].region_b.is_none());
+    // Raw collision is still accessible
+    assert_eq!(classified[0].collision.index_a, 0);
+    assert_eq!(classified[0].collision.index_b, 1);
 }
