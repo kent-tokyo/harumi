@@ -586,11 +586,17 @@ pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
 /// Returns None if the font bytes are invalid or if any character is missing from the font.
 pub fn calculate_text_width(text: &str, font_bytes: &[u8], font_size: f32) -> Option<f32> {
     let face = ttf_parser::Face::parse(font_bytes, 0).ok()?;
-    let mut width = 0.0;
-    for ch in text.chars() {
-        width += glyph_advance_pt(&face, ch, font_size)?;
-    }
-    Some(width)
+    Some(text_width_with_face(text, &face, font_size))
+}
+
+/// Like [`calculate_text_width`] but reuses a pre-parsed [`ttf_parser::Face`].
+///
+/// Use this inside loops (e.g. shrink-to-fit) to avoid re-parsing the font on
+/// every iteration.  Characters missing from the font contribute 0 width.
+pub(super) fn text_width_with_face(text: &str, face: &ttf_parser::Face<'_>, font_size: f32) -> f32 {
+    text.chars()
+        .filter_map(|ch| glyph_advance_pt(face, ch, font_size))
+        .sum()
 }
 
 /// Greedy line-breaking for a single paragraph (no embedded newlines).

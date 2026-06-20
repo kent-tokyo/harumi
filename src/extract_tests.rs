@@ -1432,3 +1432,193 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
     assert!((b[2] - col0.width).abs() < 0.01);
     assert!((b[3] - col0.height).abs() < 0.01);
 }
+
+// Regression #16: Tf operator after Tm must keep the Tm y-scale.
+// Pattern: /F1 1 Tf  →  10 0 0 10 x y Tm  →  (A) Tj  →  /F1 1 Tf  →  (B) Tj
+// Both fragments must report font_size ≈ 10, not 1.
+#[test]
+fn tf_after_tm_preserves_scale() {
+    use lopdf::{Document, Stream};
+
+    let mut doc = Document::new();
+    let mut fd = lopdf::Dictionary::new();
+    fd.set("Type", Object::Name(b"Font".to_vec()));
+    fd.set("Subtype", Object::Name(b"Type1".to_vec()));
+    fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(fd));
+
+    // BT /F1 1 Tf  10 0 0 10 50 700 Tm  (A) Tj  /F1 1 Tf  (B) Tj ET
+    let stream_bytes =
+        b"BT /F1 1 Tf 10 0 0 10 50 700 Tm (A) Tj /F1 1 Tf (B) Tj ET".to_vec();
+
+    let cid = doc.add_object(Object::Stream(Stream::new(lopdf::Dictionary::new(), stream_bytes)));
+    let mut font_dict = lopdf::Dictionary::new();
+    font_dict.set("F1", Object::Reference(font_id));
+    let mut res = lopdf::Dictionary::new();
+    res.set("Font", Object::Dictionary(font_dict));
+    let mut pg = lopdf::Dictionary::new();
+    pg.set("Type", Object::Name(b"Page".to_vec()));
+    pg.set("MediaBox", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0),
+        Object::Integer(595), Object::Integer(842),
+    ]));
+    pg.set("Resources", Object::Dictionary(res));
+    pg.set("Contents", Object::Reference(cid));
+    let page_id = doc.add_object(Object::Dictionary(pg));
+    let mut ps = lopdf::Dictionary::new();
+    ps.set("Type", Object::Name(b"Pages".to_vec()));
+    ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    ps.set("Count", Object::Integer(1));
+    let pages_id = doc.add_object(Object::Dictionary(ps));
+    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+        d.set("Parent", Object::Reference(pages_id));
+    }
+    let mut cat = lopdf::Dictionary::new();
+    cat.set("Type", Object::Name(b"Catalog".to_vec()));
+    cat.set("Pages", Object::Reference(pages_id));
+    let cat_id = doc.add_object(Object::Dictionary(cat));
+    doc.trailer.set("Root", Object::Reference(cat_id));
+
+    let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+    assert_eq!(frags.len(), 2, "expected 2 fragments");
+
+    for f in &frags {
+        assert!(
+            (f.font_size - 10.0).abs() < 0.5,
+            "font_size should be ≈10 (Tm scale persists after Tf), got {} for {:?}",
+            f.font_size, f.text
+        );
+    }
+}
+
+// Enhancement #17: merge_short_cjk_tails joins short fragments.
+#[test]
+fn merge_short_cjk_tails_basic() {
+    let make = |text: &str, x: f32, y: f32, w: f32, fs: f32| TextFragment {
+        text: text.into(), x, y, width: w, height: fs, font_size: fs,
+        font_name: "F1".into(), color: [0.0; 3], invisible: false,
+        is_bold: false, is_italic: false, font_family: String::new(),
+        base_font: String::new(), space_advance: 0.0, tf_font_size: fs,
+        tm_y_scale: 1.0, tm_x_scale: None, source_stream: None,
+        source_op_start: None, source_op_end: None, source_xobject: None,
+        tm_origin_x: None, tm_origin_y: None,
+        tm_lm_x: None, tm_lm_y: None,
+    };
+
+    // Three fragments: "保護眼鏡やゴーグルを着用する" (long), "る。" (2 chars, tail), "次の行" (long)
+    let frags = vec![
+        make("保護眼鏡やゴーグルを着用す", 50.0, 700.0, 100.0, 10.0),
+        make("る。", 150.0, 700.0, 15.0, 10.0),   // short tail, same y
+        make("次の行テキスト", 50.0, 686.0, 80.0, 10.0),   // long, new line
+    ];
+
+    let merged = merge_short_cjk_tails(&frags, 4, 1.7);
+
+    assert_eq!(merged.len(), 2, "tail should be merged into predecessor");
+    assert!(merged[0].text.contains("る。"), "merged text should contain tail");
+    assert_eq!(merged[1].text, "次の行テキスト");
+
+    // With max_chars=0, no merging occurs.
+    let no_merge = merge_short_cjk_tails(&frags, 0, 1.7);
+    assert_eq!(no_merge.len(), 3);
+}
+
+// Helper: build a minimal one-page lopdf::Document with the given content stream bytes
+// and a single Type1 font /F1.
+fn make_test_page(content: &[u8]) -> (lopdf::Document, lopdf::ObjectId) {
+    use lopdf::{Dictionary, Document, Stream};
+    let mut doc = Document::new();
+    let mut fd = Dictionary::new();
+    fd.set("Type", Object::Name(b"Font".to_vec()));
+    fd.set("Subtype", Object::Name(b"Type1".to_vec()));
+    fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(fd));
+    let cid = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content.to_vec())));
+    let mut font_dict = Dictionary::new();
+    font_dict.set("F1", Object::Reference(font_id));
+    let mut res = Dictionary::new();
+    res.set("Font", Object::Dictionary(font_dict));
+    let mut pg = Dictionary::new();
+    pg.set("Type", Object::Name(b"Page".to_vec()));
+    pg.set("MediaBox", Object::Array(vec![
+        Object::Integer(0), Object::Integer(0),
+        Object::Integer(595), Object::Integer(842),
+    ]));
+    pg.set("Resources", Object::Dictionary(res));
+    pg.set("Contents", Object::Reference(cid));
+    let page_id = doc.add_object(Object::Dictionary(pg));
+    let mut ps = Dictionary::new();
+    ps.set("Type", Object::Name(b"Pages".to_vec()));
+    ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    ps.set("Count", Object::Integer(1));
+    let pages_id = doc.add_object(Object::Dictionary(ps));
+    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+        d.set("Parent", Object::Reference(pages_id));
+    }
+    let mut cat = Dictionary::new();
+    cat.set("Type", Object::Name(b"Catalog".to_vec()));
+    cat.set("Pages", Object::Reference(pages_id));
+    let cat_id = doc.add_object(Object::Dictionary(cat));
+    doc.trailer.set("Root", Object::Reference(cat_id));
+    (doc, page_id)
+}
+
+// T* operator moves y by -TL when TL is set via TL operator.
+#[test]
+fn t_star_moves_y_by_text_leading() {
+    // BT  /F1 12 Tf  1 0 0 1 50 700 Tm  12 TL  (A) Tj  T*  (B) Tj  ET
+    // Fragment A at y=700, fragment B at y = 700 - 12 = 688.
+    let content = b"BT /F1 12 Tf 1 0 0 1 50 700 Tm 12 TL (A) Tj T* (B) Tj ET";
+    let (doc, page_id) = make_test_page(content);
+    let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+    assert_eq!(frags.len(), 2, "expected 2 fragments");
+    assert!(
+        (frags[0].y - 700.0).abs() < 1.0,
+        "A.y should be ≈700, got {}", frags[0].y
+    );
+    assert!(
+        (frags[1].y - 688.0).abs() < 1.0,
+        "B.y should be ≈688 (700 - 12), got {}", frags[1].y
+    );
+}
+
+// TD operator moves position AND sets TL = -ty, so subsequent T* uses the new leading.
+#[test]
+fn td_uppercase_sets_text_leading_for_t_star() {
+    // BT  /F1 12 Tf  1 0 0 1 50 700 Tm  (A) Tj  0 -14 TD  (B) Tj  T*  (C) Tj  ET
+    // A at 700, B at 686, C at 672.
+    let content = b"BT /F1 12 Tf 1 0 0 1 50 700 Tm (A) Tj 0 -14 TD (B) Tj T* (C) Tj ET";
+    let (doc, page_id) = make_test_page(content);
+    let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
+    assert_eq!(frags.len(), 3, "expected 3 fragments");
+    assert!((frags[0].y - 700.0).abs() < 1.0, "A.y≈700, got {}", frags[0].y);
+    assert!((frags[1].y - 686.0).abs() < 1.0, "B.y≈686, got {}", frags[1].y);
+    assert!((frags[2].y - 672.0).abs() < 1.0, "C.y≈672, got {}", frags[2].y);
+}
+
+// Tc character spacing shifts the x cursor forward after each glyph.
+// Two separate Tj operators: with Tc=5, the second fragment's x should be
+// at least 5 pt further right than the advance alone would place it.
+#[test]
+fn tc_char_spacing_shifts_x_cursor() {
+    // Without Tc: (A) Tj (B) Tj — B.x = 50 + advance(A)
+    // With Tc=10: (A) Tj (B) Tj — B.x = 50 + advance(A) + 10
+    let no_tc = b"BT /F1 12 Tf 1 0 0 1 50 700 Tm (A) Tj (B) Tj ET";
+    let with_tc = b"BT /F1 12 Tf 1 0 0 1 50 700 Tm 10 Tc (A) Tj (B) Tj ET";
+
+    let (doc0, pid0) = make_test_page(no_tc);
+    let (doc1, pid1) = make_test_page(with_tc);
+
+    let frags0 = extract_text_runs_from_page(&doc0, pid0).unwrap();
+    let frags1 = extract_text_runs_from_page(&doc1, pid1).unwrap();
+
+    assert_eq!(frags0.len(), 2);
+    assert_eq!(frags1.len(), 2);
+
+    let b_x_no_tc = frags0[1].x;
+    let b_x_with_tc = frags1[1].x;
+    assert!(
+        b_x_with_tc > b_x_no_tc + 9.0,
+        "Tc=10 should push B.x at least 10 pt further right; no_tc={b_x_no_tc}, with_tc={b_x_with_tc}"
+    );
+}

@@ -93,6 +93,25 @@ pub struct TextFragment {
     pub source_op_start: Option<usize>,
     /// Byte offset one past the last byte of the `Tj`/`TJ` keyword
     /// (i.e. `source_op_start + 2` for both operators).
+    ///
+    /// ## When `source_op_end` is `None`
+    ///
+    /// This field is `None` in two situations:
+    ///
+    /// 1. **Per-character encoding** — the PDF encodes each character with its own
+    ///    `Td`/`Tj` pair (common in some Japanese generators).  Because there is no
+    ///    single operator to suppress, batch suppression silently skips these
+    ///    fragments (the returned count `n` is not incremented).
+    ///
+    /// 2. **Unsupported XObject nesting** — the fragment came from a deeply-nested
+    ///    Form XObject whose stream could not be located during extraction.
+    ///
+    /// Use [`PageHandle::can_suppress_fragment`] to detect unsuppressible fragments
+    /// before calling [`PageHandle::replace_text_fragments_batch`] or
+    /// [`PageHandle::replace_text_fragments_batch_opts`].
+    /// For per-character PDFs, fall back to an **overlay approach**: draw a cover
+    /// rectangle with [`PageHandle::add_rect`] and place translated text on top
+    /// with [`PageHandle::add_text`].
     pub source_op_end: Option<usize>,
     /// `lopdf` `ObjectId` `(object_number, generation_number)` of the Form XObject
     /// stream that produced this fragment.  `None` for fragments extracted from page
@@ -614,6 +633,85 @@ impl TableCell {
     pub fn bbox(&self) -> [f32; 4] {
         [self.x, self.y, self.width, self.height]
     }
+}
+
+/// Merge short CJK "tail" fragments into the preceding fragment.
+///
+/// CJK form PDFs often encode a single logical text run across many short `Tj`
+/// operators, producing 1–4 character fragments ("る。", "界", "値）") that carry
+/// no useful meaning in isolation.  When passed to a translation model as separate
+/// units, these produce garbage or empty output.
+///
+/// A fragment is merged into its predecessor when both conditions hold:
+/// 1. Its non-whitespace character count is ≤ `max_chars`.
+/// 2. Its `y` baseline is within `line_height_ratio × predecessor.font_size` of
+///    the predecessor's `y`.
+///
+/// The merged fragment inherits the predecessor's position and expands its `width`.
+/// If the predecessor itself would be merged, the result is chained transitively.
+///
+/// Fragments with no predecessor (the first fragment) are never merged.
+///
+/// # Source-operator tracking after merge
+///
+/// A merged fragment retains only the **predecessor's** `source_op_start` /
+/// `source_op_end`.  The tail fragment's operator offset is discarded.  If you
+/// pass merged fragments to [`PageHandle::replace_text_fragments_batch`] or
+/// [`PageHandle::suppress_text_where`], only the predecessor's `Tj` is
+/// suppressed; the tail's `Tj` remains in the content stream.
+///
+/// To avoid incomplete suppression, apply suppression on the **original**
+/// (pre-merge) fragment list and use the merged list only for translation
+/// model input.
+///
+/// # Parameters
+///
+/// - `max_chars` — maximum non-whitespace character count to consider a fragment a
+///   "tail".  Pass `0` to disable merging (returns a clone of `fragments`).
+///   Typical value: `4`.
+/// - `line_height_ratio` — maximum `|predecessor.y - fragment.y| / predecessor.font_size`
+///   allowed for merging.  Typical value: `1.7` (merges continuation on the same
+///   line or very close lines).
+///
+/// # Example
+///
+/// ```no_run
+/// # use harumi::{Document, merge_short_cjk_tails};
+/// # fn main() -> harumi::Result<()> {
+/// let mut doc = Document::from_file("cjk_form.pdf")?;
+/// let frags = doc.extract_text_runs(1)?;
+/// let merged = merge_short_cjk_tails(&frags, 4, 1.7);
+/// // `merged` has fewer entries; short tails are joined to their predecessors.
+/// # Ok(())
+/// # }
+/// ```
+pub fn merge_short_cjk_tails(
+    fragments: &[TextFragment],
+    max_chars: usize,
+    line_height_ratio: f32,
+) -> Vec<TextFragment> {
+    if max_chars == 0 || fragments.is_empty() {
+        return fragments.to_vec();
+    }
+    let mut out: Vec<TextFragment> = Vec::with_capacity(fragments.len());
+    for frag in fragments {
+        let non_ws = frag.text.chars().filter(|c| !c.is_whitespace()).count();
+        let is_tail = non_ws > 0 && non_ws <= max_chars;
+        if is_tail && let Some(prev) = out.last_mut() {
+            let y_dist = (prev.y - frag.y).abs();
+            let threshold = (prev.font_size * line_height_ratio).max(2.0);
+            if y_dist <= threshold {
+                // Merge: append text and extend bbox.
+                prev.text.push_str(&frag.text);
+                let new_right = (frag.x + frag.width).max(prev.x + prev.width);
+                prev.width = new_right - prev.x;
+                prev.height = prev.height.max(frag.height);
+                continue;
+            }
+        }
+        out.push(frag.clone());
+    }
+    out
 }
 
 /// Detect table structure in a flat list of text fragments.
@@ -2825,6 +2923,13 @@ struct ParseCarryState {
     tm_lm_x: f32,
     /// Text line matrix (T_lm) y translation.  Paired with `tm_lm_x`.
     tm_lm_y: f32,
+    /// Current text leading (set by `TL` and as side-effect of `TD`).
+    /// Used by `T*` (≡ `0 -TL Td`).  Persists across BT/ET and content streams.
+    text_leading: f32,
+    /// Character spacing added after each glyph (set by `Tc`, default 0).
+    char_spacing: f32,
+    /// Word spacing added after each space glyph (set by `Tw`, default 0).
+    word_spacing: f32,
 }
 
 impl Default for ParseCarryState {
@@ -2848,6 +2953,9 @@ impl Default for ParseCarryState {
             tm_x_scale: 1.0,
             tm_lm_x: 0.0,
             tm_lm_y: 0.0,
+            text_leading: 0.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
         }
     }
 }
@@ -2875,6 +2983,9 @@ fn parse_content_stream(
     let mut x              = state.text_x;
     let mut y              = state.text_y;
     let mut tm_origin_set  = state.tm_origin_set;
+    let mut text_leading   = state.text_leading;
+    let mut char_spacing   = state.char_spacing;
+    let mut word_spacing   = state.word_spacing;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
@@ -2887,12 +2998,31 @@ fn parse_content_stream(
                     y = 0.0;
                     tm_origin_set = false;
                     tm_x_scale = 1.0;
+                    tm_y_scale = 1.0;
                     tm_lm_x = 0.0;
                     tm_lm_y = 0.0;
                     stack.clear();
                 }
                 b"ET" => {
                     in_bt = false;
+                    stack.clear();
+                }
+                b"TL" => {
+                    if let Some((Token::Number(tl), _)) = stack.pop() {
+                        text_leading = tl;
+                    }
+                    stack.clear();
+                }
+                b"Tc" => {
+                    if let Some((Token::Number(v), _)) = stack.pop() {
+                        char_spacing = v;
+                    }
+                    stack.clear();
+                }
+                b"Tw" => {
+                    if let Some((Token::Number(v), _)) = stack.pop() {
+                        word_spacing = v;
+                    }
                     stack.clear();
                 }
                 b"Tf" if in_bt => {
@@ -2903,7 +3033,10 @@ fn parse_content_stream(
                     {
                         font_name = name;
                         tf_font_size = size;
-                        font_size = size;
+                        // Per PDF spec, the text rendering matrix combines Tf size with
+                        // the current Tm y-scale.  A Tf operator does not reset the Tm
+                        // matrix, so the effective font size must stay tf × tm_y_scale.
+                        font_size = size * tm_y_scale;
                     }
                     stack.clear();
                 }
@@ -2924,7 +3057,21 @@ fn parse_content_stream(
                         tm_lm_y = new_lm_y;
                         x = new_lm_x;
                         y = new_lm_y;
+                        // TD also sets the text leading: TL = -ty (PDF spec §9.4.1).
+                        if kw.as_slice() == b"TD" {
+                            text_leading = -ty;
+                        }
                     }
+                    stack.clear();
+                }
+                b"T*" if in_bt => {
+                    // T* ≡ `0 -TL Td` (PDF spec §9.4.1).
+                    let new_lm_x = tm_lm_x;
+                    let new_lm_y = -text_leading * tm_y_scale + tm_lm_y;
+                    tm_lm_x = new_lm_x;
+                    tm_lm_y = new_lm_y;
+                    x = new_lm_x;
+                    y = new_lm_y;
                     stack.clear();
                 }
                 b"Tm" if in_bt => {
@@ -3098,7 +3245,12 @@ fn parse_content_stream(
                             // local-space advance for the x cursor.
                             let local_advance =
                                 if scale > 0.0 { frag.width / scale } else { frag.width };
-                            x += local_advance;
+                            // Apply Tc/Tw spacing (in unscaled text space → user space via tm_x_scale).
+                            let n_chars = frag.text.chars().count() as f32;
+                            let n_spaces = frag.text.chars().filter(|&c| c == ' ').count() as f32;
+                            x += local_advance
+                                + char_spacing * tm_x_scale * n_chars
+                                + word_spacing * tm_x_scale * n_spaces;
                             out.push(frag);
                         }
                     }
@@ -3156,7 +3308,12 @@ fn parse_content_stream(
                                         } else {
                                             frag.width
                                         };
-                                        cur_x += local_advance;
+                                        let n_chars = frag.text.chars().count() as f32;
+                                        let n_spaces =
+                                            frag.text.chars().filter(|&c| c == ' ').count() as f32;
+                                        cur_x += local_advance
+                                            + char_spacing * tm_x_scale * n_chars
+                                            + word_spacing * tm_x_scale * n_spaces;
                                         out.push(frag);
                                     }
                                 }
@@ -3195,6 +3352,9 @@ fn parse_content_stream(
     state.text_x         = x;
     state.text_y         = y;
     state.tm_origin_set  = tm_origin_set;
+    state.text_leading   = text_leading;
+    state.char_spacing   = char_spacing;
+    state.word_spacing   = word_spacing;
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony

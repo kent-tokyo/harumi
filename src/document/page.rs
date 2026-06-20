@@ -12,7 +12,7 @@ use super::types::{
 };
 use super::helpers::{
     append_annotation_to_page, build_link_annot_base, build_markup_annot,
-    calculate_text_width, check_finite, check_positive_size, parse_box_array,
+    check_finite, check_positive_size, parse_box_array,
     pdf_text_string, prepend_to_contents, read_page_box, set_page_box, wrap_paragraph,
 };
 
@@ -731,16 +731,18 @@ impl<'doc> PageHandle<'doc> {
                 let ay = frag.y + opts.y_offset;
                 let color = opts.color.unwrap_or(Color::Rgb([0.0, 0.0, 0.0]));
 
-                // Apply shrink_to_fit: reduce font size proportionally until
-                // the text fits on one line within max_width.
-                let fs = if opts.shrink_to_fit {
-                    if let Some(max_w) = opts.max_width {
-                        let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
+                // Compute font size (shrink-to-fit) and line-wrap in one block so
+                // the TTF face is parsed only once instead of twice.
+                let (fs, lines): (f32, Vec<String>) = if let Some(max_w) = opts.max_width {
+                    let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
+                    let opt_face = ttf_parser::Face::parse(font_bytes, 0).ok();
+                    let fs = if opts.shrink_to_fit {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = calculate_text_width(new_text, font_bytes, candidate)
-                                .unwrap_or(max_w);
+                            let w = opt_face.as_ref().map(|f| {
+                                super::helpers::text_width_with_face(new_text, f, candidate)
+                            }).unwrap_or(max_w);
                             if w <= max_w || candidate <= min_fs {
                                 break;
                             }
@@ -749,20 +751,15 @@ impl<'doc> PageHandle<'doc> {
                         candidate
                     } else {
                         fs_initial
-                    }
-                } else {
-                    fs_initial
-                };
-
-                let lines: Vec<String> = if let Some(max_w) = opts.max_width {
-                    let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-                    if let Ok(face) = ttf_parser::Face::parse(font_bytes, 0) {
-                        wrap_paragraph(new_text, &face, fs, max_w)
+                    };
+                    let lines = if let Some(face) = opt_face.as_ref() {
+                        wrap_paragraph(new_text, face, fs, max_w)
                     } else {
                         vec![new_text.to_owned()]
-                    }
+                    };
+                    (fs, lines)
                 } else {
-                    vec![new_text.to_owned()]
+                    (fs_initial, vec![new_text.to_owned()])
                 };
 
                 let line_height = fs * 1.2;
@@ -906,8 +903,9 @@ impl<'doc> PageHandle<'doc> {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = calculate_text_width(new_text, font_bytes, candidate)
-                                .unwrap_or(max_w);
+                            let w = face.as_ref().map(|f| {
+                                super::helpers::text_width_with_face(new_text, f, candidate)
+                            }).unwrap_or(max_w);
                             if w <= max_w || candidate <= min_fs {
                                 break;
                             }
@@ -1045,8 +1043,9 @@ impl<'doc> PageHandle<'doc> {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = super::helpers::calculate_text_width(entry.new_text, font_bytes, candidate)
-                                .unwrap_or(max_w);
+                            let w = face.as_ref().map(|f| {
+                                super::helpers::text_width_with_face(entry.new_text, f, candidate)
+                            }).unwrap_or(max_w);
                             if w <= max_w || candidate <= min_fs { break; }
                             candidate = (candidate * max_w / w).max(min_fs);
                         }
@@ -1098,6 +1097,100 @@ impl<'doc> PageHandle<'doc> {
             ..Default::default()
         };
         self.replace_text_fragments_opts(fragments, new_text, font, opts)
+    }
+
+    /// Suppress all `Tj`/`TJ` operators whose decoded text satisfies `predicate`,
+    /// scanning the page content streams in memory without a save/reload cycle.
+    ///
+    /// This is the single-pass alternative to the two-step workaround:
+    ///
+    /// ```text
+    /// // Old workaround (two encode/decode cycles):
+    /// doc.save("tmp.pdf")?;
+    /// let doc2 = Document::from_file("tmp.pdf")?;
+    /// let frags = doc2.extract_text_runs(page)?;
+    /// // … filter and suppress …
+    ///
+    /// // New API (single cycle, in memory):
+    /// doc.page(n)?.suppress_text_where(|text| is_source_language(text))?;
+    /// doc.save("out.pdf")?;
+    /// ```
+    ///
+    /// The method re-extracts text directly from the current (possibly already
+    /// rewritten) in-memory content streams, so it sees the same state as a
+    /// save-and-reload would — without actually saving.  It requires no
+    /// [`FontHandle`] because no new text is placed; operators are blanked with
+    /// `() Tj`.
+    ///
+    /// Returns the count of suppressed operators.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// # let mut doc = Document::from_file("input.pdf")?;
+    /// # let font = doc.embed_font(b"")?;
+    /// // First pass: replace fragments with known source info.
+    /// // let n = doc.page(1)?.replace_text_fragments_batch_opts(&entries, font)?;
+    ///
+    /// // Second pass (in memory, no save/reload): suppress any remaining Japanese.
+    /// let suppressed = doc.page(1)?.suppress_text_where(|text| {
+    ///     text.chars().any(|c| matches!(c, '\u{3000}'..='\u{9FFF}'))
+    /// })?;
+    /// doc.save("translated.pdf")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn suppress_text_where<F>(&mut self, predicate: F) -> crate::error::Result<usize>
+    where
+        F: Fn(&str) -> bool,
+    {
+        use std::collections::{HashMap, HashSet};
+
+        // Re-extract from the current in-memory content streams.
+        // This sees any suppressions already applied in this session.
+        let frags = crate::extract::extract_text_runs_from_page(
+            &self.doc.inner,
+            self.page_id,
+        )?;
+
+        // Collect suppression targets for fragments whose text matches.
+        let mut by_stream: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut by_xobj: HashMap<(u32, u16), HashSet<usize>> = HashMap::new();
+
+        for frag in frags.iter().filter(|f| predicate(&f.text)) {
+            if let (Some(sidx), Some(_), Some(op_end)) =
+                (frag.source_stream, frag.source_op_start, frag.source_op_end)
+            {
+                by_stream.entry(sidx).or_default().insert(op_end);
+            }
+            if let (Some(xobj_id), Some(_), Some(op_end)) =
+                (frag.source_xobject, frag.source_op_start, frag.source_op_end)
+            {
+                by_xobj.entry(xobj_id).or_default().insert(op_end);
+            }
+        }
+
+        if by_stream.is_empty() && by_xobj.is_empty() {
+            return Ok(0);
+        }
+
+        // Suppress in a single pass per stream (stable byte offsets).
+        let mut total = 0usize;
+        let stream_ids =
+            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+
+        for (stream_idx, target_op_ends) in &by_stream {
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            total += suppress_ops_in_object(&mut self.doc.inner, stream_id, target_op_ends);
+        }
+        for (xobj_id, target_op_ends) in &by_xobj {
+            total +=
+                suppress_ops_in_object(&mut self.doc.inner, *xobj_id, target_op_ends);
+        }
+
+        Ok(total)
     }
 
     /// Check whether a single [`TextFragment`](crate::TextFragment) can be
