@@ -3,7 +3,11 @@
 use harumi::{Document, FontHandle};
 use ttf_parser::Face;
 
-use crate::{Error, OverflowStrategy, Result, TranslateOptions, overlay};
+use crate::{
+    Error, OverflowStrategy, Result, TranslateOptions, overlay,
+    output::{TranslateOutput, TranslateQuality},
+    quality::QualityResult,
+};
 
 /// Strip a leading fullwidth/halfwidth colon separator.
 ///
@@ -160,6 +164,23 @@ pub async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) 
     );
 
     doc.save_to_bytes().map_err(Into::into)
+}
+
+/// Full InPlace translation returning [`TranslateOutput`] (v0.2.0+).
+pub async fn translate_pdf_inplace_full(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+    let _mode_correction_rounds = options.max_correction_rounds;
+    let pdf_bytes_out = translate_pdf_inplace(pdf_bytes, options).await?;
+    Ok(TranslateOutput {
+        pdf_bytes: pdf_bytes_out,
+        quality: TranslateQuality {
+            // InPlace doesn't run the region-fitting loop, so no per-page summaries.
+            pages: vec![],
+            overall: QualityResult::Pass,
+            correction_rounds: 0,
+            mode_used: crate::TranslationMode::InPlace,
+        },
+        debug: None,
+    })
 }
 
 #[cfg(test)]

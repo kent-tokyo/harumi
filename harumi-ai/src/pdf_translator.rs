@@ -7,6 +7,8 @@ use crate::{
     Error, LayoutOptions, Result, Translator,
     builder::{self, OutputBlock, TranslatedPage},
     extractor,
+    output::{DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality},
+    quality::{QualityGate, QualityProfile, QualityResult},
 };
 
 /// Controls what happens when translated text is wider than the original bounding box.
@@ -52,6 +54,14 @@ pub enum TranslationMode {
     /// `Td` between each `Tj`) fall back automatically to the `Overlay`
     /// approach for that line only.
     InPlace,
+    /// Automatically choose the best mode based on the PDF's layout structure.
+    ///
+    /// The heuristic inspects the fraction of [`harumi::LayoutRegionKind::TableCell`]
+    /// regions on the first page.  If the PDF is dense table/form-like (> 60 % table
+    /// cells) or has per-character `Tj` streams, `Overlay` is chosen; otherwise
+    /// `InPlace` is tried first.  The mode that was actually used is reported in
+    /// [`TranslateQuality::mode_used`].
+    Auto,
 }
 
 /// Options for [`translate_pdf`].
@@ -107,6 +117,17 @@ pub struct TranslateOptions {
     /// The first argument is the number of pages translated so far; the second is
     /// the total page count.  Useful for streaming progress to a client.
     pub progress_fn: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
+    /// Quality profile used to gate the final PDF and guide the correction loop
+    /// (default: [`QualityProfile::BestEffort`]).
+    pub profile: QualityProfile,
+    /// Maximum number of AI layout correction rounds (default: `2`).
+    ///
+    /// Each round identifies overflowing or colliding lines and asks the AI to
+    /// shorten them.  Setting `0` disables the correction loop entirely.
+    pub max_correction_rounds: usize,
+    /// Controls which debug artifacts are included in [`TranslateOutput::debug`]
+    /// (default: all `false`).
+    pub debug: DebugOptions,
 }
 
 impl TranslateOptions {
@@ -129,6 +150,9 @@ impl TranslateOptions {
             font_fallbacks: vec![],
             overflow: OverflowStrategy::default(),
             progress_fn: None,
+            profile: QualityProfile::default(),
+            max_correction_rounds: 2,
+            debug: DebugOptions::default(),
         }
     }
 
@@ -154,6 +178,9 @@ pub struct TranslateOptionsBuilder {
     cover_color: Option<[f32; 3]>,
     overflow: Option<OverflowStrategy>,
     progress_fn: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
+    profile: Option<QualityProfile>,
+    max_correction_rounds: Option<usize>,
+    debug: Option<DebugOptions>,
 }
 
 impl TranslateOptionsBuilder {
@@ -234,6 +261,24 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Set the quality profile (default: [`QualityProfile::BestEffort`]).
+    pub fn profile(mut self, p: QualityProfile) -> Self {
+        self.profile = Some(p);
+        self
+    }
+
+    /// Maximum AI correction rounds (default: `2`). Set `0` to disable.
+    pub fn max_correction_rounds(mut self, n: usize) -> Self {
+        self.max_correction_rounds = Some(n);
+        self
+    }
+
+    /// Debug artifact options (default: all disabled).
+    pub fn debug(mut self, opts: DebugOptions) -> Self {
+        self.debug = Some(opts);
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -253,33 +298,222 @@ impl TranslateOptionsBuilder {
             cover_color: self.cover_color,
             overflow: self.overflow.unwrap_or_default(),
             progress_fn: self.progress_fn,
+            profile: self.profile.unwrap_or_default(),
+            max_correction_rounds: self.max_correction_rounds.unwrap_or(2),
+            debug: self.debug.unwrap_or_default(),
         }
     }
 }
 
 // ── translate_pdf ─────────────────────────────────────────────────────────────
 
-/// Translate all text in `pdf_bytes` to `options.target_lang` and return a new PDF.
+/// Translate all text in `pdf_bytes` to `options.target_lang`.
+///
+/// Returns a [`TranslateOutput`] containing the PDF bytes, per-page quality
+/// diagnostics, and optional debug artifacts.
 ///
 /// # How it works
 ///
-/// 1. **Extract** — [`harumi::Document::extract_text_chunks`] groups text fragments into
-///    paragraphs and headings per page.
-/// 2. **Translate** — pages are grouped into batches of [`TranslateOptions::pages_per_batch`]
-///    and sent to the `Translator` as `{"pages": [...]}` JSON. Batches run concurrently
-///    up to [`TranslateOptions::concurrency`].
-/// 3. **Build** — a new PDF is assembled using harumi's direct `add_text` API (CIDFontType2
-///    + ToUnicode CMap — PSPDFKit-compatible), or overlaid on the original if
-///      [`TranslationMode::Overlay`] is selected.
-pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
-    match options.mode {
-        TranslationMode::NewDocument => translate_pdf_new_document(pdf_bytes, options).await,
-        TranslationMode::Overlay => crate::overlay::translate_pdf_overlay(pdf_bytes, options).await,
-        TranslationMode::InPlace => crate::inplace::translate_pdf_inplace(pdf_bytes, options).await,
+/// 1. **Mode selection** — if [`TranslationMode::Auto`] is set, the PDF structure
+///    is inspected to choose between `InPlace` and `Overlay`.
+/// 2. **Extract** — text is extracted and structured per page.
+/// 3. **Translate** — pages are batched and sent to the AI provider concurrently.
+/// 4. **Place** — translated text is placed using the selected mode.
+/// 5. **Correction loop** — overflowing or colliding lines are sent back to the AI
+///    for shortening (up to [`TranslateOptions::max_correction_rounds`] rounds).
+/// 6. **Quality gate** — the final layout is evaluated against
+///    [`TranslateOptions::profile`].  Only [`QualityProfile::Strict`] causes an
+///    error on failure; all other profiles return the PDF regardless.
+pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+    // Resolve Auto mode before dispatch.
+    let resolved_mode = match options.mode {
+        TranslationMode::Auto => detect_best_mode(pdf_bytes),
+        _ => {
+            // Keep a clone of the mode for the quality report; mode is moved below.
+            match &options.mode {
+                TranslationMode::Overlay => TranslationMode::Overlay,
+                TranslationMode::NewDocument => TranslationMode::NewDocument,
+                TranslationMode::InPlace => TranslationMode::InPlace,
+                TranslationMode::Auto => unreachable!(),
+            }
+        }
+    };
+
+    // Build options with the resolved mode.
+    let profile = std::mem::replace(
+        // We need profile for the gate; borrow it before options is moved.
+        // We'll re-read it below from a clone.
+        &mut { QualityProfile::BestEffort },  // placeholder
+        QualityProfile::BestEffort,
+    );
+    let _ = profile; // will use options.profile below
+
+    let mode_for_report = match &resolved_mode {
+        TranslationMode::Overlay => TranslationMode::Overlay,
+        TranslationMode::NewDocument => TranslationMode::NewDocument,
+        TranslationMode::InPlace => TranslationMode::InPlace,
+        TranslationMode::Auto => TranslationMode::Overlay,
+    };
+
+    // Snapshot fields we need after options is consumed.
+    let profile = match &options.profile {
+        QualityProfile::PreserveLayout => QualityProfile::PreserveLayout,
+        QualityProfile::Readable => QualityProfile::Readable,
+        QualityProfile::Strict => QualityProfile::Strict,
+        QualityProfile::BestEffort => QualityProfile::BestEffort,
+    };
+    let debug_opts = options.debug.clone();
+
+    // Dispatch to the appropriate mode implementation.
+    let mut opt = options;
+    // Replace the mode with the resolved one so inner functions see the concrete choice.
+    opt.mode = resolved_mode;
+
+    let output = match &opt.mode {
+        TranslationMode::NewDocument => {
+            translate_pdf_new_document_full(pdf_bytes, opt).await?
+        }
+        TranslationMode::Overlay | TranslationMode::Auto => {
+            crate::overlay::translate_pdf_overlay_full(pdf_bytes, opt).await?
+        }
+        TranslationMode::InPlace => {
+            crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?
+        }
+    };
+
+    // Evaluate quality gate.
+    let gate = QualityGate::from_profile(&profile);
+    if !gate.is_permissive() {
+        // Evaluate against the worst page's summary.
+        let mut violations = Vec::new();
+        for report in &output.quality.pages {
+            if let QualityResult::Fail(mut v) = gate.evaluate(&report.summary) {
+                violations.append(&mut v);
+            }
+        }
+        if !violations.is_empty() && matches!(profile, QualityProfile::Strict) {
+            return Err(Error::QualityGateFailed(violations));
+        }
+    }
+
+    // Rebuild overall quality result.
+    let overall = {
+        let gate = QualityGate::from_profile(&profile);
+        let all_violations: Vec<_> = output
+            .quality
+            .pages
+            .iter()
+            .flat_map(|r| {
+                gate.evaluate(&r.summary)
+                    .violations()
+                    .to_vec()
+            })
+            .collect();
+        if all_violations.is_empty() {
+            QualityResult::Pass
+        } else {
+            QualityResult::Fail(all_violations)
+        }
+    };
+
+    let needs_debug = debug_opts.layout_report
+        || debug_opts.collision_report
+        || debug_opts.overlay_pdf
+        || debug_opts.correction_history;
+
+    let debug = if needs_debug {
+        let layout_report_json = if debug_opts.layout_report {
+            // Serialize page quality reports as JSON.
+            let entries: Vec<serde_json::Value> = output
+                .quality
+                .pages
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "page_num": r.page_num,
+                        "overflow_count": r.summary.overflow_count,
+                        "collision_count": r.summary.collision_count,
+                        "shrunk_count": r.summary.shrunk_count,
+                        "worst_overlap_area": r.summary.worst_overlap_area,
+                    })
+                })
+                .collect();
+            Some(serde_json::to_string_pretty(&entries).unwrap_or_default())
+        } else {
+            None
+        };
+
+        let correction_history = if debug_opts.correction_history {
+            output.debug.as_ref().map_or_else(Vec::new, |d| d.correction_history.clone())
+        } else {
+            Vec::new()
+        };
+
+        Some(DebugArtifacts {
+            layout_report_json,
+            collision_report_json: None, // TODO: populate in overlay pass
+            debug_overlay_pdf: output.debug.as_ref().and_then(|d| {
+                if debug_opts.overlay_pdf { d.debug_overlay_pdf.clone() } else { None }
+            }),
+            correction_history,
+        })
+    } else {
+        None
+    };
+
+    Ok(TranslateOutput {
+        pdf_bytes: output.pdf_bytes,
+        quality: TranslateQuality {
+            pages: output.quality.pages,
+            overall,
+            correction_rounds: output.quality.correction_rounds,
+            mode_used: mode_for_report,
+        },
+        debug,
+    })
+}
+
+/// Detect the best [`TranslationMode`] for `pdf_bytes` based on layout structure.
+///
+/// Uses a quick heuristic on the first page: if more than 60 % of layout regions
+/// are table cells (typical of dense SDS/form PDFs), `Overlay` is chosen; otherwise
+/// `InPlace` is tried first.
+fn detect_best_mode(pdf_bytes: &[u8]) -> TranslationMode {
+    let Ok(mut doc) = harumi::Document::from_bytes(pdf_bytes) else {
+        return TranslationMode::Overlay;
+    };
+    // Sample the first page only for speed.
+    let Ok(frags) = doc.extract_text_runs(1) else {
+        return TranslationMode::Overlay;
+    };
+    if frags.is_empty() {
+        return TranslationMode::Overlay;
+    }
+    let page_size = doc.page(1).ok().and_then(|p| p.size().ok()).unwrap_or((595.0, 842.0));
+    let regions = harumi::extract_layout_regions(
+        &frags,
+        page_size.0,
+        page_size.1,
+        harumi::LayoutRegionOptions::default(),
+    );
+    if regions.is_empty() {
+        return TranslationMode::Overlay;
+    }
+    let table_count = regions
+        .iter()
+        .filter(|r| r.kind == harumi::LayoutRegionKind::TableCell)
+        .count();
+    let table_fraction = table_count as f32 / regions.len() as f32;
+
+    // Dense form/SDS PDF → Overlay; otherwise try InPlace.
+    if table_fraction > 0.60 {
+        TranslationMode::Overlay
+    } else {
+        TranslationMode::InPlace
     }
 }
 
-async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
+async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     // ── Phase 1: Extract (sync) ───────────────────────────────────────────────
@@ -289,7 +523,17 @@ async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions)
 
     if pages.is_empty() {
         let mut blank = Document::new((595.0, 842.0))?;
-        return blank.save_to_bytes().map_err(Into::into);
+        let pdf_bytes = blank.save_to_bytes()?;
+        return Ok(TranslateOutput {
+            pdf_bytes,
+            quality: TranslateQuality {
+                pages: vec![],
+                overall: crate::quality::QualityResult::Pass,
+                correction_rounds: 0,
+                mode_used: TranslationMode::NewDocument,
+            },
+            debug: None,
+        });
     }
 
     // ── Phase 2: Translate (async, no Document access) ───────────────────────
@@ -366,5 +610,16 @@ async fn translate_pdf_new_document(pdf_bytes: &[u8], options: TranslateOptions)
         .collect();
 
     // ── Phase 3: Build new PDF (sync) ─────────────────────────────────────────
-    builder::build_pdf(&translated_pages, &options.font, &options.layout)
+    let pdf_bytes = builder::build_pdf(&translated_pages, &options.font, &options.layout)?;
+    Ok(TranslateOutput {
+        pdf_bytes,
+        quality: TranslateQuality {
+            // NewDocument doesn't do region fitting, so no per-page summaries.
+            pages: vec![],
+            overall: crate::quality::QualityResult::Pass,
+            correction_rounds: 0,
+            mode_used: TranslationMode::NewDocument,
+        },
+        debug: None,
+    })
 }

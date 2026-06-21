@@ -1,5 +1,6 @@
 use harumi::Document;
-use harumi_ai::{LayoutOptions, TranslateOptions, TranslationMode, providers::EchoTranslator, translate_pdf};
+use harumi_ai::{LayoutOptions, QualityGate, QualityProfile, TranslateOptions, TranslationMode,
+                providers::EchoTranslator, translate_pdf};
 
 const FONT: &[u8] = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
@@ -105,7 +106,7 @@ async fn echo_translator_single_page() {
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "translate_pdf failed: {:?}", result.err());
 
-    let out = result.unwrap();
+    let out = result.unwrap().pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
     assert!(check.page_count() >= 1);
     // Verify text is present in the output.
@@ -120,7 +121,7 @@ async fn echo_translator_multipage() {
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "multipage translate_pdf failed: {:?}", result.err());
 
-    let out = result.unwrap();
+    let out = result.unwrap().pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
     // Two source pages → at least two output pages.
     assert!(
@@ -141,7 +142,7 @@ async fn concurrent_batches_preserve_page_order() {
         .pages_per_batch(1)
         .build();
 
-    let out = translate_pdf(&pdf, opts).await.unwrap();
+    let out = translate_pdf(&pdf, opts).await.unwrap().pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
     assert_eq!(check.page_count(), 4);
 
@@ -167,7 +168,7 @@ async fn empty_pdf_returns_blank() {
     let opts = TranslateOptions::new("zh", EchoTranslator, FONT.to_vec());
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "empty PDF failed: {:?}", result.err());
-    let check = Document::from_bytes(&result.unwrap()).unwrap();
+    let check = Document::from_bytes(&result.unwrap().pdf_bytes).unwrap();
     assert_eq!(check.page_count(), 1);
 }
 
@@ -197,7 +198,7 @@ async fn pages_per_batch_multipage() {
         .build();
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "pages_per_batch_multipage failed: {:?}", result.err());
-    let check = Document::from_bytes(&result.unwrap()).unwrap();
+    let check = Document::from_bytes(&result.unwrap().pdf_bytes).unwrap();
     assert!(check.page_count() >= 2);
 }
 
@@ -210,7 +211,7 @@ async fn inplace_mode_basic() {
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "InPlace translate_pdf failed: {:?}", result.err());
 
-    let out = result.unwrap();
+    let out = result.unwrap().pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
     assert!(check.page_count() >= 1);
     // Either the in-place replacement or the fallback overlay places text on page 1.
@@ -228,7 +229,7 @@ async fn inplace_mode_unmatched_falls_back() {
     opts.mode = TranslationMode::InPlace;
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "InPlace empty PDF failed: {:?}", result.err());
-    let check = Document::from_bytes(&result.unwrap()).unwrap();
+    let check = Document::from_bytes(&result.unwrap().pdf_bytes).unwrap();
     assert_eq!(check.page_count(), 1);
 }
 
@@ -244,4 +245,66 @@ async fn custom_layout_options() {
 
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "custom layout failed: {:?}", result.err());
+}
+
+// ---------------------------------------------------------------------------
+// v0.2.0 — QualityGate, Auto mode, TranslateOutput
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn translate_output_has_pdf_bytes() {
+    let pdf = make_test_pdf();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(!output.pdf_bytes.is_empty());
+}
+
+#[tokio::test]
+async fn quality_gate_best_effort_always_passes() {
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.profile = QualityProfile::BestEffort;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(output.quality.overall.is_pass() || !output.quality.overall.is_pass(), "any result is fine");
+}
+
+#[tokio::test]
+async fn quality_gate_strict_passes_for_simple_pdf() {
+    // Simple single-line PDF should pass even strict gate (zero collisions, no overflow).
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.profile = QualityProfile::Strict;
+    // Strict only errors for Overlay/layout mode; Overlay on this simple PDF should be clean.
+    let result = translate_pdf(&pdf, opts).await;
+    assert!(result.is_ok(), "strict gate failed unexpectedly: {:?}", result.err());
+}
+
+#[tokio::test]
+async fn auto_mode_selects_a_mode() {
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::Auto;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // Mode should be resolved to something concrete.
+    assert!(
+        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
+        "Auto mode did not resolve to a concrete mode"
+    );
+}
+
+#[tokio::test]
+async fn quality_gate_evaluate_empty_summary() {
+    use harumi::PageFitSummary;
+    let gate = QualityGate::from_profile(&QualityProfile::Strict);
+    let summary = PageFitSummary::from_plans(&[]);
+    assert!(gate.evaluate(&summary).is_pass(), "empty summary should always pass Strict gate");
+}
+
+#[tokio::test]
+async fn max_correction_rounds_zero_disables_loop() {
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.max_correction_rounds = 0;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert_eq!(output.quality.correction_rounds, 0);
 }

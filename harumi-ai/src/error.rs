@@ -14,6 +14,12 @@ pub enum Error {
     FontParse(String),
     /// I/O error.
     Io(std::io::Error),
+    /// The translated PDF failed the quality gate set by [`crate::QualityProfile::Strict`].
+    ///
+    /// Only returned when [`crate::QualityProfile::Strict`] is active and the final
+    /// layout has violations.  The [`crate::quality::QualityViolation`] list describes
+    /// what exceeded the thresholds.
+    QualityGateFailed(Vec<crate::quality::QualityViolation>),
 }
 
 impl fmt::Display for Error {
@@ -26,6 +32,14 @@ impl fmt::Display for Error {
             }
             Error::FontParse(msg) => write!(f, "font parse error: {msg}"),
             Error::Io(e) => write!(f, "I/O error: {e}"),
+            Error::QualityGateFailed(violations) => {
+                write!(f, "quality gate failed: ")?;
+                for (i, v) in violations.iter().enumerate() {
+                    if i > 0 { write!(f, "; ")?; }
+                    write!(f, "{v}")?;
+                }
+                Ok(())
+            }
         }
     }
 }

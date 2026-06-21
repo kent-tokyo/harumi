@@ -15,8 +15,8 @@
 //!     let pdf = std::fs::read("source.pdf").unwrap();
 //!
 //!     let opts = TranslateOptions::new("en", EchoTranslator, font);
-//!     let translated = translate_pdf(&pdf, opts).await.unwrap();
-//!     std::fs::write("translated.pdf", translated).unwrap();
+//!     let output = translate_pdf(&pdf, opts).await.unwrap();
+//!     std::fs::write("translated.pdf", output.pdf_bytes).unwrap();
 //! }
 //! ```
 //!
@@ -32,13 +32,20 @@ mod extractor;
 mod builder;
 mod inplace;
 mod layout;
+mod output;
 mod overlay;
 mod pdf_translator;
 mod prompts;
+mod quality;
+mod repair;
 mod translator;
 pub mod providers;
 
 pub use error::{Error, Result};
 pub use layout::LayoutOptions;
-pub use pdf_translator::{OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf};
+pub use output::{CorrectionRound, DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality,
+                 PageQualityReport};
+pub use pdf_translator::{OverflowStrategy, TranslateOptions, TranslateOptionsBuilder,
+                         TranslationMode, translate_pdf};
+pub use quality::{QualityGate, QualityProfile, QualityResult, QualityViolation};
 pub use translator::Translator;
