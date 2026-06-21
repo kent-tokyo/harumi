@@ -130,7 +130,9 @@ doc.save("searchable.pdf")?;
 | 需要在绘制前批量规划译文到布局单元格 | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 通过 `fit_text_to_box` 将每条译文适配到 `region.usable_rect`，检测跨区域碰撞，返回 `RegionFitPlan { region, fit, collisions }`；一次调用完成布局、适配和碰撞检测（v1.10.0+） |
 | 表单 PDF 翻译需要保留原始基线并安全控制列宽 | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — 每区域 `RegionTextFitOptions`：`BaselinePolicy::PreserveSourceBaseline` 保持原行位置，`WidthPolicy::SourceLineWidth` 防止标签扩展到值列；`RegionTextFitOptions::for_role(&region.role)` 返回角色默认值；传 `&[]` 自动对所有区域应用（v1.11.0+） |
 | 需要知道区域是标签、值、标题还是正文 | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`；`extract_layout_regions` 根据列位置、行相邻单元格和页面边缘位置自动分配（v1.11.0+） |
-| 需要对碰撞进行结构关系分类（同行、相邻行、页眉页脚等） | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 为每个 `Collision` 附加 `CollisionKind`（`SameRegion`、`SameRow`、`AdjacentRow`、`SameColumn`、`HeaderFooter`、`Unknown`）及各区域的 `LayoutRegionRole`；`plan_text_for_regions*` 的 `RegionFitPlan.collisions` 直接返回 `Vec<ClassifiedCollision>`（v1.12.0+） |
+| 需要对碰撞进行结构关系分类（同行、相邻行、页眉页脚等） | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 为每个 `Collision` 附加 `CollisionKind`（`SameRegion`、`SameRow`、`AdjacentRow`、`SameColumn`、`HeaderFooter`、`Unknown`）、各区域的 `LayoutRegionRole` 以及 `CollisionSeverity`（`Minor`、`Moderate`、`Major`）；`plan_text_for_regions*` 的 `RegionFitPlan.collisions` 直接返回 `Vec<ClassifiedCollision>`（v1.12.0+，severity v1.14.0+） |
+| 需要仅用 PlacedBox 大小评估碰撞严重程度（无 LayoutRegion） | `collision_severity(overlap_area, box_a_area, box_b_area) -> CollisionSeverity` — 独立的严重程度计算函数，面向直接使用 PlacedBox 的调用方；box_area 为 0 时回退到绝对 pt² 阈值（v1.14.0+） |
+| 需要从表单/表格 PDF 中提取标签/值区域对 | `extract_label_value_pairs(regions) -> Vec<LabelValuePair>` — 将每个 `LayoutRegionRole::LeftLabel` 区域与同行的 `RightValue` 兄弟配对；用于检测密集 SDS/表单布局和构建翻译上下文（v1.14.0+） |
 | 需要了解文字排版结果（缩小/溢出/截断） | `FitResult::status: PlacementStatus` — `Ok`（无需调整）、`Shrunk`（字体缩小但在下限以上）、`ShrunkToMin`（已达 `min_font_size` 下限，可能仍溢出）、`Overflow`（`OverflowPolicy::Report` 下溢出）、`Truncated`（`OverflowPolicy::Truncate` 或 `Report + max_lines` 下行被截断）；无需逐一检查各标志位即可做出处置决策（v1.13.0+） |
 | 需要翻译布局的页面级质量门控 | `PageFitSummary::from_plans(plans) -> PageFitSummary` — 对 `RegionFitPlan` 批次进行汇总；字段：`overflow_count`、`collision_count`、`shrunk_count`、`worst_overlap_area`、`worst_overlap_rect`；在写出最终 PDF 前用于质量判断（v1.13.0+） |
 | 需要在 PDF 上可视化调试布局碰撞和文字放置 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 绘制彩色描边矩形（蓝色=源 bbox，绿色=排版文字，红色=碰撞重叠区域）；通过 `DebugOverlayOptions` 配置颜色和线宽；NaN/无效坐标自动跳过（`draw` feature，v1.13.0+） |
@@ -831,6 +833,7 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.11.0** | `LayoutRegionRole`；`BaselinePolicy` + `WidthPolicy` + `RegionTextFitOptions`；`plan_text_for_regions_with_policy`；页眉页脚邻近检测 NaN 保护 |
 | **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 结构性碰撞分类；`RegionFitPlan.collisions` 改为 `Vec<ClassifiedCollision>` |
 | **v1.13.0** | `Collision::overlap_area`（pt² 严重程度字段）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；Bug 修复：Report+max_lines Truncated 状态、WrapThenShrink 下限字体溢出、Truncate rh=0 误判 Ok、NaN 坐标保护 |
+| **v1.14.0** | `CollisionSeverity`（Minor/Moderate/Major）+ `ClassifiedCollision::severity` 字段（按 source_bbox 面积比自动计算）；`collision_severity()` 独立函数；`LabelValuePair` + `extract_label_value_pairs()` — LeftLabel/RightValue 区域配对提取（用于密集表单/SDS PDF 检测） |
 
 ---
 

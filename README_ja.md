@@ -133,7 +133,9 @@ doc.save("searchable.pdf")?;
 | レイアウトセルへの翻訳文配置をまとめて計画したい | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Result<Vec<RegionFitPlan>>` — 各置換文を `region.usable_rect` に `fit_text_to_box` で収め、領域間の衝突を検出し、`RegionFitPlan { region, fit, collisions }` を返す。レイアウト・フィット・衝突検出を1回のパスで完結（v1.10.0+） |
 | 帳票 PDF 翻訳でベースラインを保持し列幅を安全に扱いたい | `doc.plan_text_for_regions_with_policy(regions, replacements, font, options)` — `RegionTextFitOptions` の `BaselinePolicy::PreserveSourceBaseline` で元ベースラインを維持し、`WidthPolicy::SourceLineWidth` でラベル列が値列に侵食しないよう制御。`RegionTextFitOptions::for_role(&region.role)` でロール別デフォルト取得、`&[]` で全領域に自動適用（v1.11.0+） |
 | 領域がラベル・値・見出し・本文のどれかを知りたい | `LayoutRegion::role: LayoutRegionRole` — `LeftLabel` / `RightValue` / `ParagraphBody` / `SectionHeading` / `HeaderFooter` / `Unknown`。`extract_layout_regions` が列位置・行シブリング・ページ端近接から自動割り当て（v1.11.0+） |
-| 衝突の構造的関係（同行・隣接行・ヘッダーフッター）を分類したい | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 各 `Collision` に `CollisionKind`（`SameRegion`・`SameRow`・`AdjacentRow`・`SameColumn`・`HeaderFooter`・`Unknown`）と各領域の `LayoutRegionRole` を付加。`plan_text_for_regions*` の `RegionFitPlan.collisions` は `Vec<ClassifiedCollision>` を直接返す（v1.12.0+） |
+| 衝突の構造的関係（同行・隣接行・ヘッダーフッター）を分類したい | `classify_collisions(regions, collisions) -> Vec<ClassifiedCollision>` — 各 `Collision` に `CollisionKind`（`SameRegion`・`SameRow`・`AdjacentRow`・`SameColumn`・`HeaderFooter`・`Unknown`）、各領域の `LayoutRegionRole`、および `CollisionSeverity`（`Minor`・`Moderate`・`Major`）を付加。`plan_text_for_regions*` の `RegionFitPlan.collisions` は `Vec<ClassifiedCollision>` を直接返す（v1.12.0+、severity は v1.14.0+） |
+| PlacedBox のサイズだけで衝突の深刻度を評価したい（LayoutRegion なし） | `collision_severity(overlap_area, box_a_area, box_b_area) -> CollisionSeverity` — 独立した深刻度計算関数。LayoutRegion を使わない呼び出し元向け。box_area が 0 の場合は絶対 pt² 閾値にフォールバック（v1.14.0+） |
+| フォーム・表形式 PDF からラベル/値のペアを抽出したい | `extract_label_value_pairs(regions) -> Vec<LabelValuePair>` — 各 `LayoutRegionRole::LeftLabel` 領域と同一行の `RightValue` 兄弟を対にする。密集した SDS/帳票 PDF の検出や翻訳コンテキスト構築に有用（v1.14.0+） |
 | テキスト配置の結果（縮小・オーバーフロー・切り詰め）を知りたい | `FitResult::status: PlacementStatus` — `Ok`（調整なしで収まった）、`Shrunk`（フォント縮小・下限以上）、`ShrunkToMin`（`min_font_size` 下限到達・溢れる場合あり）、`Overflow`（`OverflowPolicy::Report` 時のオーバーフロー）、`Truncated`（`OverflowPolicy::Truncate` または `Report + max_lines` での行切り捨て）。フラグを個別確認せず一つのシグナルとして使用可能（v1.13.0+） |
 | 翻訳レイアウトのページ単位品質ゲートが欲しい | `PageFitSummary::from_plans(plans) -> PageFitSummary` — `RegionFitPlan` バッチの集計。フィールド: `overflow_count`・`collision_count`・`shrunk_count`・`worst_overlap_area`・`worst_overlap_rect`。最終 PDF 書き出し前の品質判定に使用（v1.13.0+） |
 | PDF 上でレイアウト衝突や配置をビジュアルデバッグしたい | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 色付きストローク矩形を描画（青=ソース bbox、緑=配置テキスト、赤=衝突重複）。`DebugOverlayOptions` で色と線幅を設定。NaN/無効座標は自動スキップ（`draw` feature、v1.13.0+） |
@@ -949,6 +951,7 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.11.0** | `LayoutRegionRole`；`BaselinePolicy` + `WidthPolicy` + `RegionTextFitOptions`；`plan_text_for_regions_with_policy`；HeaderFooter 近接判定の NaN ガード |
 | **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 構造的衝突分類；`RegionFitPlan.collisions` を `Vec<ClassifiedCollision>` に変更 |
 | **v1.13.0** | `Collision::overlap_area`（pt² 重大度フィールド）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；バグ修正: Report+max_lines Truncated ステータス、WrapThenShrink 下限フォントでの溢れ、Truncate rh=0 誤 Ok、NaN 座標ガード |
+| **v1.14.0** | `CollisionSeverity`（Minor/Moderate/Major）+ `ClassifiedCollision::severity` フィールド（source_bbox 面積比で自動計算）；`collision_severity()` スタンドアロン関数；`LabelValuePair` + `extract_label_value_pairs()` — LeftLabel/RightValue 領域のペア抽出（密集帳票/SDS PDF 検出用） |
 
 ---
 

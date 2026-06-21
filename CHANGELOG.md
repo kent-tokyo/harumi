@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.14.0] — 2026-06-21
+
+### Added (harumi)
+
+- **`CollisionSeverity`** enum (`src/extract.rs`) —
+  How bad a [`ClassifiedCollision`] is relative to the smaller of the two involved
+  boxes: `Minor` (< 5 % of the smaller box area — likely a rounding artifact),
+  `Moderate` (5–20 % — visible but may be structurally acceptable),
+  `Major` (> 20 % — requires font shrinking or AI text shortening).
+  `#[non_exhaustive]` — additive, not breaking.
+
+- **`CollisionSeverity::severity`** field on `ClassifiedCollision` (`src/extract.rs`) —
+  Added to the existing `ClassifiedCollision` struct.  Computed automatically by
+  `classify_collisions` using each region's `source_bbox` area as the reference.
+  Falls back to absolute pt² thresholds (`< 50` = Minor, `< 400` = Moderate,
+  else Major) when a region index is out of range.
+  `ClassifiedCollision` is `#[non_exhaustive]` — additive, not breaking.
+
+- **`collision_severity(overlap_area, box_a_area, box_b_area) -> CollisionSeverity`**
+  (`src/extract.rs`) —
+  Standalone function for callers who work with raw [`PlacedBox`]es rather than
+  [`LayoutRegion`]s.  Pass `0.0` for an area to trigger the absolute fallback.
+
+- **`LabelValuePair`** struct (`src/extract.rs`) —
+  Groups one [`LayoutRegionRole::LeftLabel`] region with all same-row
+  [`LayoutRegionRole::RightValue`] siblings.  `values` is sorted by column index.
+
+- **`extract_label_value_pairs(regions: &[LayoutRegion]) -> Vec<LabelValuePair>`**
+  (`src/extract.rs`) —
+  Pairs label and value regions from a `extract_layout_regions` result.
+  Useful for detecting dense form/table layouts in downstream translation workflows
+  (e.g. harumi-ai Auto mode) and for building label→value context for AI correction.
+
+---
+
 ## [1.13.0] — 2026-06-21
 
 ### Added (harumi)

@@ -1755,3 +1755,154 @@ fn classify_empty_collisions_returns_empty() {
     let result = classify_collisions(&regions, &[]);
     assert!(result.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// CollisionSeverity + collision_severity (v1.14.0)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collision_severity_minor_below_5_percent() {
+    // overlap_area = 4 pt², box = 200 pt² → ratio = 0.02 → Minor
+    assert_eq!(
+        crate::extract::collision_severity(4.0, 200.0, 400.0),
+        crate::extract::CollisionSeverity::Minor
+    );
+}
+
+#[test]
+fn collision_severity_moderate_between_5_and_20_percent() {
+    // overlap_area = 50 pt², box = 500 pt² → ratio = 0.10 → Moderate
+    assert_eq!(
+        crate::extract::collision_severity(50.0, 500.0, 1000.0),
+        crate::extract::CollisionSeverity::Moderate
+    );
+}
+
+#[test]
+fn collision_severity_major_above_20_percent() {
+    // overlap_area = 110 pt², box = 500 pt² → ratio = 0.22 → Major
+    assert_eq!(
+        crate::extract::collision_severity(110.0, 500.0, 1000.0),
+        crate::extract::CollisionSeverity::Major
+    );
+}
+
+#[test]
+fn collision_severity_absolute_fallback_when_area_zero() {
+    // No box area → absolute thresholds
+    assert_eq!(
+        crate::extract::collision_severity(10.0, 0.0, 0.0),
+        crate::extract::CollisionSeverity::Minor,   // < 50 pt²
+    );
+    assert_eq!(
+        crate::extract::collision_severity(200.0, 0.0, 0.0),
+        crate::extract::CollisionSeverity::Moderate, // 50–400 pt²
+    );
+    assert_eq!(
+        crate::extract::collision_severity(500.0, 0.0, 0.0),
+        crate::extract::CollisionSeverity::Major,    // ≥ 400 pt²
+    );
+}
+
+#[test]
+fn classify_collisions_sets_severity_field() {
+    // make_region_for_classify gives source_bbox [0,0,50,10] → area = 500 pt²
+    // make_collision_for_classify gives overlap_area = 100 pt²
+    // ratio = 100 / 500 = 0.20 → exactly at boundary → Major (ratio < 0.20 is false)
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::LeftLabel),
+        make_region_for_classify(Some(0), Some(1), LayoutRegionRole::RightValue),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 1)]);
+    assert_eq!(result[0].severity, crate::extract::CollisionSeverity::Major);
+}
+
+#[test]
+fn classify_collisions_out_of_bounds_uses_absolute_fallback() {
+    // One region in-range (area 500 pt²), one out of bounds → box_b_area = 0
+    // overlap_area = 100 → uses min(500, 0) = 0 → absolute: 100 < 400 → Moderate
+    let regions = vec![
+        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown),
+    ];
+    let result = classify_collisions(&regions, &[make_collision_for_classify(0, 99)]);
+    assert_eq!(result[0].severity, crate::extract::CollisionSeverity::Moderate);
+}
+
+// ---------------------------------------------------------------------------
+// extract_label_value_pairs (v1.14.0)
+// ---------------------------------------------------------------------------
+
+fn make_region_with_role_and_row(row: usize, col: usize, role: LayoutRegionRole, text: &str) -> LayoutRegion {
+    LayoutRegion {
+        kind: LayoutRegionKind::TableCell,
+        role,
+        row: Some(row),
+        col: Some(col),
+        text: text.to_owned(),
+        source_bbox: [0.0, 0.0, 50.0, 10.0],
+        usable_rect: [0.0, 0.0, 50.0, 10.0],
+        fragments: vec![],
+    }
+}
+
+#[test]
+fn extract_label_value_pairs_basic() {
+    let regions = vec![
+        make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "Name"),
+        make_region_with_role_and_row(0, 1, LayoutRegionRole::RightValue, "Value A"),
+        make_region_with_role_and_row(1, 0, LayoutRegionRole::LeftLabel, "Address"),
+        make_region_with_role_and_row(1, 1, LayoutRegionRole::RightValue, "Value B"),
+    ];
+    let pairs = crate::extract::extract_label_value_pairs(&regions);
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(pairs[0].label.text, "Name");
+    assert_eq!(pairs[0].values.len(), 1);
+    assert_eq!(pairs[0].values[0].text, "Value A");
+    assert_eq!(pairs[1].label.text, "Address");
+    assert_eq!(pairs[1].values[0].text, "Value B");
+}
+
+#[test]
+fn extract_label_value_pairs_multiple_values_per_label() {
+    let regions = vec![
+        make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "Label"),
+        make_region_with_role_and_row(0, 1, LayoutRegionRole::RightValue, "Val 1"),
+        make_region_with_role_and_row(0, 2, LayoutRegionRole::RightValue, "Val 2"),
+    ];
+    let pairs = crate::extract::extract_label_value_pairs(&regions);
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].values.len(), 2);
+    // Values sorted by column
+    assert_eq!(pairs[0].values[0].text, "Val 1");
+    assert_eq!(pairs[0].values[1].text, "Val 2");
+}
+
+#[test]
+fn extract_label_value_pairs_lone_value_skipped() {
+    // RightValue with no LeftLabel on the same row → not in output
+    let regions = vec![
+        make_region_with_role_and_row(0, 1, LayoutRegionRole::RightValue, "Orphan"),
+    ];
+    let pairs = crate::extract::extract_label_value_pairs(&regions);
+    assert!(pairs.is_empty());
+}
+
+#[test]
+fn extract_label_value_pairs_skips_regions_without_row() {
+    let mut region = make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "X");
+    region.row = None;  // No row → skip
+    let regions = vec![region];
+    let pairs = crate::extract::extract_label_value_pairs(&regions);
+    assert!(pairs.is_empty());
+}
+
+#[test]
+fn extract_label_value_pairs_empty_values_list_ok() {
+    // Label with no value siblings is still returned (values is empty Vec)
+    let regions = vec![
+        make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "Solo"),
+    ];
+    let pairs = crate::extract::extract_label_value_pairs(&regions);
+    assert_eq!(pairs.len(), 1);
+    assert!(pairs[0].values.is_empty());
+}

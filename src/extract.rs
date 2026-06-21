@@ -400,6 +400,69 @@ pub enum CollisionKind {
     Unknown,
 }
 
+/// How bad a collision is, based on how much of the smaller box it covers.
+///
+/// Returned as [`ClassifiedCollision::severity`].  Use this to decide whether to
+/// ignore a collision, try font shrinking, or escalate to AI text shortening.
+///
+/// See also the standalone [`collision_severity`] function for callers who work
+/// with raw [`PlacedBox`]es rather than [`LayoutRegion`]s.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollisionSeverity {
+    /// Overlap covers less than 5 % of the smaller box — likely a rounding artifact
+    /// or a deliberate structural touch (e.g. label/value adjacency).
+    Minor,
+    /// Overlap covers 5–20 % of the smaller box — visible but may be acceptable
+    /// depending on the layout profile (e.g. an overflowing heading).
+    Moderate,
+    /// Overlap covers more than 20 % of the smaller box — significant enough to
+    /// require shrinking, truncation, or AI text shortening.
+    Major,
+}
+
+/// Compute a [`CollisionSeverity`] from raw box areas.
+///
+/// `overlap_area` is in PDF points² (from [`Collision::overlap_area`]).
+/// `box_a_area` and `box_b_area` are the areas of the two overlapping boxes.
+/// The severity is determined by the ratio of the overlap to the *smaller* box area.
+///
+/// Pass `0.0` for a box area when it is unknown; the function then falls back to
+/// absolute thresholds (`< 50 pt²` = Minor, `< 400 pt²` = Moderate, else Major).
+///
+/// # Example
+///
+/// ```rust
+/// use harumi::{collision_severity, CollisionSeverity};
+///
+/// // A 10×5 pt overlap in a 20×10 pt box (200 pt²) is 25 % → Major
+/// assert_eq!(collision_severity(50.0, 200.0, 400.0), CollisionSeverity::Major);
+/// // A 2×2 pt overlap in a 50×20 pt box (1000 pt²) is 0.4 % → Minor
+/// assert_eq!(collision_severity(4.0, 1000.0, 2000.0), CollisionSeverity::Minor);
+/// ```
+pub fn collision_severity(overlap_area: f32, box_a_area: f32, box_b_area: f32) -> CollisionSeverity {
+    let ref_area = box_a_area.min(box_b_area);
+    if ref_area > 0.0 && ref_area.is_finite() {
+        let ratio = overlap_area / ref_area;
+        if ratio < 0.05 {
+            CollisionSeverity::Minor
+        } else if ratio < 0.20 {
+            CollisionSeverity::Moderate
+        } else {
+            CollisionSeverity::Major
+        }
+    } else {
+        // Fallback: absolute thresholds when box sizes are unknown
+        if overlap_area < 50.0 {
+            CollisionSeverity::Minor
+        } else if overlap_area < 400.0 {
+            CollisionSeverity::Moderate
+        } else {
+            CollisionSeverity::Major
+        }
+    }
+}
+
 /// A [`Collision`] annotated with the structural relationship between
 /// the two overlapping [`LayoutRegion`]s.
 ///
@@ -415,6 +478,12 @@ pub struct ClassifiedCollision {
     pub region_a: Option<LayoutRegionRole>,
     /// Role of the region at `collision.index_b`, or `None` if out of bounds.
     pub region_b: Option<LayoutRegionRole>,
+    /// How bad this collision is relative to the smaller of the two involved boxes.
+    ///
+    /// `Minor` collisions are often structural artefacts; `Major` ones need correction.
+    /// Computed from `collision.overlap_area` and the `source_bbox` areas of the two regions.
+    /// Falls back to absolute thresholds when a region index is out of bounds.
+    pub severity: CollisionSeverity,
 }
 
 /// Annotate each [`Collision`] with a [`CollisionKind`] by comparing the
@@ -450,11 +519,14 @@ pub fn classify_collisions(
         .map(|c| {
             let ra = regions.get(c.index_a);
             let rb = regions.get(c.index_b);
+            let area_a = ra.map(|r| r.source_bbox[2] * r.source_bbox[3]).unwrap_or(0.0);
+            let area_b = rb.map(|r| r.source_bbox[2] * r.source_bbox[3]).unwrap_or(0.0);
             ClassifiedCollision {
                 collision: c.clone(),
                 kind: classify_collision_kind(ra, rb),
                 region_a: ra.map(|r| r.role.clone()),
                 region_b: rb.map(|r| r.role.clone()),
+                severity: collision_severity(c.overlap_area, area_a, area_b),
             }
         })
         .collect()
@@ -3856,6 +3928,78 @@ impl PageFitSummary {
             worst_overlap_rect: worst_rect,
         }
     }
+}
+
+/// A matched label/value region pair extracted from a form or table layout.
+///
+/// Returned by [`extract_label_value_pairs`].  Each entry groups one
+/// [`LayoutRegionRole::LeftLabel`] region with all [`LayoutRegionRole::RightValue`]
+/// siblings that share the same `row` index.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LabelValuePair {
+    /// The left-column label region (`role == LeftLabel`).
+    pub label: LayoutRegion,
+    /// Right-column value regions on the same row (`role == RightValue`).
+    /// Ordered by column index (left to right).  Typically one entry, but dense
+    /// forms occasionally split a single row into multiple value columns.
+    pub values: Vec<LayoutRegion>,
+}
+
+/// Pair [`LayoutRegionRole::LeftLabel`] regions with their same-row
+/// [`LayoutRegionRole::RightValue`] siblings.
+///
+/// Pass the slice returned by [`extract_layout_regions`].  Regions without a
+/// row index, or lone `RightValue` entries with no matching `LeftLabel`, are
+/// silently skipped.
+///
+/// # Example
+///
+/// ```rust
+/// use harumi::{LayoutRegionOptions, TextFragment, extract_layout_regions, extract_label_value_pairs};
+///
+/// // (Assuming frags extracted from a form PDF)
+/// # let frags: Vec<TextFragment> = vec![];
+/// let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
+/// let pairs = extract_label_value_pairs(&regions);
+/// for pair in &pairs {
+///     println!("Label: {}  Value: {}", pair.label.text,
+///              pair.values.first().map(|v| v.text.as_str()).unwrap_or("—"));
+/// }
+/// ```
+pub fn extract_label_value_pairs(regions: &[LayoutRegion]) -> Vec<LabelValuePair> {
+    use std::collections::BTreeMap;
+
+    // Collect labels and values keyed by row index
+    let mut labels: BTreeMap<usize, LayoutRegion> = BTreeMap::new();
+    let mut values: BTreeMap<usize, Vec<LayoutRegion>> = BTreeMap::new();
+
+    for region in regions {
+        let Some(row) = region.row else { continue };
+        match region.role {
+            LayoutRegionRole::LeftLabel => {
+                labels.insert(row, region.clone());
+            }
+            LayoutRegionRole::RightValue => {
+                values.entry(row).or_default().push(region.clone());
+            }
+            _ => {}
+        }
+    }
+
+    // Sort each row's values by column index
+    for vals in values.values_mut() {
+        vals.sort_by_key(|r| r.col.unwrap_or(usize::MAX));
+    }
+
+    // Pair labels with their row's values; rows without a label are already absent
+    labels
+        .into_iter()
+        .map(|(row, label)| {
+            let vals = values.remove(&row).unwrap_or_default();
+            LabelValuePair { label, values: vals }
+        })
+        .collect()
 }
 
 /// Functional role of a [`LayoutRegion`] in a translation or editing workflow.
