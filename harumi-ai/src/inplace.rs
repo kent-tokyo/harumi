@@ -114,7 +114,7 @@ pub(crate) async fn translate_pdf_inplace_inner(
             let max_fs_cap = line.line_height * 0.85;
             let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
             let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
-            let avail_w = (line.col_right - line.x).max(50.0);
+            let avail_w = (line.region_usable_right - line.x).max(50.0);
 
             let below = line.font_size.max(global_body_fs) * descender_ratio;
             let y = line.y - below;

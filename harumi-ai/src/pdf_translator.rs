@@ -250,7 +250,7 @@ impl TranslateOptions {
             r"^\d{1,7}-\d{2}-\d$",                              // CAS: 7664-93-9
             r"^UN\s?\d{4}$",                                     // UN1830
             r"^\d+(\.\d+)?\s*(mg|kg|mL|L|ppm|ppb|%|°C|K|Pa|MPa|bar|mol|g|t|μg|ng)(/\w+)?$",
-            r"^[<>≤≥±]\s*\d",                                   // < 5, ≥ 10
+            r"^[<>≤≥±]\s*[\d.,]+(\s*[\w%/°]+)?$",               // < 5, ≥ 10, ± 0.5 %
         ].map(String::from));
         self
     }
@@ -391,6 +391,18 @@ impl TranslateOptionsBuilder {
     /// Add a regex pattern for text that must not be translated.
     pub fn add_skip_pattern(mut self, pattern: impl Into<String>) -> Self {
         self.skip_patterns.push(pattern.into());
+        self
+    }
+
+    /// Skip headers and footers (default `false`).
+    pub fn skip_header_footer(mut self, v: bool) -> Self {
+        self.skip_header_footer = v;
+        self
+    }
+
+    /// Auto-skip math/formula lines via Unicode detection (default `false`).
+    pub fn auto_skip_math(mut self, v: bool) -> Self {
+        self.auto_skip_math = v;
         self
     }
 

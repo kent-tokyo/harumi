@@ -51,7 +51,9 @@ pub(crate) struct OverlayLine {
     pub(crate) y: f32,
     /// Actual right edge of the text run (x + width of rightmost fragment).
     pub(crate) right: f32,
-    /// Right boundary of the column this line belongs to (used for avail_w).
+    /// Right boundary of the column (from detect_text_columns). Superseded by
+    /// `region_usable_right` for avail_w calculations; retained for debugging.
+    #[allow(dead_code)]
     pub(crate) col_right: f32,
     pub(crate) line_height: f32,
     pub(crate) is_heading: bool,
@@ -528,9 +530,11 @@ fn is_math_char(c: char) -> bool {
 
 /// Returns true when a line's text is primarily math/formula content.
 ///
-/// Heuristic: short text (≤ 20 chars) with any math char; or longer text
-/// where math chars dominate AND ordinary alphabetic prose is sparse.
-/// Does NOT flag "The coefficient α represents …" — prose with occasional symbols.
+/// Short text (≤ 20 chars): requires at least 2 math chars OR > 25 % math-char
+/// fraction.  This prevents "β-carotene content" (1 Greek char in 17) from being
+/// flagged while still catching "H₂SO₄" (2 subscripts in 6) and "α" (1 in 1).
+/// Longer text: math chars must dominate AND ordinary alphabetic prose must be
+/// sparse — "The coefficient α represents…" is not flagged.
 fn text_is_primarily_math(text: &str) -> bool {
     if text.is_empty() { return false; }
     let total = text.chars().count();
@@ -539,8 +543,9 @@ fn text_is_primarily_math(text: &str) -> bool {
     let alpha_prose = text.chars()
         .filter(|c| c.is_alphabetic() && !is_math_char(*c))
         .count();
-    // Short token: flag on any math char (e.g. "α", "H₂SO₄", "∑x²").
-    if total <= 20 { return true; }
+    // Short token: require ≥2 math chars OR >25% math fraction.
+    // Prevents "β-carotene content" (1/17 ≈ 6%) from being dropped.
+    if total <= 20 { return math_count >= 2 || math_count * 4 >= total; }
     // Long text: require math to be the majority AND prose to be sparse.
     math_count * 2 > total && alpha_prose * 4 < total
 }
@@ -581,11 +586,14 @@ pub(crate) async fn extract_and_translate(
     };
 
     // ── Pre-resolution: skip patterns + cache ────────────────────────────────
-    // resolved: (page_num, line_idx) → pre-resolved translation text.
+    // resolved: (page_num, line_idx) → pre-resolved translation text ("" for skip lines).
     // These entries are excluded from the AI batch.
     let mut resolved: HashMap<(u32, usize), String> = HashMap::new();
+    // Track lines that must be completely untouched (no white rect, no text placement).
+    let mut skip_line_set: std::collections::HashSet<(u32, usize)> = std::collections::HashSet::new();
 
     // 1. Skip patterns (compiled once; invalid regexes are silently ignored).
+    //    Matched lines are fully skipped (is_skip=true, empty translation).
     let skip_regexes: Vec<regex::Regex> = options.skip_patterns.iter()
         .filter_map(|p| regex::Regex::new(p).ok())
         .collect();
@@ -594,13 +602,17 @@ pub(crate) async fn extract_and_translate(
             for (idx, line) in op.lines.iter().enumerate() {
                 let text = line.text.trim();
                 if !text.is_empty() && skip_regexes.iter().any(|re| re.is_match(text)) {
-                    resolved.insert((op.page_num, idx), line.text.clone());
+                    // Store "" so apply_overlay skips text placement.
+                    resolved.insert((op.page_num, idx), String::new());
+                    skip_line_set.insert((op.page_num, idx));
                 }
             }
         }
     }
 
     // 2. Translation cache (lock briefly, not across .await).
+    //    Cache keys are namespaced by target_lang to prevent cross-language hits
+    //    when the same Arc<Mutex<TranslationCache>> is reused across translation calls.
     let mut cache_hits = 0usize;
     let mut cache_misses = 0usize;
     if let Some(cache_arc) = &options.cache {
@@ -608,9 +620,11 @@ pub(crate) async fn extract_and_translate(
         for op in &overlay_pages {
             for (idx, line) in op.lines.iter().enumerate() {
                 if resolved.contains_key(&(op.page_num, idx)) { continue; }
-                let key = line.text.trim();
-                if key.is_empty() { continue; }
-                if let Some(t) = cache.get(key) {
+                let raw_key = line.text.trim();
+                if raw_key.is_empty() { continue; }
+                // Namespace by target_lang (NUL separator avoids collisions).
+                let ns_key = format!("{}\x00{raw_key}", options.target_lang);
+                if let Some(t) = cache.get(&ns_key) {
                     resolved.insert((op.page_num, idx), t.to_owned());
                     cache_hits += 1;
                 } else {
@@ -628,23 +642,33 @@ pub(crate) async fn extract_and_translate(
         );
     }
 
-    // 3. is_skip: HeaderFooter (when skip_header_footer) and math lines (when auto_skip_math).
-    //    Marked lines are added to resolved as "" so they're excluded from the AI batch
-    //    and skipped in apply_overlay (no white rect, no text placement).
+    // 3. is_skip: skip-pattern lines, HeaderFooter, and math lines.
+    //    All marked lines get is_skip=true so apply_overlay omits white rects AND
+    //    text placement, leaving the original PDF content completely untouched.
     for op in &mut overlay_pages {
         for (idx, line) in op.lines.iter_mut().enumerate() {
+            // Skip-pattern lines (step 1) are already in skip_line_set.
+            if skip_line_set.contains(&(op.page_num, idx)) {
+                line.is_skip = true;
+                continue;
+            }
+            // Cache-hit lines (step 2): not is_skip — they need white rect + translated text.
             if resolved.contains_key(&(op.page_num, idx)) { continue; }
-            let skip = (options.skip_header_footer
-                && line.region_role == LayoutRegionRole::HeaderFooter)
-                || (options.auto_skip_math && text_is_primarily_math(line.text.trim()));
-            if skip {
-                if options.auto_skip_math && text_is_primarily_math(line.text.trim()) {
-                    eprintln!(
-                        "[harumi-ai] auto_skip_math: p{} \"{}\"",
-                        op.page_num,
-                        line.text.chars().take(40).collect::<String>()
-                    );
-                }
+
+            let is_header_footer_skip = options.skip_header_footer
+                && line.region_role == LayoutRegionRole::HeaderFooter;
+            let is_math_skip = options.auto_skip_math
+                && text_is_primarily_math(line.text.trim());
+
+            if is_math_skip {
+                // Sanitize before logging: replace control chars to prevent terminal injection.
+                let safe_text: String = line.text.chars().take(40)
+                    .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+                    .collect();
+                eprintln!("[harumi-ai] auto_skip_math: p{} {:?}", op.page_num, safe_text);
+            }
+
+            if is_header_footer_skip || is_math_skip {
                 line.is_skip = true;
                 resolved.insert((op.page_num, idx), String::new());
             }
@@ -734,13 +758,16 @@ pub(crate) async fn extract_and_translate(
     }
 
     // Store AI translations back into the cache (brief lock, not across .await).
+    // Keys are namespaced by target_lang (same scheme as the lookup above).
     if let Some(cache_arc) = &options.cache {
         let mut cache = cache_arc.lock().await;
         for op in &overlay_pages {
             if let Some(id_map) = ai_results.get(&op.page_num) {
                 for (id, translated) in id_map {
                     if let Some(line) = op.lines.get(*id) {
-                        cache.insert(line.text.trim().to_owned(), translated.clone());
+                        let raw_key = line.text.trim();
+                        let ns_key = format!("{}\x00{raw_key}", options.target_lang);
+                        cache.insert(ns_key, translated.clone());
                     }
                 }
             }
@@ -748,9 +775,10 @@ pub(crate) async fn extract_and_translate(
     }
 
     // ── Merge: build positional Vec<String> per page ─────────────────────────
-    // Walks 0..line_count and pulls from: resolved → AI result → original text.
-    // This guarantees the Vec<String> is always len == lines.len() and aligned
-    // positionally, as required by the correction loop and apply_overlay.
+    // Priority: resolved (skip/cache) → AI result → empty string (with warning).
+    // Empty string means: no white rect, no text placement (original preserved).
+    // Previously this fell back to original source text, which silently embedded
+    // untranslated content in the output PDF when the AI dropped a block.
     let mut page_translations: HashMap<u32, Vec<String>> = HashMap::new();
     for op in &overlay_pages {
         let ai_map = ai_results.get(&op.page_num);
@@ -761,7 +789,13 @@ pub(crate) async fn extract_and_translate(
                 } else if let Some(t) = ai_map.and_then(|m| m.get(&idx)) {
                     t.clone()
                 } else {
-                    op.lines[idx].text.clone()
+                    // AI dropped this block. Use empty string so the original is
+                    // left uncovered rather than silently embedding source text.
+                    eprintln!(
+                        "[harumi-ai] AI dropped block p{}:{idx} — original left in place",
+                        op.page_num
+                    );
+                    String::new()
                 }
             })
             .collect();
