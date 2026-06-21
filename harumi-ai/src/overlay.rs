@@ -9,7 +9,6 @@ use ttf_parser::Face;
 
 use crate::{
     Error, OverflowStrategy, Result, TranslateOptions,
-    builder::OutputBlock,
     extractor,
     output::{CorrectionRound, TranslateOutput, TranslateQuality, PageQualityReport},
     prompts::layout_correction_prompt,
@@ -463,6 +462,15 @@ async fn run_correction_loop(
 
 /// Phases 1 and 2 shared between Overlay and InPlace modes.
 /// Returns (overlay_pages, page_translations, global_body_fs).
+///
+/// When `options.skip_patterns` is non-empty, matching lines are kept
+/// verbatim and excluded from the AI batch.  When `options.cache` is set,
+/// cached translations are also resolved before the AI call; results from
+/// the AI are stored back into the cache afterwards.
+///
+/// The returned `page_translations` Vec is positionally aligned with
+/// `overlay_pages[i].lines` — i.e. `page_translations[page_num][j]` is
+/// the translation of `overlay_pages[i].lines[j]`.
 pub(crate) async fn extract_and_translate(
     pdf_bytes: &[u8],
     options: &TranslateOptions,
@@ -472,8 +480,6 @@ pub(crate) async fn extract_and_translate(
     let overlay_pages = extract_overlay_pages(&mut doc)?;
     drop(doc);
 
-    // Use a single global body_font_size across all pages so font sizes are
-    // consistent. Take the median of per-page estimates; fall back to 12pt.
     let global_body_fs = {
         let mut sizes: Vec<f32> = overlay_pages.iter()
             .filter(|p| !p.lines.is_empty())
@@ -487,78 +493,169 @@ pub(crate) async fn extract_and_translate(
         }
     };
 
-    let page_contents: Vec<extractor::PageContent> = overlay_pages
-        .iter()
-        .map(|op| {
-            let blocks = op.lines.iter().enumerate()
-                .map(|(id, line)| extractor::Block { id, block_type: "paragraph".to_owned(), text: line.text.clone() })
-                .collect();
-            extractor::PageContent { page_num: op.page_num, size: (0.0, 0.0), blocks }
-        })
+    // ── Pre-resolution: skip patterns + cache ────────────────────────────────
+    // resolved: (page_num, line_idx) → pre-resolved translation text.
+    // These entries are excluded from the AI batch.
+    let mut resolved: HashMap<(u32, usize), String> = HashMap::new();
+
+    // 1. Skip patterns (compiled once; invalid regexes are silently ignored).
+    let skip_regexes: Vec<regex::Regex> = options.skip_patterns.iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
         .collect();
-
-    // ── Phase 2: Translate ────────────────────────────────────────────────────
-    let translator = Arc::clone(&options.translator);
-    let target_lang = options.target_lang.clone();
-    let source_lang = options.source_lang.clone();
-    let batch_size = options.pages_per_batch;
-
-    let batches: Vec<Vec<extractor::PageContent>> = page_contents
-        .chunks(batch_size)
-        .map(<[_]>::to_vec)
-        .collect();
-
-    let mut page_translations: HashMap<u32, Vec<String>> = HashMap::new();
-
-    let total_pages = overlay_pages.len() as u32;
-    let done_pages = Arc::new(AtomicU32::new(0));
-
-    let results: Vec<(u32, Vec<String>)> = stream::iter(batches)
-        .map(|batch| {
-            let translator = Arc::clone(&translator);
-            let target = target_lang.clone();
-            let src = source_lang.clone();
-            let batch_len = batch.len() as u32;
-            let done_pages = Arc::clone(&done_pages);
-            let progress = options.progress_fn.clone();
-            async move {
-                let batch_json = extractor::pages_to_json(&batch)?;
-                let results = translator.translate(&[batch_json], &target, src.as_deref()).await?;
-                let json = results.into_iter().next()
-                    .ok_or_else(|| Error::Translator("translator returned empty result".into()))?;
-                let page_block_lists = extractor::json_to_translated_pages(&json)?;
-
-                let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
-                if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
-
-                let out: Vec<(u32, Vec<String>)> = batch
-                    .iter()
-                    .zip(page_block_lists.iter().chain(std::iter::repeat(&vec![])))
-                    .map(|(orig, t_blocks)| {
-                        let texts: Vec<String> = t_blocks.iter()
-                            .filter_map(|tb| {
-                                orig.blocks.iter().find(|b| b.id == tb.id)
-                                    .map(|_| OutputBlock { block_type: "paragraph".to_owned(), text: tb.text.clone() }.text)
-                            })
-                            .collect();
-                        (orig.page_num, texts)
-                    })
-                    .collect();
-
-                Ok::<Vec<(u32, Vec<String>)>, Error>(out)
+    if !skip_regexes.is_empty() {
+        for op in &overlay_pages {
+            for (idx, line) in op.lines.iter().enumerate() {
+                let text = line.text.trim();
+                if !text.is_empty() && skip_regexes.iter().any(|re| re.is_match(text)) {
+                    resolved.insert((op.page_num, idx), line.text.clone());
+                }
             }
+        }
+    }
+
+    // 2. Translation cache (lock briefly, not across .await).
+    let mut cache_hits = 0usize;
+    let mut cache_misses = 0usize;
+    if let Some(cache_arc) = &options.cache {
+        let mut cache = cache_arc.lock().await;
+        for op in &overlay_pages {
+            for (idx, line) in op.lines.iter().enumerate() {
+                if resolved.contains_key(&(op.page_num, idx)) { continue; }
+                let key = line.text.trim();
+                if key.is_empty() { continue; }
+                if let Some(t) = cache.get(key) {
+                    resolved.insert((op.page_num, idx), t.to_owned());
+                    cache_hits += 1;
+                } else {
+                    cache_misses += 1;
+                }
+            }
+        }
+        // mutex released here — not held across the AI call below
+    }
+    if cache_hits + cache_misses > 0 {
+        eprintln!(
+            "[harumi-ai] Cache: {} hits, {} misses ({:.0}% saved)",
+            cache_hits, cache_misses,
+            cache_hits as f64 / (cache_hits + cache_misses) as f64 * 100.0
+        );
+    }
+
+    // ── Phase 2: Translate (only non-resolved blocks) ────────────────────────
+    // Build filtered page_contents; pages where every block is resolved are
+    // omitted entirely so we don't send empty batches to the AI.
+    let page_contents: Vec<extractor::PageContent> = overlay_pages.iter()
+        .filter_map(|op| {
+            let blocks: Vec<extractor::Block> = op.lines.iter().enumerate()
+                .filter(|(idx, _)| !resolved.contains_key(&(op.page_num, *idx)))
+                .map(|(id, line)| extractor::Block {
+                    id,
+                    block_type: "paragraph".to_owned(),
+                    text: line.text.clone(),
+                })
+                .collect();
+            if blocks.is_empty() { None }
+            else { Some(extractor::PageContent { page_num: op.page_num, size: (0.0, 0.0), blocks }) }
         })
-        .buffered(options.concurrency)
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
         .collect();
 
-    for (page_num, texts) in results {
-        page_translations.insert(page_num, texts);
+    // ai_results: page_num → { line_idx → translated_text }
+    let mut ai_results: HashMap<u32, HashMap<usize, String>> = HashMap::new();
+
+    if !page_contents.is_empty() {
+        let translator = Arc::clone(&options.translator);
+        let target_lang = options.target_lang.clone();
+        let source_lang = options.source_lang.clone();
+        let batch_size = options.pages_per_batch;
+        let batches: Vec<Vec<extractor::PageContent>> = page_contents
+            .chunks(batch_size)
+            .map(<[_]>::to_vec)
+            .collect();
+        let total_pages = overlay_pages.len() as u32;
+        let done_pages = Arc::new(AtomicU32::new(0));
+
+        let results: Vec<(u32, Vec<(usize, String)>)> = stream::iter(batches)
+            .map(|batch| {
+                let translator = Arc::clone(&translator);
+                let target = target_lang.clone();
+                let src = source_lang.clone();
+                let batch_len = batch.len() as u32;
+                let done_pages = Arc::clone(&done_pages);
+                let progress = options.progress_fn.clone();
+                async move {
+                    let batch_json = extractor::pages_to_json(&batch)?;
+                    let results = translator.translate(&[batch_json], &target, src.as_deref()).await?;
+                    let json = results.into_iter().next()
+                        .ok_or_else(|| Error::Translator("translator returned empty result".into()))?;
+                    let page_block_lists = extractor::json_to_translated_pages(&json)?;
+
+                    let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
+                    if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
+
+                    // Return (id, text) pairs to preserve line-index information.
+                    let out: Vec<(u32, Vec<(usize, String)>)> = batch.iter()
+                        .zip(page_block_lists.iter().chain(std::iter::repeat(&vec![])))
+                        .map(|(orig, t_blocks)| {
+                            let pairs: Vec<(usize, String)> = t_blocks.iter()
+                                .filter_map(|tb| {
+                                    orig.blocks.iter().find(|b| b.id == tb.id)
+                                        .map(|b| (b.id, tb.text.clone()))
+                                })
+                                .collect();
+                            (orig.page_num, pairs)
+                        })
+                        .collect();
+
+                    Ok::<Vec<(u32, Vec<(usize, String)>)>, Error>(out)
+                }
+            })
+            .buffered(options.concurrency)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+
+        for (page_num, pairs) in results {
+            ai_results.insert(page_num, pairs.into_iter().collect());
+        }
+    }
+
+    // Store AI translations back into the cache (brief lock, not across .await).
+    if let Some(cache_arc) = &options.cache {
+        let mut cache = cache_arc.lock().await;
+        for op in &overlay_pages {
+            if let Some(id_map) = ai_results.get(&op.page_num) {
+                for (id, translated) in id_map {
+                    if let Some(line) = op.lines.get(*id) {
+                        cache.insert(line.text.trim().to_owned(), translated.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Merge: build positional Vec<String> per page ─────────────────────────
+    // Walks 0..line_count and pulls from: resolved → AI result → original text.
+    // This guarantees the Vec<String> is always len == lines.len() and aligned
+    // positionally, as required by the correction loop and apply_overlay.
+    let mut page_translations: HashMap<u32, Vec<String>> = HashMap::new();
+    for op in &overlay_pages {
+        let ai_map = ai_results.get(&op.page_num);
+        let texts: Vec<String> = (0..op.lines.len())
+            .map(|idx| {
+                if let Some(t) = resolved.get(&(op.page_num, idx)) {
+                    t.clone()
+                } else if let Some(t) = ai_map.and_then(|m| m.get(&idx)) {
+                    t.clone()
+                } else {
+                    op.lines[idx].text.clone()
+                }
+            })
+            .collect();
+        page_translations.insert(op.page_num, texts);
     }
 
     Ok((overlay_pages, page_translations, global_body_fs))
@@ -846,4 +943,47 @@ fn apply_overlay(
     }
 
     doc.save_to_bytes().map_err(Into::into)
+}
+
+// ── Bilingual mode ────────────────────────────────────────────────────────────
+
+/// Produce a bilingual PDF where each original page is followed by its
+/// translated version.
+///
+/// Output page order: `[orig_1, trans_1, orig_2, trans_2, …, orig_n, trans_n]`.
+pub async fn translate_pdf_bilingual_full(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<crate::output::TranslateOutput> {
+    use crate::output::{TranslateOutput, TranslateQuality};
+    use crate::pdf_translator::TranslationMode;
+
+    // Step 1: Translate with Overlay to get translated bytes + quality data.
+    let mut overlay_opts = options;
+    overlay_opts.mode = TranslationMode::Overlay;
+    let translated = translate_pdf_overlay_full(pdf_bytes, overlay_opts).await?;
+
+    // Step 2: Load original and translated documents, then interleave pages.
+    // After merge_from: pages 1..=n are original, pages n+1..=2n are translated.
+    let mut combined = Document::from_bytes(pdf_bytes)?;
+    let trans_doc = Document::from_bytes(&translated.pdf_bytes)?;
+    let n = combined.page_count();
+
+    combined.merge_from(trans_doc)?;
+
+    // Reorder to [orig_1, trans_1, orig_2, trans_2, ..., orig_n, trans_n].
+    let order: Vec<u32> = (1..=n).flat_map(|i| [i, i + n]).collect();
+    combined.reorder_pages(&order)?;
+
+    Ok(TranslateOutput {
+        pdf_bytes: combined.save_to_bytes()?,
+        quality: TranslateQuality {
+            pages: translated.quality.pages,
+            overall: translated.quality.overall,
+            correction_rounds: translated.quality.correction_rounds,
+            mode_used: TranslationMode::Bilingual,
+            fallback_reason: None,
+        },
+        debug: None,
+    })
 }

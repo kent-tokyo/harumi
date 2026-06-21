@@ -6,10 +6,12 @@ use harumi::Document;
 use crate::{
     Error, LayoutOptions, Result, Translator,
     builder::{self, OutputBlock, TranslatedPage},
+    cache::TranslationCache,
     extractor,
     output::{DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality},
     quality::{QualityGate, QualityProfile, QualityResult},
 };
+use tokio::sync::Mutex;
 
 /// Controls what happens when translated text is wider than the original bounding box.
 pub enum OverflowStrategy {
@@ -62,6 +64,12 @@ pub enum TranslationMode {
     /// `InPlace` is tried first.  The mode that was actually used is reported in
     /// [`TranslateQuality::mode_used`].
     Auto,
+    /// Produce a bilingual PDF where each original page is immediately followed by
+    /// its translated version.
+    ///
+    /// Output page order: `[orig_1, trans_1, orig_2, trans_2, …, orig_n, trans_n]`.
+    /// Useful for side-by-side review and quality-checking workflows.
+    Bilingual,
 }
 
 /// Options for [`translate_pdf`].
@@ -128,6 +136,19 @@ pub struct TranslateOptions {
     /// Controls which debug artifacts are included in [`TranslateOutput::debug`]
     /// (default: all `false`).
     pub debug: DebugOptions,
+    /// Optional shared in-memory translation cache.
+    ///
+    /// When set, repeated phrases are resolved from the cache instead of being
+    /// sent to the AI provider.  Pass the same `Arc` across multiple
+    /// `translate_pdf` calls to share the cache between documents.
+    /// Use [`TranslateOptions::with_cache`] to set this in a builder chain.
+    pub cache: Option<Arc<Mutex<TranslationCache>>>,
+    /// Regex patterns for text that must NOT be translated (passed through as-is).
+    ///
+    /// Each string is compiled as a full-match [`regex::Regex`].  Strings that
+    /// fail to compile are silently skipped.  Use
+    /// [`TranslateOptions::with_sds_patterns`] to add built-in SDS defaults.
+    pub skip_patterns: Vec<String>,
 }
 
 impl Clone for TranslateOptions {
@@ -160,6 +181,8 @@ impl Clone for TranslateOptions {
             },
             max_correction_rounds: self.max_correction_rounds,
             debug: self.debug.clone(),
+            cache: self.cache.as_ref().map(Arc::clone),
+            skip_patterns: self.skip_patterns.clone(),
         }
     }
 }
@@ -187,7 +210,31 @@ impl TranslateOptions {
             profile: QualityProfile::default(),
             max_correction_rounds: 2,
             debug: DebugOptions::default(),
+            cache: None,
+            skip_patterns: vec![],
         }
+    }
+
+    /// Attach a shared translation cache.
+    pub fn with_cache(mut self, cache: Arc<Mutex<TranslationCache>>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Add built-in skip patterns for SDS (Safety Data Sheet) documents.
+    ///
+    /// Protects: chemical formulas (H₂SO₄), CAS numbers (7664-93-9), UN
+    /// numbers (UN1830), numeric value+unit strings, and comparison expressions.
+    pub fn with_sds_patterns(mut self) -> Self {
+        self.skip_patterns.extend([
+            r"^[A-Z][a-z]?\d*(\([A-Z][a-z]?\d*\)[\d]?)+$",    // Ca(OH)2, Fe2(SO4)3
+            r"^[A-Z][a-z]?\d+([A-Z][a-z]?\d*)*$",              // H2SO4, NaOH, CO2
+            r"^\d{1,7}-\d{2}-\d$",                              // CAS: 7664-93-9
+            r"^UN\s?\d{4}$",                                     // UN1830
+            r"^\d+(\.\d+)?\s*(mg|kg|mL|L|ppm|ppb|%|°C|K|Pa|MPa|bar|mol|g|t|μg|ng)(/\w+)?$",
+            r"^[<>≤≥±]\s*\d",                                   // < 5, ≥ 10
+        ].map(String::from));
+        self
     }
 
     pub fn builder() -> TranslateOptionsBuilder {
@@ -215,6 +262,8 @@ pub struct TranslateOptionsBuilder {
     profile: Option<QualityProfile>,
     max_correction_rounds: Option<usize>,
     debug: Option<DebugOptions>,
+    cache: Option<Arc<Mutex<TranslationCache>>>,
+    skip_patterns: Vec<String>,
 }
 
 impl TranslateOptionsBuilder {
@@ -313,6 +362,18 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Attach a shared translation cache.
+    pub fn with_cache(mut self, cache: Arc<Mutex<TranslationCache>>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Add a regex pattern for text that must not be translated.
+    pub fn add_skip_pattern(mut self, pattern: impl Into<String>) -> Self {
+        self.skip_patterns.push(pattern.into());
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -335,6 +396,8 @@ impl TranslateOptionsBuilder {
             profile: self.profile.unwrap_or_default(),
             max_correction_rounds: self.max_correction_rounds.unwrap_or(2),
             debug: self.debug.unwrap_or_default(),
+            cache: self.cache,
+            skip_patterns: self.skip_patterns,
         }
     }
 }
@@ -382,6 +445,7 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
             TranslationMode::NewDocument => TranslationMode::NewDocument,
             TranslationMode::InPlace => TranslationMode::InPlace,
             TranslationMode::Auto => TranslationMode::Overlay,
+            TranslationMode::Bilingual => TranslationMode::Bilingual,
         }
     };
 
@@ -394,6 +458,7 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
             crate::overlay::translate_pdf_overlay_full(pdf_bytes, opt).await?
         }
         TranslationMode::InPlace => crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?,
+        TranslationMode::Bilingual => crate::overlay::translate_pdf_bilingual_full(pdf_bytes, opt).await?,
     };
 
     finalize_output(raw, profile, debug_opts, mode_for_report, None)

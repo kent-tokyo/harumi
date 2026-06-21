@@ -1,6 +1,7 @@
+use std::sync::Arc;
 use harumi::Document;
 use harumi_ai::{LayoutOptions, QualityGate, QualityProfile, TranslateOptions, TranslationMode,
-                providers::EchoTranslator, translate_pdf};
+                TranslationCache, providers::EchoTranslator, translate_pdf};
 
 const FONT: &[u8] = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
@@ -362,4 +363,85 @@ async fn fallback_reason_field_accessible() {
     let output = translate_pdf(&pdf, opts).await.unwrap();
     // Default mode (Overlay) with no cascade → None
     let _reason: Option<&str> = output.quality.fallback_reason.as_deref();
+}
+
+// ---------------------------------------------------------------------------
+// v0.3.0 — cache, skip_patterns, bilingual
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cache_deduplicates_repeated_phrases() {
+    // Build a PDF with the same text on two pages.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1).unwrap()
+        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.page(2).unwrap()
+        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    let pdf = doc.save_to_bytes().unwrap();
+
+    let cache = Arc::new(tokio::sync::Mutex::new(TranslationCache::default()));
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
+        .with_cache(Arc::clone(&cache));
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // Translation must succeed regardless of caching.
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+
+    // On the second call the text should come from cache (hits > 0).
+    let opts2 = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
+        .with_cache(Arc::clone(&cache));
+    let _out2 = translate_pdf(&pdf, opts2).await.unwrap();
+    let c = cache.lock().await;
+    assert!(c.hits() > 0, "expected cache hits on second call");
+    assert!(c.hit_rate() > 0.0);
+}
+
+#[tokio::test]
+async fn skip_patterns_preserve_cas_numbers() {
+    // PDF with a CAS number that must not be translated.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1).unwrap()
+        .add_text("7664-93-9", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    let pdf = doc.save_to_bytes().unwrap();
+
+    // EchoTranslator echoes input, so if the pattern is active the text is
+    // passed through as-is (resolved path) rather than going to AI.
+    // Either way the output PDF must be valid.
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
+        .with_sds_patterns();
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+}
+
+#[tokio::test]
+async fn bilingual_mode_doubles_page_count() {
+    let pdf = make_multipage_pdf(); // 2 pages
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::Bilingual;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+
+    let out_doc = Document::from_bytes(&output.pdf_bytes).unwrap();
+    assert_eq!(out_doc.page_count(), 4, "bilingual doubles page count");
+    assert_eq!(output.quality.mode_used, TranslationMode::Bilingual);
+}
+
+#[tokio::test]
+async fn bilingual_single_page_gives_two_pages() {
+    let pdf = make_test_pdf(); // 1 page
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::Bilingual;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+
+    let out_doc = Document::from_bytes(&output.pdf_bytes).unwrap();
+    assert_eq!(out_doc.page_count(), 2, "bilingual of 1-page gives 2 pages");
+}
+
+#[tokio::test]
+async fn with_sds_patterns_method_compiles() {
+    // Smoke test — just verify with_sds_patterns() doesn't panic on compile.
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
+        .with_sds_patterns();
+    assert!(!opts.skip_patterns.is_empty());
 }

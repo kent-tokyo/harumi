@@ -2,6 +2,44 @@
 
 ---
 
+## [0.3.0] — 2026-06-21
+
+### Added
+
+- **Translation cache** (`TranslationCache`, `TranslateOptions::cache`) — an
+  in-memory `Arc<Mutex<TranslationCache>>` that deduplicates repeated phrases
+  within a document (or across multiple `translate_pdf` calls when the same
+  `Arc` is reused).  Cache hits are resolved before the AI batch, keeping the
+  lock held only for map lookups — never across an `await`.  Hit/miss stats are
+  logged to stderr and available via `TranslationCache::hits()` /
+  `TranslationCache::misses()` / `TranslationCache::hit_rate()`.
+
+- **Skip patterns** (`TranslateOptions::skip_patterns`,
+  `TranslateOptions::with_sds_patterns()`) — regex patterns for text that must
+  not be translated (passed through verbatim).  Built-in SDS defaults protect
+  chemical formulas (H₂SO₄), CAS numbers (7664-93-9), UN numbers (UN1830),
+  numeric value+unit strings, and comparison expressions.  Invalid regex
+  patterns are silently ignored.
+
+- **Bilingual PDF mode** (`TranslationMode::Bilingual`) — each original page
+  is immediately followed by its translated version.  Output page order:
+  `[orig_1, trans_1, orig_2, trans_2, …, orig_n, trans_n]`.  Useful for
+  side-by-side review and QC workflows.
+
+- **`TranslateOptionsBuilder::with_cache()`** and
+  **`TranslateOptionsBuilder::add_skip_pattern()`** — builder methods for the
+  new options.
+
+### Internals
+
+- `extract_and_translate` now builds a `resolved` side-map
+  `(page_num, line_idx) → text` for skip/cache hits before the AI batch, and
+  merges by walking `0..line_count` after the AI call — preserving positional
+  alignment with `overlay_page.lines` that the correction loop and
+  `apply_overlay` depend on.
+
+---
+
 ## [0.2.1] — 2026-06-21
 
 ### Added

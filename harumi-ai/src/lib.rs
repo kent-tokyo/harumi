@@ -27,6 +27,7 @@
 //! - **Paragraph classification**: `extract_text_chunks` uses font-size heuristics;
 //!   complex PDFs may have imperfect heading/paragraph classification.
 
+pub mod cache;
 mod error;
 mod extractor;
 mod builder;
@@ -41,6 +42,7 @@ mod repair;
 mod translator;
 pub mod providers;
 
+pub use cache::TranslationCache;
 pub use error::{Error, Result};
 pub use layout::LayoutOptions;
 pub use output::{CorrectionRound, DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality,
