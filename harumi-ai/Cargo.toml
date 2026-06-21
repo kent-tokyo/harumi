@@ -13,7 +13,7 @@ categories = ["text-processing"]
 [dependencies]
 harumi = { path = "..", version = "1.15", features = ["draw"] }
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "process", "time"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,11 +22,12 @@ regex = "1"
 
 # optional HTTP client for built-in providers
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+base64 = { version = "0.22", optional = true }
 
 [features]
 default = []
 openai    = ["dep:reqwest"]
-anthropic = ["dep:reqwest"]
+anthropic = ["dep:reqwest", "dep:base64"]
 
 [[example]]
 name = "translate_pdf"

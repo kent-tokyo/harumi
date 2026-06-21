@@ -1,19 +1,22 @@
 // overlay.rs — in-place overlay translation with AI layout evaluation
 
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 use futures::stream::{self, StreamExt};
 use harumi::{
-    FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
-    detect_text_columns, extract_layout_regions, sort_by_reading_order, Document, TextFragment,
+    Document, FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole, TextFragment,
+    detect_text_columns, extract_layout_regions, sort_by_reading_order,
 };
 use ttf_parser::Face;
 
 use crate::{
-    Error, OverflowStrategy, Result, TranslateOptions,
-    extractor,
-    output::{CorrectionRound, TranslateOutput, TranslateQuality, PageQualityReport},
+    Error, OverflowStrategy, Result, TranslateOptions, extractor,
+    layout_repair::{LayoutRepairMode, VisionRepairRequest, rasterize_page_png},
+    output::{CorrectionRound, PageQualityReport, TranslateOutput, TranslateQuality},
     prompts::layout_correction_prompt,
 };
 
@@ -159,7 +162,14 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
         let invisible_rects: Vec<[f32; 4]> = runs
             .iter()
             .filter(|r| r.invisible && !r.text.trim().is_empty())
-            .map(|r| [r.x - 1.0, r.y - 1.0, r.width.max(2.0) + 2.0, r.height.max(2.0) + 2.0])
+            .map(|r| {
+                [
+                    r.x - 1.0,
+                    r.y - 1.0,
+                    r.width.max(2.0) + 2.0,
+                    r.height.max(2.0) + 2.0,
+                ]
+            })
             .collect();
 
         // Collect image XObject bboxes so white cover rects can skip them.
@@ -171,7 +181,13 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             .collect();
 
         if visible.is_empty() {
-            pages.push(OverlayPage { page_num, lines: vec![], body_font_size: 12.0, invisible_rects, image_bboxes });
+            pages.push(OverlayPage {
+                page_num,
+                lines: vec![],
+                body_font_size: 12.0,
+                invisible_rects,
+                image_bboxes,
+            });
             continue;
         }
 
@@ -204,7 +220,11 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             .filter(|&g| g > 1.0 && g < 60.0)
             .collect();
         gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let body_line_h = if gaps.is_empty() { 14.0_f32 } else { gaps[gaps.len() / 5] };
+        let body_line_h = if gaps.is_empty() {
+            14.0_f32
+        } else {
+            gaps[gaps.len() / 5]
+        };
         // CJK glyphs fill the full em-square; use a larger leading ratio (1.6).
         let body_font_size = (body_line_h / 1.6).max(6.0);
 
@@ -222,12 +242,21 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             .iter()
             .enumerate()
             .map(|(i, rl)| {
-                let gap_above = if i > 0 { (raw_lines[i - 1].y - rl.y).abs() } else { body_line_h };
-                let gap_below = if i + 1 < raw_lines.len() { (rl.y - raw_lines[i + 1].y).abs() } else { body_line_h };
+                let gap_above = if i > 0 {
+                    (raw_lines[i - 1].y - rl.y).abs()
+                } else {
+                    body_line_h
+                };
+                let gap_below = if i + 1 < raw_lines.len() {
+                    (rl.y - raw_lines[i + 1].y).abs()
+                } else {
+                    body_line_h
+                };
 
                 // Find the layout region that contains this line.
                 // Require both y-overlap and x-containment to avoid cross-column matches.
-                let matched = regions.iter()
+                let matched = regions
+                    .iter()
                     .filter(|r| {
                         let b = r.source_bbox;
                         let y_ok = rl.y >= b[1] - 2.0 && rl.y <= b[1] + b[3] + 2.0;
@@ -237,7 +266,9 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
                     .min_by(|a, b_| {
                         let ca = a.source_bbox[0] + a.source_bbox[2] / 2.0;
                         let cb = b_.source_bbox[0] + b_.source_bbox[2] / 2.0;
-                        (ca - rl.x).abs().partial_cmp(&(cb - rl.x).abs())
+                        (ca - rl.x)
+                            .abs()
+                            .partial_cmp(&(cb - rl.x).abs())
                             .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
@@ -251,9 +282,8 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
                     .unwrap_or(LayoutRegionRole::Unknown);
 
                 // Region-aware heading detection supplements the heuristic.
-                let region_is_heading = matched.is_some_and(|r| {
-                    matches!(r.kind, LayoutRegionKind::Heading(_))
-                });
+                let region_is_heading =
+                    matched.is_some_and(|r| matches!(r.kind, LayoutRegionKind::Heading(_)));
 
                 let is_heading = region_is_heading
                     || (gap_above > body_line_h * 2.2 && rl.x < page_width * 0.2)
@@ -278,7 +308,13 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             })
             .collect();
 
-        pages.push(OverlayPage { page_num, lines, body_font_size, invisible_rects, image_bboxes });
+        pages.push(OverlayPage {
+            page_num,
+            lines,
+            body_font_size,
+            invisible_rects,
+            image_bboxes,
+        });
     }
     Ok(pages)
 }
@@ -300,9 +336,13 @@ pub(crate) fn fit_font_size(
     max_width: f32,
     min_fs: f32,
 ) -> f32 {
-    if max_width <= 0.0 { return desired_size; }
+    if max_width <= 0.0 {
+        return desired_size;
+    }
     let total_w = measure_text_width(text, face, desired_size);
-    if total_w <= max_width || total_w == 0.0 { return desired_size; }
+    if total_w <= max_width || total_w == 0.0 {
+        return desired_size;
+    }
     (desired_size * max_width / total_w).max(min_fs)
 }
 
@@ -310,7 +350,9 @@ pub(crate) fn fit_font_size(
 pub(crate) fn truncate_to_fit(text: &str, face: &Face, font_size: f32, max_width: f32) -> String {
     let ellipsis = "…";
     let ellipsis_w = measure_text_width(ellipsis, face, font_size);
-    if ellipsis_w >= max_width { return ellipsis.to_owned(); }
+    if ellipsis_w >= max_width {
+        return ellipsis.to_owned();
+    }
     let budget = max_width - ellipsis_w;
     let chars: Vec<char> = text.chars().collect();
     let mut lo = 0usize;
@@ -318,7 +360,11 @@ pub(crate) fn truncate_to_fit(text: &str, face: &Face, font_size: f32, max_width
     while lo < hi {
         let mid = (lo + hi).div_ceil(2);
         let s: String = chars[..mid].iter().collect();
-        if measure_text_width(&s, face, font_size) <= budget { lo = mid; } else { hi = mid - 1; }
+        if measure_text_width(&s, face, font_size) <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
     }
     if lo == 0 {
         ellipsis.to_owned()
@@ -340,6 +386,9 @@ struct PlacedLineReport {
     text_width_pt: f32,
     avail_width_pt: f32,
     overflow: bool,
+    role: String,
+    issues: Vec<String>,
+    severity: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -363,9 +412,14 @@ fn parse_correction_response(raw: &str) -> Result<HashMap<(u32, usize), String>>
         let s = s.strip_suffix("```").unwrap_or(s);
         s.trim()
     };
-    let resp: CorrectionResponse = serde_json::from_str(json_str)
-        .map_err(|e| Error::Translator(format!("AI correction JSON invalid: {e}. Raw: {json_str}")))?;
-    Ok(resp.corrections.into_iter().map(|c| ((c.page, c.id), c.text)).collect())
+    let resp: CorrectionResponse = serde_json::from_str(json_str).map_err(|e| {
+        Error::Translator(format!("AI correction JSON invalid: {e}. Raw: {json_str}"))
+    })?;
+    Ok(resp
+        .corrections
+        .into_iter()
+        .map(|c| ((c.page, c.id), c.text))
+        .collect())
 }
 
 /// Multi-pass AI correction loop.
@@ -397,18 +451,33 @@ async fn run_correction_loop(
 
         for overlay_page in overlay_pages {
             let page_num = overlay_page.page_num;
-            let Some(translations) = page_translations.get(&page_num) else { continue };
+            let Some(translations) = page_translations.get(&page_num) else {
+                continue;
+            };
             let mut boxes: Vec<harumi::PlacedBox> = Vec::new();
             let mut line_indices: Vec<usize> = Vec::new();
 
-            for (line_idx, (line, trans_text)) in overlay_page.lines.iter().zip(translations.iter()).enumerate() {
+            for (line_idx, (line, trans_text)) in overlay_page
+                .lines
+                .iter()
+                .zip(translations.iter())
+                .enumerate()
+            {
                 let text = trans_text.trim();
                 if text.is_empty() {
                     continue;
                 }
                 let max_fs = line.line_height * 0.85;
-                let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
-                let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
+                let fs = if line.font_size > 0.0 {
+                    line.font_size
+                } else {
+                    global_body_fs
+                };
+                let desired = if line.is_heading {
+                    (fs * 1.4).min(max_fs)
+                } else {
+                    fs.min(max_fs)
+                };
                 let avail_w = (line.region_usable_right - line.x).max(50.0);
                 let text_w = measure_text_width(text, face, desired);
                 let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
@@ -416,9 +485,27 @@ async fn run_correction_loop(
 
                 let placed_w = text_w.min(avail_w * 1.5); // cap for collision purposes
                 let placed_h = line.line_height;
+                let placed_rect = [line.x, line.y, placed_w, placed_h];
+                let image_overlap = overlay_page
+                    .image_bboxes
+                    .iter()
+                    .any(|img| rects_overlap(placed_rect, *img));
+                let mut issues = Vec::new();
+                if image_overlap {
+                    issues.push("image_overlap:Major".to_owned());
+                }
+                let severity = if image_overlap
+                    || line.region_role == LayoutRegionRole::RightValue && overflow
+                {
+                    "Major"
+                } else if overflow {
+                    "Moderate"
+                } else {
+                    "Minor"
+                };
                 let start_report_idx = all_reports.len();
                 line_indices.push(start_report_idx);
-                boxes.push(harumi::PlacedBox::new([line.x, line.y, placed_w, placed_h]));
+                boxes.push(harumi::PlacedBox::new(placed_rect));
 
                 all_reports.push(PlacedLineReport {
                     id: line_idx,
@@ -429,6 +516,9 @@ async fn run_correction_loop(
                     text_width_pt: text_w,
                     avail_width_pt: avail_w,
                     overflow,
+                    role: format!("{:?}", line.region_role),
+                    issues,
+                    severity: severity.to_owned(),
                 });
             }
             page_boxes.insert(page_num, boxes);
@@ -436,23 +526,41 @@ async fn run_correction_loop(
         }
 
         // Detect and classify collisions; mark involved lines as problems.
-        let mut problem_report_ids: std::collections::HashSet<(u32, usize)> = std::collections::HashSet::new();
+        let mut problem_report_ids: std::collections::HashMap<(u32, usize), Vec<String>> =
+            std::collections::HashMap::new();
         for (page_num, boxes) in &page_boxes {
             let collisions = harumi::detect_collisions(boxes);
             for col in &collisions {
-                let area_a = boxes.get(col.index_a).map(|b| b.rect[2] * b.rect[3]).unwrap_or(0.0);
-                let area_b = boxes.get(col.index_b).map(|b| b.rect[2] * b.rect[3]).unwrap_or(0.0);
+                let area_a = boxes
+                    .get(col.index_a)
+                    .map(|b| b.rect[2] * b.rect[3])
+                    .unwrap_or(0.0);
+                let area_b = boxes
+                    .get(col.index_b)
+                    .map(|b| b.rect[2] * b.rect[3])
+                    .unwrap_or(0.0);
                 let sev = harumi::collision_severity(col.overlap_area, area_a, area_b);
-                if matches!(sev, harumi::CollisionSeverity::Moderate | harumi::CollisionSeverity::Major) {
+                if matches!(
+                    sev,
+                    harumi::CollisionSeverity::Moderate | harumi::CollisionSeverity::Major
+                ) {
                     // Map box indices back to report indices.
                     if let Some(line_indices) = page_line_map.get(page_num) {
                         if let Some(&report_idx_a) = line_indices.get(col.index_a)
-                            && report_idx_a < all_reports.len() {
-                            problem_report_ids.insert((*page_num, all_reports[report_idx_a].id));
+                            && report_idx_a < all_reports.len()
+                        {
+                            problem_report_ids
+                                .entry((*page_num, all_reports[report_idx_a].id))
+                                .or_default()
+                                .push(format!("text_collision:{sev:?}"));
                         }
                         if let Some(&report_idx_b) = line_indices.get(col.index_b)
-                            && report_idx_b < all_reports.len() {
-                            problem_report_ids.insert((*page_num, all_reports[report_idx_b].id));
+                            && report_idx_b < all_reports.len()
+                        {
+                            problem_report_ids
+                                .entry((*page_num, all_reports[report_idx_b].id))
+                                .or_default()
+                                .push(format!("text_collision:{sev:?}"));
                         }
                     }
                 }
@@ -460,9 +568,41 @@ async fn run_correction_loop(
         }
 
         // Collect all problem lines (overflow OR collision-involved).
-        let problems: Vec<&PlacedLineReport> = all_reports
+        let problems: Vec<serde_json::Value> = all_reports
             .iter()
-            .filter(|r| r.overflow || problem_report_ids.contains(&(r.page, r.id)))
+            .filter(|r| {
+                r.overflow
+                    || problem_report_ids.contains_key(&(r.page, r.id))
+                    || r.issues.iter().any(|i| i.starts_with("image_overlap"))
+            })
+            .filter(|r| {
+                round == 1
+                    || r.severity == "Major"
+                    || problem_report_ids
+                        .get(&(r.page, r.id))
+                        .is_some_and(|issues| issues.iter().any(|i| i.contains("Major")))
+            })
+            .map(|r| {
+                let mut issues = r.issues.clone();
+                if r.overflow {
+                    issues.push("text_overflow".to_owned());
+                }
+                if let Some(extra) = problem_report_ids.get(&(r.page, r.id)) {
+                    issues.extend(extra.clone());
+                }
+                serde_json::json!({
+                    "id": r.id,
+                    "page": r.page,
+                    "role": r.role,
+                    "severity": r.severity,
+                    "issues": issues,
+                    "original_text": r.original_text,
+                    "translated_text": r.translated_text,
+                    "font_size": r.font_size,
+                    "text_width_pt": r.text_width_pt,
+                    "avail_width_pt": r.avail_width_pt,
+                })
+            })
             .collect();
 
         if problems.is_empty() {
@@ -472,13 +612,24 @@ async fn run_correction_loop(
 
         let pages_with_problems = {
             let mut pages: std::collections::HashSet<u32> = std::collections::HashSet::new();
-            for r in &problems { pages.insert(r.page); }
+            for r in &problems {
+                if let Some(page) = r.get("page").and_then(|v| v.as_u64()) {
+                    pages.insert(page as u32);
+                }
+            }
             pages.len()
         };
 
-        eprintln!("[harumi-ai] Round {round}: {} problems ({} overflow, {} collision) on {} pages",
+        eprintln!(
+            "[harumi-ai] Round {round}: {} problems ({} overflow, {} collision) on {} pages",
             problems.len(),
-            problems.iter().filter(|r| r.overflow).count(),
+            problems
+                .iter()
+                .filter(|r| r
+                    .get("issues")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| { a.iter().any(|v| v.as_str() == Some("text_overflow")) }))
+                .count(),
             problem_report_ids.len(),
             pages_with_problems,
         );
@@ -490,17 +641,34 @@ async fn run_correction_loop(
             &serde_json::to_string_pretty(&problems)
                 .map_err(|e| Error::Translator(e.to_string()))?,
         );
-        let raw_results = translator.translate(&[prompt], target_lang, source_lang).await?;
-        let raw = raw_results.into_iter().next()
+        let raw_results = translator
+            .translate(&[prompt], target_lang, source_lang)
+            .await?;
+        let raw = raw_results
+            .into_iter()
+            .next()
             .ok_or_else(|| Error::Translator("AI returned empty correction response".into()))?;
 
-        let corrections = parse_correction_response(&raw)?;
+        let corrections = match parse_correction_response(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[harumi-ai] Round {round}: correction parse failed: {e}");
+                rounds.push(CorrectionRound {
+                    round,
+                    lines_sent_to_ai: problems.len(),
+                    corrections_applied: 0,
+                    pages_with_problems,
+                });
+                break;
+            }
+        };
         let corrections_applied = corrections.len();
 
         // Apply corrections.
         for ((page_num, line_id), corrected_text) in &corrections {
             if let Some(texts) = page_translations.get_mut(page_num)
-                && let Some(slot) = texts.get_mut(*line_id) {
+                && let Some(slot) = texts.get_mut(*line_id)
+            {
                 *slot = corrected_text.clone();
             }
         }
@@ -555,16 +723,23 @@ fn is_math_char(c: char) -> bool {
 /// Longer text: math chars must dominate AND ordinary alphabetic prose must be
 /// sparse — "The coefficient α represents…" is not flagged.
 fn text_is_primarily_math(text: &str) -> bool {
-    if text.is_empty() { return false; }
+    if text.is_empty() {
+        return false;
+    }
     let total = text.chars().count();
     let math_count = text.chars().filter(|&c| is_math_char(c)).count();
-    if math_count == 0 { return false; }
-    let alpha_prose = text.chars()
+    if math_count == 0 {
+        return false;
+    }
+    let alpha_prose = text
+        .chars()
         .filter(|c| c.is_alphabetic() && !is_math_char(*c))
         .count();
     // Short token: require ≥2 math chars OR >25% math fraction.
     // Prevents "β-carotene content" (1/17 ≈ 6%) from being dropped.
-    if total <= 20 { return math_count >= 2 || math_count * 4 >= total; }
+    if total <= 20 {
+        return math_count >= 2 || math_count * 4 >= total;
+    }
     // Long text: require math to be the majority AND prose to be sparse.
     math_count * 2 > total && alpha_prose * 4 < total
 }
@@ -592,7 +767,8 @@ pub(crate) async fn extract_and_translate(
     drop(doc);
 
     let global_body_fs = {
-        let mut sizes: Vec<f32> = overlay_pages.iter()
+        let mut sizes: Vec<f32> = overlay_pages
+            .iter()
             .filter(|p| !p.lines.is_empty())
             .map(|p| p.body_font_size)
             .collect();
@@ -609,11 +785,14 @@ pub(crate) async fn extract_and_translate(
     // These entries are excluded from the AI batch.
     let mut resolved: HashMap<(u32, usize), String> = HashMap::new();
     // Track lines that must be completely untouched (no white rect, no text placement).
-    let mut skip_line_set: std::collections::HashSet<(u32, usize)> = std::collections::HashSet::new();
+    let mut skip_line_set: std::collections::HashSet<(u32, usize)> =
+        std::collections::HashSet::new();
 
     // 1. Skip patterns (compiled once; invalid regexes are silently ignored).
     //    Matched lines are fully skipped (is_skip=true, empty translation).
-    let skip_regexes: Vec<regex::Regex> = options.skip_patterns.iter()
+    let skip_regexes: Vec<regex::Regex> = options
+        .skip_patterns
+        .iter()
         .filter_map(|p| regex::Regex::new(p).ok())
         .collect();
     if !skip_regexes.is_empty() {
@@ -638,9 +817,13 @@ pub(crate) async fn extract_and_translate(
         let mut cache = cache_arc.lock().await;
         for op in &overlay_pages {
             for (idx, line) in op.lines.iter().enumerate() {
-                if resolved.contains_key(&(op.page_num, idx)) { continue; }
+                if resolved.contains_key(&(op.page_num, idx)) {
+                    continue;
+                }
                 let raw_key = line.text.trim();
-                if raw_key.is_empty() { continue; }
+                if raw_key.is_empty() {
+                    continue;
+                }
                 // Namespace by target_lang (NUL separator avoids collisions).
                 let ns_key = format!("{}\x00{raw_key}", options.target_lang);
                 if let Some(t) = cache.get(&ns_key) {
@@ -656,7 +839,8 @@ pub(crate) async fn extract_and_translate(
     if cache_hits + cache_misses > 0 {
         eprintln!(
             "[harumi-ai] Cache: {} hits, {} misses ({:.0}% saved)",
-            cache_hits, cache_misses,
+            cache_hits,
+            cache_misses,
             cache_hits as f64 / (cache_hits + cache_misses) as f64 * 100.0
         );
     }
@@ -672,19 +856,26 @@ pub(crate) async fn extract_and_translate(
                 continue;
             }
             // Cache-hit lines (step 2): not is_skip — they need white rect + translated text.
-            if resolved.contains_key(&(op.page_num, idx)) { continue; }
+            if resolved.contains_key(&(op.page_num, idx)) {
+                continue;
+            }
 
-            let is_header_footer_skip = options.skip_header_footer
-                && line.region_role == LayoutRegionRole::HeaderFooter;
-            let is_math_skip = options.auto_skip_math
-                && text_is_primarily_math(line.text.trim());
+            let is_header_footer_skip =
+                options.skip_header_footer && line.region_role == LayoutRegionRole::HeaderFooter;
+            let is_math_skip = options.auto_skip_math && text_is_primarily_math(line.text.trim());
 
             if is_math_skip {
                 // Sanitize before logging: replace control chars to prevent terminal injection.
-                let safe_text: String = line.text.chars().take(40)
+                let safe_text: String = line
+                    .text
+                    .chars()
+                    .take(40)
                     .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
                     .collect();
-                eprintln!("[harumi-ai] auto_skip_math: p{} {:?}", op.page_num, safe_text);
+                eprintln!(
+                    "[harumi-ai] auto_skip_math: p{} {:?}",
+                    op.page_num, safe_text
+                );
             }
 
             if is_header_footer_skip || is_math_skip {
@@ -697,9 +888,13 @@ pub(crate) async fn extract_and_translate(
     // ── Phase 2: Translate (only non-resolved blocks) ────────────────────────
     // Build filtered page_contents; pages where every block is resolved are
     // omitted entirely so we don't send empty batches to the AI.
-    let page_contents: Vec<extractor::PageContent> = overlay_pages.iter()
+    let page_contents: Vec<extractor::PageContent> = overlay_pages
+        .iter()
         .filter_map(|op| {
-            let blocks: Vec<extractor::Block> = op.lines.iter().enumerate()
+            let blocks: Vec<extractor::Block> = op
+                .lines
+                .iter()
+                .enumerate()
                 .filter(|(idx, _)| !resolved.contains_key(&(op.page_num, *idx)))
                 .map(|(id, line)| extractor::Block {
                     id,
@@ -707,8 +902,15 @@ pub(crate) async fn extract_and_translate(
                     text: line.text.clone(),
                 })
                 .collect();
-            if blocks.is_empty() { None }
-            else { Some(extractor::PageContent { page_num: op.page_num, size: (0.0, 0.0), blocks }) }
+            if blocks.is_empty() {
+                None
+            } else {
+                Some(extractor::PageContent {
+                    page_num: op.page_num,
+                    size: (0.0, 0.0),
+                    blocks,
+                })
+            }
         })
         .collect();
 
@@ -737,21 +939,30 @@ pub(crate) async fn extract_and_translate(
                 let progress = options.progress_fn.clone();
                 async move {
                     let batch_json = extractor::pages_to_json(&batch)?;
-                    let results = translator.translate(&[batch_json], &target, src.as_deref()).await?;
-                    let json = results.into_iter().next()
-                        .ok_or_else(|| Error::Translator("translator returned empty result".into()))?;
+                    let results = translator
+                        .translate(&[batch_json], &target, src.as_deref())
+                        .await?;
+                    let json = results.into_iter().next().ok_or_else(|| {
+                        Error::Translator("translator returned empty result".into())
+                    })?;
                     let page_block_lists = extractor::json_to_translated_pages(&json)?;
 
                     let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
-                    if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
+                    if let Some(f) = &progress {
+                        f(completed.min(total_pages), total_pages);
+                    }
 
                     // Return (id, text) pairs to preserve line-index information.
-                    let out: Vec<(u32, Vec<(usize, String)>)> = batch.iter()
+                    let out: Vec<(u32, Vec<(usize, String)>)> = batch
+                        .iter()
                         .zip(page_block_lists.iter().chain(std::iter::repeat(&vec![])))
                         .map(|(orig, t_blocks)| {
-                            let pairs: Vec<(usize, String)> = t_blocks.iter()
+                            let pairs: Vec<(usize, String)> = t_blocks
+                                .iter()
                                 .filter_map(|tb| {
-                                    orig.blocks.iter().find(|b| b.id == tb.id)
+                                    orig.blocks
+                                        .iter()
+                                        .find(|b| b.id == tb.id)
                                         .map(|b| (b.id, tb.text.clone()))
                                 })
                                 .collect();
@@ -827,14 +1038,18 @@ pub(crate) async fn extract_and_translate(
 // ── Main entry points ─────────────────────────────────────────────────────────
 
 /// Full overlay translation returning structured [`TranslateOutput`] (v0.2.0+).
-pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+pub async fn translate_pdf_overlay_full(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<TranslateOutput> {
     let (overlay_pages, mut page_translations, global_body_fs) =
         extract_and_translate(pdf_bytes, &options).await?;
 
-    let face = Face::parse(&options.font, 0)
-        .map_err(|e| Error::FontParse(e.to_string()))?;
+    let face = Face::parse(&options.font, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
-    let fallback_faces: Vec<Face<'_>> = options.font_fallbacks.iter()
+    let fallback_faces: Vec<Face<'_>> = options
+        .font_fallbacks
+        .iter()
         .filter_map(|b| Face::parse(b, 0).ok())
         .collect();
     let all_faces: Vec<&Face<'_>> = std::iter::once(&face)
@@ -847,7 +1062,9 @@ pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOpti
     let source_lang = options.source_lang.clone();
 
     // ── Phase 3: Multi-pass AI correction loop ────────────────────────────────
-    let correction_rounds = if options.max_correction_rounds > 0 {
+    let correction_rounds = if options.max_correction_rounds > 0
+        && !matches!(options.layout_repair_mode, LayoutRepairMode::Off)
+    {
         run_correction_loop(
             &overlay_pages,
             &mut page_translations,
@@ -857,14 +1074,15 @@ pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOpti
             &translator,
             &target_lang,
             source_lang.as_deref(),
-            options.max_correction_rounds,
-        ).await?
+            options.max_correction_rounds.min(2),
+        )
+        .await?
     } else {
         vec![]
     };
 
     // ── Phase 4: Apply overlay to original PDF ────────────────────────────────
-    let pdf_bytes_out = apply_overlay(
+    let mut pdf_bytes_out = apply_overlay(
         pdf_bytes,
         &overlay_pages,
         &page_translations,
@@ -874,6 +1092,23 @@ pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOpti
         global_body_fs,
         min_fs,
     )?;
+
+    let vision_round = run_vision_repair_if_needed(
+        pdf_bytes,
+        &mut pdf_bytes_out,
+        &overlay_pages,
+        &mut page_translations,
+        &options,
+        &face,
+        &all_faces,
+        global_body_fs,
+        min_fs,
+    )
+    .await?;
+    let mut correction_rounds = correction_rounds;
+    if let Some(round) = vision_round {
+        correction_rounds.push(round);
+    }
 
     // ── Phase 5: Compute per-page quality summaries ───────────────────────────
     let page_reports = compute_page_quality(
@@ -896,7 +1131,11 @@ pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOpti
         } else {
             None
         };
-        let history = if options.debug.correction_history { correction_rounds.clone() } else { vec![] };
+        let history = if options.debug.correction_history {
+            correction_rounds.clone()
+        } else {
+            vec![]
+        };
         Some(crate::output::DebugArtifacts {
             layout_report_json: None,
             collision_report_json: None,
@@ -931,7 +1170,9 @@ fn compute_page_quality(
     let mut reports = Vec::new();
     for overlay_page in overlay_pages {
         let page_num = overlay_page.page_num;
-        let Some(translations) = page_translations.get(&page_num) else { continue };
+        let Some(translations) = page_translations.get(&page_num) else {
+            continue;
+        };
 
         let mut boxes: Vec<harumi::PlacedBox> = Vec::new();
         let mut overflow_count = 0usize;
@@ -939,26 +1180,53 @@ fn compute_page_quality(
 
         for (line, trans_text) in overlay_page.lines.iter().zip(translations.iter()) {
             let text = trans_text.trim();
-            if text.is_empty() { continue; }
+            if text.is_empty() {
+                continue;
+            }
             let max_fs_cap = line.line_height * 0.85;
-            let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
-            let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
+            let fs = if line.font_size > 0.0 {
+                line.font_size
+            } else {
+                global_body_fs
+            };
+            let desired = if line.is_heading {
+                (fs * 1.4).min(max_fs_cap)
+            } else {
+                fs.min(max_fs_cap)
+            };
             let avail_w = (line.region_usable_right - line.x).max(50.0);
             let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
             let text_w = measure_text_width(text, face, desired);
             if text_w > avail_w * 1.05 || actual_fs < desired * 0.9 {
                 overflow_count += 1;
             }
-            if actual_fs < desired * 0.99 { shrunk_count += 1; }
+            if actual_fs < desired * 0.99 {
+                shrunk_count += 1;
+            }
             let placed_w = text_w.min(avail_w * 1.5);
-            boxes.push(harumi::PlacedBox::new([line.x, line.y, placed_w, line.line_height]));
+            let placed_rect = [line.x, line.y, placed_w, line.line_height];
+            if overlay_page
+                .image_bboxes
+                .iter()
+                .any(|img| rects_overlap(placed_rect, *img))
+            {
+                overflow_count += 1;
+            }
+            boxes.push(harumi::PlacedBox::new(placed_rect));
         }
 
         let collisions = harumi::detect_collisions(&boxes);
-        let worst_overlap_area = collisions.iter().map(|c| c.overlap_area).fold(0.0_f32, f32::max);
+        let worst_overlap_area = collisions
+            .iter()
+            .map(|c| c.overlap_area)
+            .fold(0.0_f32, f32::max);
         let worst_overlap_rect = collisions
             .iter()
-            .max_by(|a, b| a.overlap_area.partial_cmp(&b.overlap_area).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.overlap_area
+                    .partial_cmp(&b.overlap_area)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|c| c.overlap_rect);
 
         // PageFitSummary is #[non_exhaustive]; construct via from_plans and then
@@ -971,6 +1239,217 @@ fn compute_page_quality(
         summary.worst_overlap_rect = worst_overlap_rect;
         reports.push(PageQualityReport { page_num, summary });
     }
+    reports
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_vision_repair_if_needed(
+    source_pdf: &[u8],
+    translated_pdf: &mut Vec<u8>,
+    overlay_pages: &[OverlayPage],
+    page_translations: &mut HashMap<u32, Vec<String>>,
+    options: &TranslateOptions,
+    face: &Face<'_>,
+    all_faces: &[&Face<'_>],
+    global_body_fs: f32,
+    min_fs: f32,
+) -> Result<Option<CorrectionRound>> {
+    if matches!(
+        options.layout_repair_mode,
+        LayoutRepairMode::Off | LayoutRepairMode::GeometryOnly
+    ) {
+        return Ok(None);
+    }
+    let Some(provider) = &options.vision_provider else {
+        return Ok(None);
+    };
+
+    let mut pages_to_check = Vec::new();
+    for overlay_page in overlay_pages {
+        let Some(translations) = page_translations.get(&overlay_page.page_num) else {
+            continue;
+        };
+        let issues =
+            overlay_geometry_issues_json(overlay_page, translations, face, global_body_fs, min_fs);
+        if matches!(options.layout_repair_mode, LayoutRepairMode::VisionAllPages)
+            || issues
+                .iter()
+                .any(|v| v.get("severity").and_then(|s| s.as_str()) == Some("Major"))
+        {
+            pages_to_check.push((overlay_page.page_num, issues));
+        }
+    }
+
+    if pages_to_check.is_empty() {
+        return Ok(None);
+    }
+
+    let mut corrections = Vec::new();
+    let mut pages_sent = 0usize;
+    for (page_num, issues) in pages_to_check {
+        let issues_json = serde_json::to_string_pretty(&issues).unwrap_or_else(|_| "[]".to_owned());
+        let source_png = match rasterize_page_png(source_pdf, page_num, &options.rasterize).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[harumi-ai] vision repair skipped source page {page_num}: {e}");
+                continue;
+            }
+        };
+        let translated_png =
+            match rasterize_page_png(translated_pdf, page_num, &options.rasterize).await {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("[harumi-ai] vision repair skipped translated page {page_num}: {e}");
+                    continue;
+                }
+            };
+        pages_sent += 1;
+        match provider
+            .repair_layout(VisionRepairRequest {
+                page: page_num,
+                source_png: &source_png,
+                translated_png: &translated_png,
+                geometry_issues_json: &issues_json,
+                target_lang: &options.target_lang,
+                source_lang: options.source_lang.as_deref(),
+            })
+            .await
+        {
+            Ok(mut page_corrections) => corrections.append(&mut page_corrections),
+            Err(e) => eprintln!("[harumi-ai] vision repair failed on page {page_num}: {e}"),
+        }
+    }
+
+    if corrections.is_empty() {
+        return Ok(Some(CorrectionRound {
+            round: 3,
+            lines_sent_to_ai: 0,
+            corrections_applied: 0,
+            pages_with_problems: pages_sent,
+        }));
+    }
+
+    for correction in &corrections {
+        if let Some(texts) = page_translations.get_mut(&correction.page)
+            && let Some(slot) = texts.get_mut(correction.id)
+        {
+            *slot = correction.text.clone();
+        }
+    }
+
+    *translated_pdf = apply_overlay(
+        source_pdf,
+        overlay_pages,
+        page_translations,
+        options,
+        face,
+        all_faces,
+        global_body_fs,
+        min_fs,
+    )?;
+
+    Ok(Some(CorrectionRound {
+        round: 3,
+        lines_sent_to_ai: corrections.len(),
+        corrections_applied: corrections.len(),
+        pages_with_problems: pages_sent,
+    }))
+}
+
+fn overlay_geometry_issues_json(
+    overlay_page: &OverlayPage,
+    translations: &[String],
+    face: &Face<'_>,
+    global_body_fs: f32,
+    min_fs: f32,
+) -> Vec<serde_json::Value> {
+    let mut reports = Vec::new();
+    let mut boxes = Vec::new();
+    let mut report_line_ids = Vec::new();
+
+    for (line_idx, (line, trans_text)) in overlay_page
+        .lines
+        .iter()
+        .zip(translations.iter())
+        .enumerate()
+    {
+        let text = trans_text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let max_fs = line.line_height * 0.85;
+        let fs = if line.font_size > 0.0 {
+            line.font_size
+        } else {
+            global_body_fs
+        };
+        let desired = if line.is_heading {
+            (fs * 1.4).min(max_fs)
+        } else {
+            fs.min(max_fs)
+        };
+        let avail_w = (line.region_usable_right - line.x).max(50.0);
+        let text_w = measure_text_width(text, face, desired);
+        let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
+        let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
+        let placed_w = text_w.min(avail_w * 1.5);
+        let placed_rect = [line.x, line.y, placed_w, line.line_height];
+        let image_overlap = overlay_page
+            .image_bboxes
+            .iter()
+            .any(|img| rects_overlap(placed_rect, *img));
+
+        let mut issues = Vec::new();
+        if overflow {
+            issues.push("text_overflow");
+        }
+        if image_overlap {
+            issues.push("image_overlap");
+        }
+        if !issues.is_empty() {
+            reports.push(serde_json::json!({
+                "page": overlay_page.page_num,
+                "id": line_idx,
+                "role": format!("{:?}", line.region_role),
+                "severity": if image_overlap { "Major" } else { "Moderate" },
+                "issues": issues,
+                "source_text": line.text,
+                "translated_text": text,
+                "placed_rect": placed_rect,
+                "text_width_pt": text_w,
+                "avail_width_pt": avail_w,
+            }));
+        }
+        report_line_ids.push(line_idx);
+        boxes.push(harumi::PlacedBox::new(placed_rect));
+    }
+
+    for collision in harumi::detect_collisions(&boxes) {
+        let area_a = boxes
+            .get(collision.index_a)
+            .map(|b| b.rect[2] * b.rect[3])
+            .unwrap_or(0.0);
+        let area_b = boxes
+            .get(collision.index_b)
+            .map(|b| b.rect[2] * b.rect[3])
+            .unwrap_or(0.0);
+        let severity = harumi::collision_severity(collision.overlap_area, area_a, area_b);
+        if matches!(severity, harumi::CollisionSeverity::Major) {
+            let id = report_line_ids
+                .get(collision.index_a)
+                .copied()
+                .unwrap_or(collision.index_a);
+            reports.push(serde_json::json!({
+                "page": overlay_page.page_num,
+                "id": id,
+                "severity": "Major",
+                "issues": ["text_collision"],
+                "overlap_rect": collision.overlap_rect,
+                "overlap_area": collision.overlap_area,
+            }));
+        }
+    }
+
     reports
 }
 
@@ -997,9 +1476,18 @@ fn build_debug_overlay_pdf(
             }
         }
         // Compute placed boxes and draw collision rects.
-        let boxes: Vec<PlacedBox> = overlay_page.lines.iter().map(|line| {
-            PlacedBox::new([line.x, line.y, (line.right - line.x).max(1.0), line.line_height])
-        }).collect();
+        let boxes: Vec<PlacedBox> = overlay_page
+            .lines
+            .iter()
+            .map(|line| {
+                PlacedBox::new([
+                    line.x,
+                    line.y,
+                    (line.right - line.x).max(1.0),
+                    line.line_height,
+                ])
+            })
+            .collect();
         let collisions = detect_collisions(&boxes);
         let mut seen = std::collections::HashSet::new();
         for col in &collisions {
@@ -1027,21 +1515,18 @@ fn apply_overlay(
     global_body_fs: f32,
     min_fs: f32,
 ) -> Result<Vec<u8>> {
-
     // ── Phase 4: Apply overlay to original PDF ────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
     // Embed primary font; fallback fonts are embedded lazily on first use.
     let primary_font = doc.embed_font(&options.font)?;
-    let mut font_handles: Vec<Option<FontHandle>> =
-        std::iter::once(Some(primary_font))
-            .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
-            .collect();
+    let mut font_handles: Vec<Option<FontHandle>> = std::iter::once(Some(primary_font))
+        .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
+        .collect();
 
     let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
 
     // Compute descender depth from the actual font (once, reused per line).
-    let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
-        .clamp(0.05, 0.35);
+    let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32).clamp(0.05, 0.35);
 
     for overlay_page in overlay_pages {
         let page_num = overlay_page.page_num;
@@ -1055,7 +1540,9 @@ fn apply_overlay(
             doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
         for line in &overlay_page.lines {
-            if line.is_skip { continue; }
+            if line.is_skip {
+                continue;
+            }
             let x = line.x - 1.0;
             let below = line.font_size.max(global_body_fs) * descender_ratio;
             let y = line.y - below;
@@ -1063,20 +1550,35 @@ fn apply_overlay(
             let h = line.line_height + below;
             // Skip white rect if the line overlaps an image region.
             let line_rect = [x, y, w, h];
-            if overlay_page.image_bboxes.iter().any(|img| rects_overlap(line_rect, *img)) {
+            if overlay_page
+                .image_bboxes
+                .iter()
+                .any(|img| rects_overlap(line_rect, *img))
+            {
                 continue;
             }
-            doc.page(page_num)?.add_rect([x, y, w, h], cover_color, 1.0)?;
+            doc.page(page_num)?
+                .add_rect([x, y, w, h], cover_color, 1.0)?;
         }
 
         // Second pass: translated (and corrected) text.
         if let Some(translations) = translated_texts {
             for (line, trans_text) in overlay_page.lines.iter().zip(translations.iter()) {
                 let text = trans_text.trim();
-                if text.is_empty() { continue; }
+                if text.is_empty() {
+                    continue;
+                }
                 let max_fs = line.line_height * 0.85;
-                let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
-                let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
+                let fs = if line.font_size > 0.0 {
+                    line.font_size
+                } else {
+                    global_body_fs
+                };
+                let desired = if line.is_heading {
+                    (fs * 1.4).min(max_fs)
+                } else {
+                    fs.min(max_fs)
+                };
                 // Use region_usable_right (from extract_layout_regions) for a more
                 // precise column-right boundary than the heuristic col_right.
                 let avail_w = (line.region_usable_right - line.x).max(50.0);
@@ -1086,18 +1588,23 @@ fn apply_overlay(
                 // Tc = (target_w − natural_w) / char_count (in text-space points).
                 // Practical limit: Tc ≥ −1.0 pt (tighter looks distorted).
                 let base_w = measure_text_width(text, face, desired);
-                let (display_fs, char_spacing) =
-                    if base_w > avail_w && base_w <= avail_w * 1.25 {
-                        let char_count = text.chars().count().max(1) as f32;
-                        let tc = (avail_w - base_w) / char_count;
-                        if tc >= -1.0 {
-                            (desired, tc) // keep original font size
-                        } else {
-                            (fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95), 0.0)
-                        }
+                let (display_fs, char_spacing) = if base_w > avail_w && base_w <= avail_w * 1.25 {
+                    let char_count = text.chars().count().max(1) as f32;
+                    let tc = (avail_w - base_w) / char_count;
+                    if tc >= -1.0 {
+                        (desired, tc) // keep original font size
                     } else {
-                        (fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95), 0.0)
-                    };
+                        (
+                            fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95),
+                            0.0,
+                        )
+                    }
+                } else {
+                    (
+                        fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95),
+                        0.0,
+                    )
+                };
 
                 // Apply overflow strategy: truncate if still too wide.
                 let display_text: std::borrow::Cow<str> = match &options.overflow {
@@ -1124,8 +1631,14 @@ fn apply_overlay(
                     let fh = font_handles[fidx].unwrap();
                     let run_face = all_faces[fidx];
                     doc.page(page_num)?.add_text_styled_with_char_spacing(
-                        &run_text, fh, [run_x, line.y], display_fs,
-                        [0.0f32, 0.0, 0.0], bold, false, char_spacing,
+                        &run_text,
+                        fh,
+                        [run_x, line.y],
+                        display_fs,
+                        [0.0f32, 0.0, 0.0],
+                        bold,
+                        false,
+                        char_spacing,
                     )?;
                     let char_count_run = run_text.chars().count() as f32;
                     run_x += measure_text_width(&run_text, run_face, display_fs)

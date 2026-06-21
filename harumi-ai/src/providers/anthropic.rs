@@ -1,7 +1,12 @@
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
-use crate::{prompts::translation_system_prompt, Error, Result, Translator};
+use crate::{
+    Error, Result, Translator,
+    layout_repair::{LayoutCorrection, VisionProvider, VisionRepairRequest},
+    prompts::translation_system_prompt,
+};
 
 const DEFAULT_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
@@ -131,6 +136,42 @@ struct ContentBlock {
     text: String,
 }
 
+#[derive(Serialize)]
+struct VisionMessagesRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    system: &'a str,
+    messages: Vec<VisionMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct VisionMessage<'a> {
+    role: &'a str,
+    content: Vec<VisionContent<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum VisionContent<'a> {
+    #[serde(rename = "text")]
+    Text { text: &'a str },
+    #[serde(rename = "image")]
+    Image { source: VisionImageSource },
+}
+
+#[derive(Serialize)]
+struct VisionImageSource {
+    #[serde(rename = "type")]
+    source_type: &'static str,
+    media_type: &'static str,
+    data: String,
+}
+
+#[derive(Deserialize)]
+struct VisionCorrectionResponse {
+    corrections: Vec<LayoutCorrection>,
+}
+
 // ── Translator impl ─────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -153,7 +194,10 @@ impl Translator for AnthropicTranslator {
                 model: &self.model,
                 max_tokens: self.max_tokens,
                 system: system.clone(),
-                messages: vec![Message { role: "user", content: text }],
+                messages: vec![Message {
+                    role: "user",
+                    content: text,
+                }],
             };
 
             let resp: MessagesResponse = self
@@ -182,5 +226,94 @@ impl Translator for AnthropicTranslator {
         }
 
         Ok(results)
+    }
+}
+
+#[async_trait]
+impl VisionProvider for AnthropicTranslator {
+    async fn repair_layout(
+        &self,
+        request: VisionRepairRequest<'_>,
+    ) -> Result<Vec<LayoutCorrection>> {
+        let source_png = general_purpose::STANDARD.encode(request.source_png);
+        let translated_png = general_purpose::STANDARD.encode(request.translated_png);
+        let text = format!(
+            "Compare the source PDF page and translated PDF page.\n\
+             Return corrections only for translated text that visibly overflows, collides, \
+             covers images, or breaks a table/value field.\n\
+             Keep the language as {}. Preserve numbers, units, and codes exactly.\n\
+             Source language hint: {}.\n\
+             Geometry issues:\n{}\n\n\
+             Return ONLY JSON: {{\"corrections\":[{{\"page\":{},\"id\":<number>,\"text\":\"<corrected>\",\"reason\":\"<short>\"}}]}}",
+            request.target_lang,
+            request.source_lang.unwrap_or("auto"),
+            request.geometry_issues_json,
+            request.page,
+        );
+        let system = "You are a PDF translation layout repair engine. Use the images to verify geometry diagnostics. Do not rewrite unaffected text.";
+        let req = VisionMessagesRequest {
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            system,
+            messages: vec![VisionMessage {
+                role: "user",
+                content: vec![
+                    VisionContent::Text {
+                        text: "Source page image:",
+                    },
+                    VisionContent::Image {
+                        source: VisionImageSource {
+                            source_type: "base64",
+                            media_type: "image/png",
+                            data: source_png,
+                        },
+                    },
+                    VisionContent::Text {
+                        text: "Translated page image:",
+                    },
+                    VisionContent::Image {
+                        source: VisionImageSource {
+                            source_type: "base64",
+                            media_type: "image/png",
+                            data: translated_png,
+                        },
+                    },
+                    VisionContent::Text { text: &text },
+                ],
+            }],
+        };
+
+        let resp: MessagesResponse = self
+            .client
+            .post(&self.endpoint)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| Error::Translator(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| Error::Translator(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| Error::Translator(e.to_string()))?;
+
+        let raw = resp
+            .content
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::Translator("Claude returned empty vision content".into()))?
+            .text;
+        let json_str = {
+            let s = raw.trim();
+            let s = s.strip_prefix("```json").unwrap_or(s);
+            let s = s.strip_prefix("```").unwrap_or(s);
+            let s = s.strip_suffix("```").unwrap_or(s);
+            s.trim()
+        };
+        let parsed: VisionCorrectionResponse = serde_json::from_str(json_str).map_err(|e| {
+            Error::Translator(format!("Claude vision JSON invalid: {e}. Raw: {json_str}"))
+        })?;
+        Ok(parsed.corrections)
     }
 }

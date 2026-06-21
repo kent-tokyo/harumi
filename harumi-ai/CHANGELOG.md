@@ -2,6 +2,66 @@
 
 ---
 
+## [0.6.0] — 2026-06-21
+
+### Added
+
+- **`LayoutRepairMode`** enum — post-translation layout repair strategy:
+  `Off` (no repair), `GeometryOnly` (geometry diagnostics only),
+  `GeometryThenVision` (geometry first, then vision for pages that still fail — **default**),
+  `VisionAllPages` (rasterize and compare every page).
+
+- **`RasterizeOptions`** struct — settings for Poppler-based page rasterization:
+  `command` (binary name or path, default `"pdftoppm"`), `dpi` (default 144),
+  `timeout_per_page` (default 30 s).
+
+- **`VisionProvider`** trait — provider-agnostic async interface for vision-based layout
+  repair.  One method: `repair_layout(&self, request: VisionRepairRequest) -> Result<Vec<LayoutCorrection>>`.
+
+- **`VisionRepairRequest`** struct — input sent to a vision provider for one page:
+  `page`, `source_png`, `translated_png`, `geometry_issues_json`, `target_lang`,
+  `source_lang`.
+
+- **`LayoutCorrection`** struct — one corrected translation returned by a repair pass:
+  `page`, `id`, `text`, `reason`.  Serializable via `serde`.
+
+- **`TranslateOptions::layout_repair_mode`** — `LayoutRepairMode` field, default
+  `GeometryThenVision`.  When set to `Off`, the AI correction loop is skipped entirely.
+
+- **`TranslateOptions::vision_provider`** — optional `Arc<dyn VisionProvider>`.  Required
+  for `GeometryThenVision` and `VisionAllPages` modes to actually send images to a model.
+
+- **`TranslateOptions::rasterize`** — `RasterizeOptions` for the Poppler `pdftoppm`
+  rasterization step used by vision repair passes.
+
+- **`TranslateOptionsBuilder::layout_repair_mode(mode)`** — builder setter for
+  `layout_repair_mode`.
+
+- **`TranslateOptionsBuilder::vision_provider(provider)`** — builder setter that wraps
+  the provider in an `Arc`.
+
+- **`TranslateOptionsBuilder::rasterize_options(options)`** — builder setter for
+  `rasterize`.
+
+- **`AnthropicTranslator implements VisionProvider`** (`anthropic` feature) — the
+  Anthropic provider can now be used for vision-based page comparison and correction.
+  Sends the source and translated PNG renderings with geometry diagnostics to Claude's
+  vision API and returns `LayoutCorrection`s.  Requires the `base64` dependency
+  (added to the `anthropic` feature gate).
+
+- **Improved `layout_correction_prompt`** — prompt now distinguishes repair priorities
+  (major collision / overflow / image overlap > accepted shrink), gives per-element-type
+  guidance (table cells preserve numbers/codes, headings shorten wording, paragraphs
+  remove redundancy), and explicitly names the issues-JSON parameter.
+
+### Dependencies
+
+- `base64 = "0.22"` added as an optional dependency, gated under the `anthropic` feature.
+- `tokio` feature set expanded to include `process` and `time` (required by
+  `rasterize_page_png` for async `pdftoppm` invocation with per-page timeout).
+
+---
+
 ## [0.5.0] — 2026-06-21
 
 ### Added

@@ -138,6 +138,7 @@ doc.save("searchable.pdf")?;
 | 需要在 PDF 上可视化调试布局碰撞和文字放置 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 绘制彩色描边矩形（蓝色=源 bbox，绿色=排版文字，红色=碰撞重叠区域）；通过 `DebugOverlayOptions` 配置颜色和线宽；NaN/无效坐标自动跳过（`draw` feature，v1.13.0+） |
 | 放置文字时需要通过字符间距吸收细微宽度差异 | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 算子; 负值 `char_spacing` 在不改变字体大小的情况下压缩文字宽度 (v1.15.0+) |
 | 需要获取页面上图片的边界框（用于叠加回避） | `doc.page_image_bboxes(page)` — 返回轴对齐 Image XObject 的 `[x, y, width, height]`; 不需要 `image` feature (v1.15.0+) |
+| 需要一次性获取溢出、碰撞和图片重叠的综合布局质量报告 | `doc.assess_page_layout_quality(page, &plans) -> PageLayoutQuality` — 合并调用 `page_image_bboxes` 和 `PageLayoutQuality::from_plans`；`issues: Vec<LayoutIssue>`（类型: `TextOverflow`/`TextCollision`/`ImageOverlap`/`BboxDrift`/`AcceptedShrink`，严重程度: `Minor`/`Moderate`/`Major`）以及各类计数和 `worst_severity` (v1.16.0+) |
 
 ---
 
@@ -836,6 +837,8 @@ harumi 致力于实现**零外部运行时依赖**（PDF 核心处理除外）�
 | **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 结构性碰撞分类；`RegionFitPlan.collisions` 改为 `Vec<ClassifiedCollision>` |
 | **v1.13.0** | `Collision::overlap_area`（pt² 严重程度字段）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；Bug 修复：Report+max_lines Truncated 状态、WrapThenShrink 下限字体溢出、Truncate rh=0 误判 Ok、NaN 坐标保护 |
 | **v1.14.0** | `CollisionSeverity`（Minor/Moderate/Major）+ `ClassifiedCollision::severity` 字段（按 source_bbox 面积比自动计算）；`collision_severity()` 独立函数；`LabelValuePair` + `extract_label_value_pairs()` — LeftLabel/RightValue 区域配对提取（用于密集表单/SDS PDF 检测） |
+| **v1.15.0** | `add_text_styled_with_char_spacing` — PDF `Tc` 字符间距算子；负值压缩宽度而不改变字体大小；`page_image_bboxes` — 无需 `image` feature 获取图片 bbox；harumi-ai v0.5.0: Tc 优化 + 图片区域回避 |
+| **v1.16.0** *(当前)* | `LayoutIssue` / `LayoutIssueKind` / `LayoutIssueSeverity` / `PageLayoutQuality` — 含问题类型和严重程度的布局质量报告；`assess_page_layout_quality` — 一次调用合并图片 bbox 检测和 `PageFitSummary`；harumi-ai v0.6.0: `LayoutRepairMode`、`VisionProvider` 特型、`AnthropicTranslator` 视觉支持、Poppler `RasterizeOptions`、修正提示改进 |
 
 ---
 

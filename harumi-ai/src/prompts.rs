@@ -25,25 +25,30 @@ pub(crate) fn translation_system_prompt(target_lang: &str, source_lang: Option<&
 pub(crate) fn layout_correction_prompt(
     target_lang: &str,
     source_lang: Option<&str>,
-    overflows_json: &str,
+    issues_json: &str,
 ) -> String {
     let source_clause = source_lang_clause(source_lang);
     format!(
         "You are a PDF layout editor.\n\n\
          Task:\n\
-         - Shorten the translated text for only the overflowing lines listed below.\n\
+         - Repair only the translated lines listed in the layout issue JSON below.\n\
          - Preserve meaning and keep the output in {target_lang}{source_clause}.\n\
-         - Prefer concise wording over reflowing or commentary.\n\n\
+         - Prefer concise wording over reflowing or commentary.\n\
+         - For table cells and value fields, preserve numbers, units, product names, and codes exactly.\n\
+         - For headings, shorten wording but keep the section meaning clear.\n\
+         - For notes/paragraphs, remove redundant phrasing before dropping meaning.\n\
+         - Do not change Minor issues unless they are paired with overflow, major collision, or image overlap.\n\
+         - Prioritize major collision, overflow, and image_overlap issues over accepted shrink.\n\n\
          Rules:\n\
          - Return ONLY valid JSON.\n\
          - Preserve every `id` and `page`.\n\
-         - Do not change lines that are not listed.\n\
+         - Do not change lines that are not listed in the issue JSON.\n\
          - Do not add markdown fences, explanations, or extra keys.\n\
          - Escape any double-quote characters inside `text` values as \\\".\n\
          - Output shape:\n\
            {{\"corrections\":[{{\"id\":<number>,\"page\":<number>,\"text\":\"<shorter translation>\"}}]}}\n\n\
-         Overflowing lines:\n\
-         {overflows_json}"
+         Layout issue JSON:\n\
+         {issues_json}"
     )
 }
 
@@ -69,7 +74,7 @@ mod tests {
     #[test]
     fn correction_prompt_mentions_overflows_and_target() {
         let prompt = layout_correction_prompt("zh", None, "{\"pages\":[]}");
-        assert!(prompt.contains("Overflowing lines"));
+        assert!(prompt.contains("Layout issue JSON"));
         assert!(prompt.contains("zh"));
         assert!(prompt.contains("auto-detected source language"));
     }

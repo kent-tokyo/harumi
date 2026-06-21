@@ -645,6 +645,7 @@ name = "harumi-ai"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "base64",
  "futures",
  "harumi",
  "regex",

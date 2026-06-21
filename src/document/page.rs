@@ -6,16 +6,15 @@ use crate::{
     font::FontHandle,
 };
 
-use super::types::{
-    Color, Document, FragmentReplaceFailureReason, FragmentReplaceOpts,
-    PendingOp, PendingPage, PendingText, ReplaceOptions, TextRun,
-};
 use super::helpers::{
-    append_annotation_to_page, build_link_annot_base, build_markup_annot,
-    check_finite, check_positive_size, parse_box_array,
-    pdf_text_string, prepend_to_contents, read_page_box, set_page_box, wrap_paragraph,
+    append_annotation_to_page, build_link_annot_base, build_markup_annot, check_finite,
+    check_positive_size, parse_box_array, pdf_text_string, prepend_to_contents, read_page_box,
+    set_page_box, wrap_paragraph,
 };
-
+use super::types::{
+    Color, Document, FragmentReplaceFailureReason, FragmentReplaceOpts, PendingOp, PendingPage,
+    PendingText, ReplaceOptions, TextRun,
+};
 
 /// Vertical alignment for [`PageHandle::add_text_box_aligned`].
 pub enum VerticalAlign {
@@ -43,18 +42,26 @@ fn count_ops_in_object(
     obj_id: lopdf::ObjectId,
     target_op_ends: &std::collections::HashSet<usize>,
 ) -> usize {
-    let Ok(obj) = doc.get_object(obj_id) else { return 0 };
-    let Ok(stream) = obj.as_stream() else { return 0 };
+    let Ok(obj) = doc.get_object(obj_id) else {
+        return 0;
+    };
+    let Ok(stream) = obj.as_stream() else {
+        return 0;
+    };
     let stream_bytes = if stream.dict.get(b"Filter").is_ok() {
         let mut owned = stream.clone();
-        if owned.decompress().is_err() { return 0; }
+        if owned.decompress().is_err() {
+            return 0;
+        }
         owned.content
     } else {
         stream.content.clone()
     };
     crate::replace::parse_ops(&stream_bytes)
         .iter()
-        .filter(|op| (op.keyword == b"Tj" || op.keyword == b"TJ") && target_op_ends.contains(&op.end))
+        .filter(|op| {
+            (op.keyword == b"Tj" || op.keyword == b"TJ") && target_op_ends.contains(&op.end)
+        })
         .count()
 }
 
@@ -71,8 +78,12 @@ fn suppress_ops_in_object(
     use lopdf::Object;
 
     let stream_bytes = {
-        let Ok(obj) = doc.get_object(obj_id) else { return 0 };
-        let Ok(stream) = obj.as_stream() else { return 0 };
+        let Ok(obj) = doc.get_object(obj_id) else {
+            return 0;
+        };
+        let Ok(stream) = obj.as_stream() else {
+            return 0;
+        };
         if stream.dict.get(b"Filter").is_ok() {
             let mut owned = stream.clone();
             if owned.decompress().is_err() {
@@ -93,8 +104,8 @@ fn suppress_ops_in_object(
         if op.start > prev_end {
             new_bytes.extend_from_slice(&stream_bytes[prev_end..op.start]);
         }
-        let is_target = (op.keyword == b"Tj" || op.keyword == b"TJ")
-            && target_op_ends.contains(&op.end);
+        let is_target =
+            (op.keyword == b"Tj" || op.keyword == b"TJ") && target_op_ends.contains(&op.end);
         if is_target {
             new_bytes.extend_from_slice(b"() Tj");
             suppressed += 1;
@@ -113,7 +124,9 @@ fn suppress_ops_in_object(
     {
         stream.dict.remove(b"Filter");
         stream.dict.remove(b"DecodeParms");
-        stream.dict.set("Length", Object::Integer(new_bytes.len() as i64));
+        stream
+            .dict
+            .set("Length", Object::Integer(new_bytes.len() as i64));
         stream.content = new_bytes;
         stream.allows_compression = false;
     }
@@ -694,12 +707,7 @@ impl<'doc> PageHandle<'doc> {
         new_text: &str,
         font: FontHandle,
     ) -> Result<usize> {
-        self.replace_text_fragments_opts(
-            fragments,
-            new_text,
-            font,
-            FragmentReplaceOpts::default(),
-        )
+        self.replace_text_fragments_opts(fragments, new_text, font, FragmentReplaceOpts::default())
     }
 
     /// Like [`replace_text_fragments`](PageHandle::replace_text_fragments) but with
@@ -737,10 +745,11 @@ impl<'doc> PageHandle<'doc> {
                 by_stream.entry(sidx).or_default().insert(op_end);
             }
         }
-        let stream_ids =
-            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+        let stream_ids = crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
         for (stream_idx, target_op_ends) in &by_stream {
-            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else {
+                continue;
+            };
             total_suppressed += if opts.dry_run {
                 count_ops_in_object(&self.doc.inner, stream_id, target_op_ends)
             } else {
@@ -751,9 +760,11 @@ impl<'doc> PageHandle<'doc> {
         // --- Form XObject stream suppression ---
         let mut by_xobj: HashMap<(u32, u16), HashSet<usize>> = HashMap::new();
         for frag in fragments {
-            if let (Some(xobj_id), Some(_), Some(op_end)) =
-                (frag.source_xobject, frag.source_op_start, frag.source_op_end)
-            {
+            if let (Some(xobj_id), Some(_), Some(op_end)) = (
+                frag.source_xobject,
+                frag.source_op_start,
+                frag.source_op_end,
+            ) {
                 by_xobj.entry(xobj_id).or_default().insert(op_end);
             }
         }
@@ -786,9 +797,12 @@ impl<'doc> PageHandle<'doc> {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = opt_face.as_ref().map(|f| {
-                                super::helpers::text_width_with_face(new_text, f, candidate)
-                            }).unwrap_or(max_w);
+                            let w = opt_face
+                                .as_ref()
+                                .map(|f| {
+                                    super::helpers::text_width_with_face(new_text, f, candidate)
+                                })
+                                .unwrap_or(max_w);
                             if w <= max_w || candidate <= min_fs {
                                 break;
                             }
@@ -884,9 +898,11 @@ impl<'doc> PageHandle<'doc> {
                 {
                     by_stream.entry(sidx).or_default().insert(op_end);
                 }
-                if let (Some(xobj_id), Some(_), Some(op_end)) =
-                    (frag.source_xobject, frag.source_op_start, frag.source_op_end)
-                {
+                if let (Some(xobj_id), Some(_), Some(op_end)) = (
+                    frag.source_xobject,
+                    frag.source_op_start,
+                    frag.source_op_end,
+                ) {
                     by_xobj.entry(xobj_id).or_default().insert(op_end);
                 }
             }
@@ -894,11 +910,12 @@ impl<'doc> PageHandle<'doc> {
 
         // Single pass per stream — no offset shift between entries.
         let mut total_suppressed = 0usize;
-        let stream_ids =
-            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+        let stream_ids = crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
 
         for (stream_idx, target_op_ends) in &by_stream {
-            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else {
+                continue;
+            };
             total_suppressed += if opts.dry_run {
                 count_ops_in_object(&self.doc.inner, stream_id, target_op_ends)
             } else {
@@ -950,9 +967,12 @@ impl<'doc> PageHandle<'doc> {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = face.as_ref().map(|f| {
-                                super::helpers::text_width_with_face(new_text, f, candidate)
-                            }).unwrap_or(max_w);
+                            let w = face
+                                .as_ref()
+                                .map(|f| {
+                                    super::helpers::text_width_with_face(new_text, f, candidate)
+                                })
+                                .unwrap_or(max_w);
                             if w <= max_w || candidate <= min_fs {
                                 break;
                             }
@@ -966,13 +986,12 @@ impl<'doc> PageHandle<'doc> {
                     fs_initial
                 };
 
-                let text_lines: Vec<String> = if let (Some(max_w), Some(face)) =
-                    (opts.max_width, face.as_ref())
-                {
-                    wrap_paragraph(new_text, face, fs, max_w)
-                } else {
-                    vec![(*new_text).to_owned()]
-                };
+                let text_lines: Vec<String> =
+                    if let (Some(max_w), Some(face)) = (opts.max_width, face.as_ref()) {
+                        wrap_paragraph(new_text, face, fs, max_w)
+                    } else {
+                        vec![(*new_text).to_owned()]
+                    };
 
                 let line_height = fs * 1.2;
                 let lines = text_lines
@@ -981,7 +1000,12 @@ impl<'doc> PageHandle<'doc> {
                     .map(|(i, l)| (ay - i as f32 * line_height, l))
                     .collect();
 
-                result.push(EntryPlacement { x: frag.x, lines, fs, color });
+                result.push(EntryPlacement {
+                    x: frag.x,
+                    lines,
+                    fs,
+                    color,
+                });
             }
             result
         }; // immutable borrows (font_bytes, face) released here
@@ -1015,8 +1039,8 @@ impl<'doc> PageHandle<'doc> {
         entries: &[super::types::BatchEntry<'_>],
         font: crate::font::FontHandle,
     ) -> crate::error::Result<usize> {
-        use std::collections::{HashMap, HashSet};
         use super::types::Color;
+        use std::collections::{HashMap, HashSet};
 
         if self.doc.raw_fonts.get(font.0 as usize).is_none() {
             return Err(crate::error::Error::InvalidFont(font.0));
@@ -1033,20 +1057,23 @@ impl<'doc> PageHandle<'doc> {
                 {
                     by_stream.entry(sidx).or_default().insert(op_end);
                 }
-                if let (Some(xobj_id), Some(_), Some(op_end)) =
-                    (frag.source_xobject, frag.source_op_start, frag.source_op_end)
-                {
+                if let (Some(xobj_id), Some(_), Some(op_end)) = (
+                    frag.source_xobject,
+                    frag.source_op_start,
+                    frag.source_op_end,
+                ) {
                     by_xobj.entry(xobj_id).or_default().insert(op_end);
                 }
             }
         }
 
         let mut total_suppressed = 0usize;
-        let stream_ids =
-            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+        let stream_ids = crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
 
         for (stream_idx, target_op_ends) in &by_stream {
-            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else {
+                continue;
+            };
             total_suppressed += if any_dry_run {
                 count_ops_in_object(&self.doc.inner, stream_id, target_op_ends)
             } else {
@@ -1077,9 +1104,13 @@ impl<'doc> PageHandle<'doc> {
             let face = ttf_parser::Face::parse(font_bytes, 0).ok();
             let mut result = Vec::new();
             for entry in entries {
-                if entry.new_text.is_empty() { continue; }
+                if entry.new_text.is_empty() {
+                    continue;
+                }
                 let opts = &entry.opts;
-                let anchor = entry.fragments.iter()
+                let anchor = entry
+                    .fragments
+                    .iter()
                     .find(|f| f.source_stream.is_some() || f.source_xobject.is_some())
                     .or_else(|| entry.fragments.first());
                 let Some(frag) = anchor else { continue };
@@ -1091,25 +1122,46 @@ impl<'doc> PageHandle<'doc> {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
                         loop {
-                            let w = face.as_ref().map(|f| {
-                                super::helpers::text_width_with_face(entry.new_text, f, candidate)
-                            }).unwrap_or(max_w);
-                            if w <= max_w || candidate <= min_fs { break; }
+                            let w = face
+                                .as_ref()
+                                .map(|f| {
+                                    super::helpers::text_width_with_face(
+                                        entry.new_text,
+                                        f,
+                                        candidate,
+                                    )
+                                })
+                                .unwrap_or(max_w);
+                            if w <= max_w || candidate <= min_fs {
+                                break;
+                            }
                             candidate = (candidate * max_w / w).max(min_fs);
                         }
                         candidate
-                    } else { fs_initial }
-                } else { fs_initial };
-                let text_lines: Vec<String> = if let (Some(max_w), Some(face)) = (opts.max_width, face.as_ref()) {
-                    super::helpers::wrap_paragraph(entry.new_text, face, fs, max_w)
+                    } else {
+                        fs_initial
+                    }
                 } else {
-                    vec![entry.new_text.to_owned()]
+                    fs_initial
                 };
+                let text_lines: Vec<String> =
+                    if let (Some(max_w), Some(face)) = (opts.max_width, face.as_ref()) {
+                        super::helpers::wrap_paragraph(entry.new_text, face, fs, max_w)
+                    } else {
+                        vec![entry.new_text.to_owned()]
+                    };
                 let line_height = fs * 1.2;
-                let lines = text_lines.into_iter().enumerate()
+                let lines = text_lines
+                    .into_iter()
+                    .enumerate()
                     .map(|(i, l)| (ay - i as f32 * line_height, l))
                     .collect();
-                result.push(EntryPlacement { x: frag.x, lines, fs, color });
+                result.push(EntryPlacement {
+                    x: frag.x,
+                    lines,
+                    fs,
+                    color,
+                });
             }
             result
         };
@@ -1117,9 +1169,17 @@ impl<'doc> PageHandle<'doc> {
         for p in placements {
             for (ly, line) in p.lines {
                 self.push_op(PendingOp::Text(PendingText {
-                    font, text: line, x: p.x, y: ly,
-                    font_size: p.fs, render_mode: 0, color: p.color,
-                    opacity: 1.0, rotation_degrees: 0.0, bold: false, italic: false,
+                    font,
+                    text: line,
+                    x: p.x,
+                    y: ly,
+                    font_size: p.fs,
+                    render_mode: 0,
+                    color: p.color,
+                    opacity: 1.0,
+                    rotation_degrees: 0.0,
+                    bold: false,
+                    italic: false,
                     char_spacing: 0.0,
                 }));
             }
@@ -1199,10 +1259,7 @@ impl<'doc> PageHandle<'doc> {
 
         // Re-extract from the current in-memory content streams.
         // This sees any suppressions already applied in this session.
-        let frags = crate::extract::extract_text_runs_from_page(
-            &self.doc.inner,
-            self.page_id,
-        )?;
+        let frags = crate::extract::extract_text_runs_from_page(&self.doc.inner, self.page_id)?;
 
         // Collect suppression targets for fragments whose text matches.
         let mut by_stream: HashMap<usize, HashSet<usize>> = HashMap::new();
@@ -1214,9 +1271,11 @@ impl<'doc> PageHandle<'doc> {
             {
                 by_stream.entry(sidx).or_default().insert(op_end);
             }
-            if let (Some(xobj_id), Some(_), Some(op_end)) =
-                (frag.source_xobject, frag.source_op_start, frag.source_op_end)
-            {
+            if let (Some(xobj_id), Some(_), Some(op_end)) = (
+                frag.source_xobject,
+                frag.source_op_start,
+                frag.source_op_end,
+            ) {
                 by_xobj.entry(xobj_id).or_default().insert(op_end);
             }
         }
@@ -1227,16 +1286,16 @@ impl<'doc> PageHandle<'doc> {
 
         // Suppress in a single pass per stream (stable byte offsets).
         let mut total = 0usize;
-        let stream_ids =
-            crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+        let stream_ids = crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
 
         for (stream_idx, target_op_ends) in &by_stream {
-            let Some(&stream_id) = stream_ids.get(*stream_idx) else { continue };
+            let Some(&stream_id) = stream_ids.get(*stream_idx) else {
+                continue;
+            };
             total += suppress_ops_in_object(&mut self.doc.inner, stream_id, target_op_ends);
         }
         for (xobj_id, target_op_ends) in &by_xobj {
-            total +=
-                suppress_ops_in_object(&mut self.doc.inner, *xobj_id, target_op_ends);
+            total += suppress_ops_in_object(&mut self.doc.inner, *xobj_id, target_op_ends);
         }
 
         Ok(total)
@@ -1264,11 +1323,13 @@ impl<'doc> PageHandle<'doc> {
 
         // Locate the stream object.
         let obj_id: lopdf::ObjectId = if let Some(sidx) = fragment.source_stream {
-            let stream_ids =
-                crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
+            let stream_ids = crate::extract::page_content_stream_ids(&self.doc.inner, self.page_id);
             *stream_ids.get(sidx).ok_or(R::StreamIndexOutOfRange)?
         } else if let Some(xobj_id) = fragment.source_xobject {
-            self.doc.inner.get_object(xobj_id).map_err(|_| R::XObjectNotFound)?;
+            self.doc
+                .inner
+                .get_object(xobj_id)
+                .map_err(|_| R::XObjectNotFound)?;
             xobj_id
         } else {
             return Err(R::NoSourceInfo);
@@ -1291,10 +1352,14 @@ impl<'doc> PageHandle<'doc> {
             }
         };
 
-        let found = crate::replace::parse_ops(&stream_bytes).iter().any(|op| {
-            op.end == op_end && (op.keyword == b"Tj" || op.keyword == b"TJ")
-        });
-        if found { Ok(()) } else { Err(R::OperatorNotFound) }
+        let found = crate::replace::parse_ops(&stream_bytes)
+            .iter()
+            .any(|op| op.end == op_end && (op.keyword == b"Tj" || op.keyword == b"TJ"));
+        if found {
+            Ok(())
+        } else {
+            Err(R::OperatorNotFound)
+        }
     }
 
     /// Adds a clickable URL link annotation to this page.
@@ -1899,9 +1964,7 @@ impl<'doc> PageHandle<'doc> {
         }
         check_finite(&[scale_x, scale_y], "scale_page_content")?;
         if scale_x <= 0.0 || scale_y <= 0.0 {
-            return Err(Error::InvalidInput(
-                "scale values must be positive".into(),
-            ));
+            return Err(Error::InvalidInput("scale values must be positive".into()));
         }
         let cm_bytes = format!("{scale_x:.4} 0 0 {scale_y:.4} 0 0 cm\n").into_bytes();
         let cm_stream = Stream::new(Dictionary::new(), cm_bytes);
@@ -1970,8 +2033,20 @@ pub struct DebugOverlayOptions {
     /// Default: green `[0.1, 0.8, 0.1]`.
     pub placed_box_color: Option<Color>,
     /// Stroke color for collision overlap rectangles.
-    /// Default: red `[1.0, 0.1, 0.1]`.
+    /// Default: orange `[1.0, 0.55, 0.0]`.
     pub collision_box_color: Option<Color>,
+    /// Stroke color for text overflow rectangles.
+    /// Default: red `[1.0, 0.1, 0.1]`.
+    pub overflow_box_color: Option<Color>,
+    /// Stroke color for text/image overlap rectangles.
+    /// Default: purple `[0.6, 0.2, 0.9]`.
+    pub image_overlap_box_color: Option<Color>,
+    /// Stroke color for accepted shrink rectangles.
+    /// Default: blue `[0.2, 0.4, 1.0]`.
+    pub accepted_shrink_box_color: Option<Color>,
+    /// Stroke color for source/placed bbox drift rectangles.
+    /// Default: orange `[1.0, 0.55, 0.0]`.
+    pub bbox_drift_box_color: Option<Color>,
     /// Stroke line width in PDF points.  Default: `0.5`.
     pub line_width: f32,
 }
@@ -1982,7 +2057,11 @@ impl Default for DebugOverlayOptions {
         Self {
             source_box_color: Some(Color::Rgb([0.2, 0.6, 1.0])),
             placed_box_color: Some(Color::Rgb([0.1, 0.8, 0.1])),
-            collision_box_color: Some(Color::Rgb([1.0, 0.1, 0.1])),
+            collision_box_color: Some(Color::Rgb([1.0, 0.55, 0.0])),
+            overflow_box_color: Some(Color::Rgb([1.0, 0.1, 0.1])),
+            image_overlap_box_color: Some(Color::Rgb([0.6, 0.2, 0.9])),
+            accepted_shrink_box_color: Some(Color::Rgb([0.2, 0.4, 1.0])),
+            bbox_drift_box_color: Some(Color::Rgb([1.0, 0.55, 0.0])),
             line_width: 0.5,
         }
     }
@@ -2454,6 +2533,43 @@ impl<'doc> PageHandle<'doc> {
                         }
                     }
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draws debug overlay rectangles from a page-level layout quality report.
+    ///
+    /// Issue colors default to: overflow red, collision orange, image overlap
+    /// purple, accepted shrink blue, and bbox drift orange.  Set the corresponding
+    /// [`DebugOverlayOptions`] field to `None` to skip an issue layer.
+    pub fn add_layout_quality_debug_overlay(
+        &mut self,
+        quality: &crate::PageLayoutQuality,
+        opts: DebugOverlayOptions,
+    ) -> Result<()> {
+        let lw = opts.line_width;
+        if !lw.is_finite() {
+            return Err(crate::Error::InvalidInput(
+                "DebugOverlayOptions::line_width must be finite".into(),
+            ));
+        }
+
+        let rect_ok = |r: [f32; 4]| r.iter().all(|v| v.is_finite()) && r[2] > 0.0 && r[3] > 0.0;
+
+        for issue in &quality.issues {
+            let color = match issue.kind {
+                crate::LayoutIssueKind::TextOverflow => opts.overflow_box_color,
+                crate::LayoutIssueKind::TextCollision => opts.collision_box_color,
+                crate::LayoutIssueKind::ImageOverlap => opts.image_overlap_box_color,
+                crate::LayoutIssueKind::BboxDrift => opts.bbox_drift_box_color,
+                crate::LayoutIssueKind::AcceptedShrink => opts.accepted_shrink_box_color,
+            };
+            if let (Some(rect), Some(color)) = (issue.rect, color)
+                && rect_ok(rect)
+            {
+                self.add_rect_stroke(rect, color, lw, 1.0)?;
             }
         }
 

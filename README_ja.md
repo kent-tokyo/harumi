@@ -141,6 +141,7 @@ doc.save("searchable.pdf")?;
 | PDF 上でレイアウト衝突や配置をビジュアルデバッグしたい | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 色付きストローク矩形を描画（青=ソース bbox、緑=配置テキスト、赤=衝突重複）。`DebugOverlayOptions` で色と線幅を設定。NaN/無効座標は自動スキップ（`draw` feature、v1.13.0+） |
 | テキスト配置時に微小な幅差を文字間隔で吸収したい | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 演算子; 負の `char_spacing` でフォントサイズを維持したまま文字幅を縮小 (v1.15.0+) |
 | ページ上の画像ボックスを取得したい（オーバーレイ回避用） | `doc.page_image_bboxes(page)` — 軸平行 Image XObject の `[x, y, width, height]` を返す; `image` feature 不要 (v1.15.0+) |
+| オーバーフロー・衝突・画像重複を一度にまとめて品質チェックしたい | `doc.assess_page_layout_quality(page, &plans) -> PageLayoutQuality` — `page_image_bboxes` と `PageLayoutQuality::from_plans` を一括呼び出し；`issues: Vec<LayoutIssue>`（種別: `TextOverflow`/`TextCollision`/`ImageOverlap`/`BboxDrift`/`AcceptedShrink`、深刻度: `Minor`/`Moderate`/`Major`）+ 各カウントと `worst_severity` (v1.16.0+) |
 
 ---
 
@@ -954,6 +955,8 @@ harumi は **外部ランタイム依存ゼロ**（コア PDF 処理以外）を
 | **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 構造的衝突分類；`RegionFitPlan.collisions` を `Vec<ClassifiedCollision>` に変更 |
 | **v1.13.0** | `Collision::overlap_area`（pt² 重大度フィールド）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；バグ修正: Report+max_lines Truncated ステータス、WrapThenShrink 下限フォントでの溢れ、Truncate rh=0 誤 Ok、NaN 座標ガード |
 | **v1.14.0** | `CollisionSeverity`（Minor/Moderate/Major）+ `ClassifiedCollision::severity` フィールド（source_bbox 面積比で自動計算）；`collision_severity()` スタンドアロン関数；`LabelValuePair` + `extract_label_value_pairs()` — LeftLabel/RightValue 領域のペア抽出（密集帳票/SDS PDF 検出用） |
+| **v1.15.0** | `add_text_styled_with_char_spacing` — PDF `Tc` 文字間隔演算子；負の `char_spacing` でフォントサイズを変えずに幅を圧縮；`page_image_bboxes` — `image` feature 不要で画像 bbox 取得；harumi-ai v0.5.0: Tc 最適化 + 画像領域回避 |
+| **v1.16.0** *(最新)* | `LayoutIssue` / `LayoutIssueKind` / `LayoutIssueSeverity` / `PageLayoutQuality` — 問題種別・深刻度つきのレイアウト品質レポート；`assess_page_layout_quality` — 画像 bbox 検出と `PageFitSummary` を一括取得；harumi-ai v0.6.0: `LayoutRepairMode`・`VisionProvider` トレイト・`AnthropicTranslator` ビジョン対応・Poppler `RasterizeOptions`・補正プロンプト改善 |
 
 ---
 

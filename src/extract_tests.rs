@@ -346,12 +346,13 @@ fn extract_table_cells_single_column() {
     // Three rows, one column.
     let frags = vec![
         make_frag("Header", 50.0, 700.0, 80.0, 12.0),
-        make_frag("Row 1",  50.0, 680.0, 60.0, 12.0),
-        make_frag("Row 2",  50.0, 660.0, 60.0, 12.0),
+        make_frag("Row 1", 50.0, 680.0, 60.0, 12.0),
+        make_frag("Row 2", 50.0, 660.0, 60.0, 12.0),
     ];
     let cells = extract_table_cells(&frags, 595.0, 842.0);
     assert_eq!(cells.len(), 3);
-    assert_eq!(cells[0].row, 0); assert_eq!(cells[0].col, 0);
+    assert_eq!(cells[0].row, 0);
+    assert_eq!(cells[0].col, 0);
     assert_eq!(cells[1].row, 1);
     assert_eq!(cells[2].row, 2);
     assert_eq!(cells[0].text, "Header");
@@ -361,9 +362,9 @@ fn extract_table_cells_single_column() {
 fn extract_table_cells_two_columns() {
     // Two rows × two columns (100 pt gap between columns).
     let frags = vec![
-        make_frag("A1", 50.0,  700.0, 80.0, 12.0),
+        make_frag("A1", 50.0, 700.0, 80.0, 12.0),
         make_frag("B1", 300.0, 700.0, 80.0, 12.0),
-        make_frag("A2", 50.0,  680.0, 80.0, 12.0),
+        make_frag("A2", 50.0, 680.0, 80.0, 12.0),
         make_frag("B2", 300.0, 680.0, 80.0, 12.0),
     ];
     let cells = extract_table_cells(&frags, 595.0, 842.0);
@@ -380,8 +381,8 @@ fn extract_table_cells_two_columns() {
 fn extract_table_cells_merges_same_cell_fragments() {
     // Two fragments on the same line, same column → merged into one cell.
     let frags = vec![
-        make_frag("Hello", 50.0,  700.0, 30.0, 12.0),
-        make_frag("World", 85.0,  700.0, 30.0, 12.0),
+        make_frag("Hello", 50.0, 700.0, 30.0, 12.0),
+        make_frag("World", 85.0, 700.0, 30.0, 12.0),
     ];
     let cells = extract_table_cells(&frags, 595.0, 842.0);
     assert_eq!(cells.len(), 1);
@@ -408,9 +409,9 @@ fn group_text_fragments_raw() {
 #[test]
 fn group_text_fragments_line() {
     let frags = vec![
-        make_frag("A", 50.0,  700.0, 20.0, 12.0),
-        make_frag("B", 80.0,  700.0, 20.0, 12.0), // same line
-        make_frag("C", 50.0,  680.0, 20.0, 12.0), // new line (gap > 6pt)
+        make_frag("A", 50.0, 700.0, 20.0, 12.0),
+        make_frag("B", 80.0, 700.0, 20.0, 12.0), // same line
+        make_frag("C", 50.0, 680.0, 20.0, 12.0), // new line (gap > 6pt)
     ];
     let groups = group_text_fragments(&frags, GroupingStrategy::Line);
     assert_eq!(groups.len(), 2, "expected 2 lines, got {}", groups.len());
@@ -426,7 +427,12 @@ fn group_text_fragments_paragraph() {
         make_frag("L3", 50.0, 630.0, 20.0, 12.0), // gap=56, > 18 → new paragraph
     ];
     let groups = group_text_fragments(&frags, GroupingStrategy::Paragraph);
-    assert_eq!(groups.len(), 2, "expected 2 paragraphs, got {}", groups.len());
+    assert_eq!(
+        groups.len(),
+        2,
+        "expected 2 paragraphs, got {}",
+        groups.len()
+    );
     assert!(groups[0].text.contains("L1") && groups[0].text.contains("L2"));
     assert!(groups[1].text.contains("L3"));
 }
@@ -519,7 +525,11 @@ fn extract_xobjects_from_inherited_resources() {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
-    let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = frags
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
     assert!(
         !frags.is_empty(),
         "expected text from XObject with inherited /Resources, got none"
@@ -569,8 +579,14 @@ fn extract_cid_xobject_inherited_resources() {
     cidfont_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
     {
         let mut cidsys = Dictionary::new();
-        cidsys.set("Registry", Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal));
-        cidsys.set("Ordering", Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal));
+        cidsys.set(
+            "Registry",
+            Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal),
+        );
+        cidsys.set(
+            "Ordering",
+            Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal),
+        );
         cidsys.set("Supplement", Object::Integer(0));
         cidfont_d.set("CIDSystemInfo", Object::Dictionary(cidsys));
     }
@@ -583,7 +599,10 @@ fn extract_cid_xobject_inherited_resources() {
     font_d.set("Subtype", Object::Name(b"Type0".to_vec()));
     font_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
     font_d.set("Encoding", Object::Name(b"Identity-H".to_vec()));
-    font_d.set("DescendantFonts", Object::Array(vec![Object::Reference(cidfont_id)]));
+    font_d.set(
+        "DescendantFonts",
+        Object::Array(vec![Object::Reference(cidfont_id)]),
+    );
     font_d.set("ToUnicode", Object::Reference(cmap_id));
     let font_id = doc.add_object(Object::Dictionary(font_d));
 
@@ -599,8 +618,10 @@ fn extract_cid_xobject_inherited_resources() {
     xobj_d.set(
         "BBox",
         Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Integer(595), Object::Integer(842),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
         ]),
     );
     xobj_d.set("Resources", Object::Dictionary(xobj_res));
@@ -621,8 +642,10 @@ fn extract_cid_xobject_inherited_resources() {
     page_d.set(
         "MediaBox",
         Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Integer(595), Object::Integer(842),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
         ]),
     );
     page_d.set("Contents", Object::Reference(content_id));
@@ -653,7 +676,11 @@ fn extract_cid_xobject_inherited_resources() {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
-    let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = frags
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
     assert!(
         !frags.is_empty(),
         "expected CID text from XObject with inherited /Resources, got none"
@@ -680,17 +707,23 @@ fn ctm_transforms_coordinates_to_page_space() {
     let mut to_unicode = BTreeMap::new();
     to_unicode.insert(0x41u16, 'A');
     let mut fonts = HashMap::new();
-    fonts.insert(b"F1".to_vec(), FontInfo {
-        to_unicode,
-        dw: 1000,
-        w_runs: vec![WidthRun { start_gid: 0x41, widths: vec![600] }],
-        bytes_per_char: 1,
-        identity_fallback: false,
-        is_bold: false,
-        is_italic: false,
-        font_family: String::new(),
-        base_font: String::new(),
-    });
+    fonts.insert(
+        b"F1".to_vec(),
+        FontInfo {
+            to_unicode,
+            dw: 1000,
+            w_runs: vec![WidthRun {
+                start_gid: 0x41,
+                widths: vec![600],
+            }],
+            bytes_per_char: 1,
+            identity_fallback: false,
+            is_bold: false,
+            is_italic: false,
+            font_family: String::new(),
+            base_font: String::new(),
+        },
+    );
 
     // Content stream: q → cm (0.24 scale + Y-flip) → BT/Tj/ET → Q
     let stream = b"q\n\
@@ -742,9 +775,21 @@ fn ctm_at_do_captured_in_state() {
     parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0), None);
 
     let eps = 1e-5f32;
-    assert!((state.ctm[0] - 0.24).abs() < eps, "ctm[0] should be 0.24, got {}", state.ctm[0]);
-    assert!((state.ctm[3] - -0.24).abs() < eps, "ctm[3] should be -0.24, got {}", state.ctm[3]);
-    assert!((state.ctm[5] - 841.0).abs() < eps, "ctm[5] should be 841, got {}", state.ctm[5]);
+    assert!(
+        (state.ctm[0] - 0.24).abs() < eps,
+        "ctm[0] should be 0.24, got {}",
+        state.ctm[0]
+    );
+    assert!(
+        (state.ctm[3] - -0.24).abs() < eps,
+        "ctm[3] should be -0.24, got {}",
+        state.ctm[3]
+    );
+    assert!(
+        (state.ctm[5] - 841.0).abs() < eps,
+        "ctm[5] should be 841, got {}",
+        state.ctm[5]
+    );
 }
 
 // Regression test for the PScript5.dll/Distiller pattern where a Form XObject
@@ -844,7 +889,11 @@ fn extract_xobject_font_from_page_resources() {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
-    let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = frags
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
     assert!(
         text.contains("Hello"),
         "XObject referencing page-level font must extract text; got: {text:?}"
@@ -926,7 +975,11 @@ fn extract_cross_stream_bt_tj() {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
-    let text: String = frags.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = frags
+        .iter()
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
     assert!(
         text.contains("Hello"),
         "text inside BT split across streams must be extracted; got: {text:?}"
@@ -991,8 +1044,7 @@ fn tm_origin_preserves_column_anchor() {
     // All fragments must have tm_origin_x = 100.
     let stream_bytes = b"BT /F1 12 Tf 100 700 Td (AB) Tj 0 -14 Td (C) Tj ET".to_vec();
 
-    let content_id =
-        doc.add_object(Object::Stream(Stream::new(Dictionary::new(), stream_bytes)));
+    let content_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), stream_bytes)));
 
     let mut font_dict = Dictionary::new();
     font_dict.set("F1", Object::Reference(font_id));
@@ -1001,10 +1053,15 @@ fn tm_origin_preserves_column_anchor() {
 
     let mut page_d = Dictionary::new();
     page_d.set("Type", Object::Name(b"Page".to_vec()));
-    page_d.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    page_d.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     page_d.set("Resources", Object::Dictionary(page_res));
     page_d.set("Contents", Object::Reference(content_id));
     let page_id = doc.add_object(Object::Dictionary(page_d));
@@ -1015,7 +1072,9 @@ fn tm_origin_preserves_column_anchor() {
     pages_d.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
 
@@ -1065,10 +1124,15 @@ fn tm_origin_preserves_column_anchor() {
 
     let mut pg2 = lopdf::Dictionary::new();
     pg2.set("Type", Object::Name(b"Page".to_vec()));
-    pg2.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    pg2.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     pg2.set("Resources", Object::Dictionary(pr2));
     pg2.set("Contents", Object::Reference(cid2));
     let page_id2 = doc2.add_object(Object::Dictionary(pg2));
@@ -1079,7 +1143,9 @@ fn tm_origin_preserves_column_anchor() {
     ps2.set("Count", Object::Integer(1));
     let pages_id2 = doc2.add_object(Object::Dictionary(ps2));
 
-    if let Ok(obj) = doc2.get_object_mut(page_id2) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc2.get_object_mut(page_id2)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id2));
     }
 
@@ -1152,10 +1218,15 @@ fn tm_x_scale_and_td_scaling() {
 
         let mut pg = lopdf::Dictionary::new();
         pg.set("Type", Object::Name(b"Page".to_vec()));
-        pg.set("MediaBox", Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Integer(595), Object::Integer(842),
-        ]));
+        pg.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(595),
+                Object::Integer(842),
+            ]),
+        );
         pg.set("Resources", Object::Dictionary(res));
         pg.set("Contents", Object::Reference(cid));
         let page_id = doc.add_object(Object::Dictionary(pg));
@@ -1166,7 +1237,9 @@ fn tm_x_scale_and_td_scaling() {
         ps.set("Count", Object::Integer(1));
         let pages_id = doc.add_object(Object::Dictionary(ps));
 
-        if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+        if let Ok(obj) = doc.get_object_mut(page_id)
+            && let Ok(d) = obj.as_dict_mut()
+        {
             d.set("Parent", Object::Reference(pages_id));
         }
 
@@ -1192,7 +1265,10 @@ fn tm_x_scale_and_td_scaling() {
         // tm_x_scale should be Some(10.0) for both fragments
         for f in &frags {
             let xs = f.tm_x_scale.unwrap_or(f32::NAN);
-            assert!((xs - 10.0).abs() < 0.01, "tm_x_scale should be 10, got {xs}");
+            assert!(
+                (xs - 10.0).abs() < 0.01,
+                "tm_x_scale should be 10, got {xs}"
+            );
         }
 
         // Per PDF spec, Td resets T_m to T_lm_new (glyph-advance of A does NOT carry).
@@ -1206,10 +1282,16 @@ fn tm_x_scale_and_td_scaling() {
         );
         // tm_lm_x for both fragments should equal T_lm at the time of each Tj:
         // A: T_lm_x=50 (from Tm); B: T_lm_x=100 (after Td)
-        assert!((frags[0].tm_lm_x.unwrap_or(f32::NAN) - 50.0).abs() < 0.5,
-            "A.tm_lm_x should be 50 (Tm anchor), got {:?}", frags[0].tm_lm_x);
-        assert!((frags[1].tm_lm_x.unwrap_or(f32::NAN) - 100.0).abs() < 0.5,
-            "B.tm_lm_x should be 100 (after Td), got {:?}", frags[1].tm_lm_x);
+        assert!(
+            (frags[0].tm_lm_x.unwrap_or(f32::NAN) - 50.0).abs() < 0.5,
+            "A.tm_lm_x should be 50 (Tm anchor), got {:?}",
+            frags[0].tm_lm_x
+        );
+        assert!(
+            (frags[1].tm_lm_x.unwrap_or(f32::NAN) - 100.0).abs() < 0.5,
+            "B.tm_lm_x should be 100 (after Td), got {:?}",
+            frags[1].tm_lm_x
+        );
     }
 
     // Test B: non-uniform Tm (x_scale=5, y_scale=2) → width uses x_scale, height uses y_scale
@@ -1224,16 +1306,25 @@ fn tm_x_scale_and_td_scaling() {
         // tm_x_scale = 5, tm_y_scale = 2
         let xs = f.tm_x_scale.unwrap_or(f32::NAN);
         assert!((xs - 5.0).abs() < 0.01, "tm_x_scale should be 5, got {xs}");
-        assert!((f.tm_y_scale - 2.0).abs() < 0.01, "tm_y_scale should be 2, got {}", f.tm_y_scale);
+        assert!(
+            (f.tm_y_scale - 2.0).abs() < 0.01,
+            "tm_y_scale should be 2, got {}",
+            f.tm_y_scale
+        );
 
         // height (font_size) uses y_scale=2
-        assert!((f.height - 2.0).abs() < 0.01, "height should be ≈2 (y_scale), got {}", f.height);
+        assert!(
+            (f.height - 2.0).abs() < 0.01,
+            "height should be ≈2 (y_scale), got {}",
+            f.height
+        );
 
         // width uses x_scale=5, so width > height
         assert!(
             f.width > f.height,
             "width (x_scale=5 based) should exceed height (y_scale=2 based); w={} h={}",
-            f.width, f.height
+            f.width,
+            f.height
         );
     }
 
@@ -1287,8 +1378,7 @@ fn form_pdf_column_stability() {
     //   200 0 Td              (value column again: x = 200*10 + 50 = 2050)
     //   (Value2) Tj
     // ET
-    let stream_bytes =
-        b"BT /F1 1 Tf 10 0 0 10 50 700 Tm \
+    let stream_bytes = b"BT /F1 1 Tf 10 0 0 10 50 700 Tm \
           (A) Tj 200 0 Td (B) Tj -200 -14 Td (C) Tj 200 0 Td (D) Tj ET"
         .to_vec();
 
@@ -1302,10 +1392,15 @@ fn form_pdf_column_stability() {
     res.set("Font", Object::Dictionary(font_dict));
     let mut pg = lopdf::Dictionary::new();
     pg.set("Type", Object::Name(b"Page".to_vec()));
-    pg.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    pg.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     pg.set("Resources", Object::Dictionary(res));
     pg.set("Contents", Object::Reference(cid));
     let page_id = doc.add_object(Object::Dictionary(pg));
@@ -1314,7 +1409,9 @@ fn form_pdf_column_stability() {
     ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
     ps.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(ps));
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
     let mut cat = lopdf::Dictionary::new();
@@ -1333,27 +1430,55 @@ fn form_pdf_column_stability() {
     // All fragments share the same Tm origin (50, 700).
     for f in &frags {
         let ox = f.tm_origin_x.unwrap_or(f32::NAN);
-        assert!((ox - 50.0).abs() < eps, "tm_origin_x should be 50, got {ox} for {:?}", f.text);
+        assert!(
+            (ox - 50.0).abs() < eps,
+            "tm_origin_x should be 50, got {ox} for {:?}",
+            f.text
+        );
     }
 
     // Label column (A and C): x ≈ 50 (T_lm reset by Td or Tm)
     assert!((a.x - 50.0).abs() < eps, "A.x should be ≈50, got {}", a.x);
-    assert!((c.x - 50.0).abs() < eps, "C.x should be ≈50 after -200 Td, got {}", c.x);
+    assert!(
+        (c.x - 50.0).abs() < eps,
+        "C.x should be ≈50 after -200 Td, got {}",
+        c.x
+    );
 
     // Value column (B and D): x ≈ 2050 (= 200*10 + 50)
     let value_x = 200.0 * 10.0 + 50.0;
-    assert!((b.x - value_x).abs() < eps, "B.x should be ≈{value_x}, got {}", b.x);
-    assert!((d.x - value_x).abs() < eps, "D.x should be ≈{value_x}, got {}", d.x);
+    assert!(
+        (b.x - value_x).abs() < eps,
+        "B.x should be ≈{value_x}, got {}",
+        b.x
+    );
+    assert!(
+        (d.x - value_x).abs() < eps,
+        "D.x should be ≈{value_x}, got {}",
+        d.x
+    );
 
     // tm_lm_x: A=50, B=2050, C=50, D=2050
     let a_lm = a.tm_lm_x.unwrap_or(f32::NAN);
     let b_lm = b.tm_lm_x.unwrap_or(f32::NAN);
     let c_lm = c.tm_lm_x.unwrap_or(f32::NAN);
     let d_lm = d.tm_lm_x.unwrap_or(f32::NAN);
-    assert!((a_lm - 50.0).abs() < eps, "A.tm_lm_x should be 50, got {a_lm}");
-    assert!((b_lm - value_x).abs() < eps, "B.tm_lm_x should be {value_x}, got {b_lm}");
-    assert!((c_lm - 50.0).abs() < eps, "C.tm_lm_x should be 50 (row reset), got {c_lm}");
-    assert!((d_lm - value_x).abs() < eps, "D.tm_lm_x should be {value_x}, got {d_lm}");
+    assert!(
+        (a_lm - 50.0).abs() < eps,
+        "A.tm_lm_x should be 50, got {a_lm}"
+    );
+    assert!(
+        (b_lm - value_x).abs() < eps,
+        "B.tm_lm_x should be {value_x}, got {b_lm}"
+    );
+    assert!(
+        (c_lm - 50.0).abs() < eps,
+        "C.tm_lm_x should be 50 (row reset), got {c_lm}"
+    );
+    assert!(
+        (d_lm - value_x).abs() < eps,
+        "D.tm_lm_x should be {value_x}, got {d_lm}"
+    );
 }
 
 // Test: extract_table_cells returns non-empty fragments and uses tm_lm_x
@@ -1364,8 +1489,7 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
 
     // Build a minimal form-PDF with 2 columns via Tm + Td jumps.
     // Scale=10, label col at x=50, value col at x=50+200*10=2050.
-    let stream_bytes =
-        b"BT /F1 1 Tf 10 0 0 10 50 700 Tm \
+    let stream_bytes = b"BT /F1 1 Tf 10 0 0 10 50 700 Tm \
           (Label) Tj 200 0 Td (Value) Tj ET"
         .to_vec();
 
@@ -1376,7 +1500,8 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
     fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
     let font_id = doc.add_object(Object::Dictionary(fd));
     let cid = doc.add_object(Object::Stream(Stream::new(
-        lopdf::Dictionary::new(), stream_bytes,
+        lopdf::Dictionary::new(),
+        stream_bytes,
     )));
     let mut font_dict = lopdf::Dictionary::new();
     font_dict.set("F1", Object::Reference(font_id));
@@ -1384,10 +1509,15 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
     res.set("Font", Object::Dictionary(font_dict));
     let mut pg = lopdf::Dictionary::new();
     pg.set("Type", Object::Name(b"Page".to_vec()));
-    pg.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    pg.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     pg.set("Resources", Object::Dictionary(res));
     pg.set("Contents", Object::Reference(cid));
     let page_id = doc.add_object(Object::Dictionary(pg));
@@ -1396,7 +1526,9 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
     ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
     ps.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(ps));
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
     let mut cat = lopdf::Dictionary::new();
@@ -1409,19 +1541,37 @@ fn extract_table_cells_has_fragments_and_tm_lm_cols() {
 
     // extract_table_cells should use tm_lm_x mode and split into 2 columns.
     let cells = extract_table_cells(&frags, 595.0, 842.0);
-    assert_eq!(cells.len(), 2, "expected 2 cells (label col + value col), got {}", cells.len());
+    assert_eq!(
+        cells.len(),
+        2,
+        "expected 2 cells (label col + value col), got {}",
+        cells.len()
+    );
 
     // Each cell must carry its source fragments.
     for c in &cells {
-        assert!(!c.fragments.is_empty(), "cell ({},{}) has no fragments", c.row, c.col);
+        assert!(
+            !c.fragments.is_empty(),
+            "cell ({},{}) has no fragments",
+            c.row,
+            c.col
+        );
     }
 
     // Column 0 should be the label (x ≈ 50), column 1 the value (x ≈ 2050).
     let col0 = cells.iter().find(|c| c.col == 0).expect("col 0 missing");
     let col1 = cells.iter().find(|c| c.col == 1).expect("col 1 missing");
-    assert!((col0.x - 50.0).abs() < 5.0, "col0.x should be ≈50, got {}", col0.x);
+    assert!(
+        (col0.x - 50.0).abs() < 5.0,
+        "col0.x should be ≈50, got {}",
+        col0.x
+    );
     let value_x = 50.0 + 200.0 * 10.0;
-    assert!((col1.x - value_x).abs() < 5.0, "col1.x should be ≈{value_x}, got {}", col1.x);
+    assert!(
+        (col1.x - value_x).abs() < 5.0,
+        "col1.x should be ≈{value_x}, got {}",
+        col1.x
+    );
     assert_eq!(col0.text.trim(), "Label");
     assert_eq!(col1.text.trim(), "Value");
 
@@ -1448,20 +1598,27 @@ fn tf_after_tm_preserves_scale() {
     let font_id = doc.add_object(Object::Dictionary(fd));
 
     // BT /F1 1 Tf  10 0 0 10 50 700 Tm  (A) Tj  /F1 1 Tf  (B) Tj ET
-    let stream_bytes =
-        b"BT /F1 1 Tf 10 0 0 10 50 700 Tm (A) Tj /F1 1 Tf (B) Tj ET".to_vec();
+    let stream_bytes = b"BT /F1 1 Tf 10 0 0 10 50 700 Tm (A) Tj /F1 1 Tf (B) Tj ET".to_vec();
 
-    let cid = doc.add_object(Object::Stream(Stream::new(lopdf::Dictionary::new(), stream_bytes)));
+    let cid = doc.add_object(Object::Stream(Stream::new(
+        lopdf::Dictionary::new(),
+        stream_bytes,
+    )));
     let mut font_dict = lopdf::Dictionary::new();
     font_dict.set("F1", Object::Reference(font_id));
     let mut res = lopdf::Dictionary::new();
     res.set("Font", Object::Dictionary(font_dict));
     let mut pg = lopdf::Dictionary::new();
     pg.set("Type", Object::Name(b"Page".to_vec()));
-    pg.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    pg.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     pg.set("Resources", Object::Dictionary(res));
     pg.set("Contents", Object::Reference(cid));
     let page_id = doc.add_object(Object::Dictionary(pg));
@@ -1470,7 +1627,9 @@ fn tf_after_tm_preserves_scale() {
     ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
     ps.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(ps));
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
     let mut cat = lopdf::Dictionary::new();
@@ -1486,7 +1645,8 @@ fn tf_after_tm_preserves_scale() {
         assert!(
             (f.font_size - 10.0).abs() < 0.5,
             "font_size should be ≈10 (Tm scale persists after Tf), got {} for {:?}",
-            f.font_size, f.text
+            f.font_size,
+            f.text
         );
     }
 }
@@ -1495,27 +1655,47 @@ fn tf_after_tm_preserves_scale() {
 #[test]
 fn merge_short_cjk_tails_basic() {
     let make = |text: &str, x: f32, y: f32, w: f32, fs: f32| TextFragment {
-        text: text.into(), x, y, width: w, height: fs, font_size: fs,
-        font_name: "F1".into(), color: [0.0; 3], invisible: false,
-        is_bold: false, is_italic: false, font_family: String::new(),
-        base_font: String::new(), space_advance: 0.0, tf_font_size: fs,
-        tm_y_scale: 1.0, tm_x_scale: None, source_stream: None,
-        source_op_start: None, source_op_end: None, source_xobject: None,
-        tm_origin_x: None, tm_origin_y: None,
-        tm_lm_x: None, tm_lm_y: None,
+        text: text.into(),
+        x,
+        y,
+        width: w,
+        height: fs,
+        font_size: fs,
+        font_name: "F1".into(),
+        color: [0.0; 3],
+        invisible: false,
+        is_bold: false,
+        is_italic: false,
+        font_family: String::new(),
+        base_font: String::new(),
+        space_advance: 0.0,
+        tf_font_size: fs,
+        tm_y_scale: 1.0,
+        tm_x_scale: None,
+        source_stream: None,
+        source_op_start: None,
+        source_op_end: None,
+        source_xobject: None,
+        tm_origin_x: None,
+        tm_origin_y: None,
+        tm_lm_x: None,
+        tm_lm_y: None,
     };
 
     // Three fragments: "保護眼鏡やゴーグルを着用する" (long), "る。" (2 chars, tail), "次の行" (long)
     let frags = vec![
         make("保護眼鏡やゴーグルを着用す", 50.0, 700.0, 100.0, 10.0),
-        make("る。", 150.0, 700.0, 15.0, 10.0),   // short tail, same y
-        make("次の行テキスト", 50.0, 686.0, 80.0, 10.0),   // long, new line
+        make("る。", 150.0, 700.0, 15.0, 10.0), // short tail, same y
+        make("次の行テキスト", 50.0, 686.0, 80.0, 10.0), // long, new line
     ];
 
     let merged = merge_short_cjk_tails(&frags, 4, 1.7);
 
     assert_eq!(merged.len(), 2, "tail should be merged into predecessor");
-    assert!(merged[0].text.contains("る。"), "merged text should contain tail");
+    assert!(
+        merged[0].text.contains("る。"),
+        "merged text should contain tail"
+    );
     assert_eq!(merged[1].text, "次の行テキスト");
 
     // With max_chars=0, no merging occurs.
@@ -1533,17 +1713,25 @@ fn make_test_page(content: &[u8]) -> (lopdf::Document, lopdf::ObjectId) {
     fd.set("Subtype", Object::Name(b"Type1".to_vec()));
     fd.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
     let font_id = doc.add_object(Object::Dictionary(fd));
-    let cid = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content.to_vec())));
+    let cid = doc.add_object(Object::Stream(Stream::new(
+        Dictionary::new(),
+        content.to_vec(),
+    )));
     let mut font_dict = Dictionary::new();
     font_dict.set("F1", Object::Reference(font_id));
     let mut res = Dictionary::new();
     res.set("Font", Object::Dictionary(font_dict));
     let mut pg = Dictionary::new();
     pg.set("Type", Object::Name(b"Page".to_vec()));
-    pg.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    pg.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     pg.set("Resources", Object::Dictionary(res));
     pg.set("Contents", Object::Reference(cid));
     let page_id = doc.add_object(Object::Dictionary(pg));
@@ -1552,7 +1740,9 @@ fn make_test_page(content: &[u8]) -> (lopdf::Document, lopdf::ObjectId) {
     ps.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
     ps.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(ps));
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
     let mut cat = Dictionary::new();
@@ -1574,11 +1764,13 @@ fn t_star_moves_y_by_text_leading() {
     assert_eq!(frags.len(), 2, "expected 2 fragments");
     assert!(
         (frags[0].y - 700.0).abs() < 1.0,
-        "A.y should be ≈700, got {}", frags[0].y
+        "A.y should be ≈700, got {}",
+        frags[0].y
     );
     assert!(
         (frags[1].y - 688.0).abs() < 1.0,
-        "B.y should be ≈688 (700 - 12), got {}", frags[1].y
+        "B.y should be ≈688 (700 - 12), got {}",
+        frags[1].y
     );
 }
 
@@ -1591,9 +1783,21 @@ fn td_uppercase_sets_text_leading_for_t_star() {
     let (doc, page_id) = make_test_page(content);
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
     assert_eq!(frags.len(), 3, "expected 3 fragments");
-    assert!((frags[0].y - 700.0).abs() < 1.0, "A.y≈700, got {}", frags[0].y);
-    assert!((frags[1].y - 686.0).abs() < 1.0, "B.y≈686, got {}", frags[1].y);
-    assert!((frags[2].y - 672.0).abs() < 1.0, "C.y≈672, got {}", frags[2].y);
+    assert!(
+        (frags[0].y - 700.0).abs() < 1.0,
+        "A.y≈700, got {}",
+        frags[0].y
+    );
+    assert!(
+        (frags[1].y - 686.0).abs() < 1.0,
+        "B.y≈686, got {}",
+        frags[1].y
+    );
+    assert!(
+        (frags[2].y - 672.0).abs() < 1.0,
+        "C.y≈672, got {}",
+        frags[2].y
+    );
 }
 
 // Tc character spacing shifts the x cursor forward after each glyph.
@@ -1646,7 +1850,12 @@ fn make_region_for_classify(
 }
 
 fn make_collision_for_classify(index_a: usize, index_b: usize) -> Collision {
-    Collision { index_a, index_b, overlap_rect: [0.0, 0.0, 10.0, 10.0], overlap_area: 100.0 }
+    Collision {
+        index_a,
+        index_b,
+        overlap_rect: [0.0, 0.0, 10.0, 10.0],
+        overlap_area: 100.0,
+    }
 }
 
 #[test]
@@ -1732,7 +1941,11 @@ fn classify_unknown_no_row_col() {
 
 #[test]
 fn classify_out_of_bounds_index_yields_unknown() {
-    let regions = vec![make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown)];
+    let regions = vec![make_region_for_classify(
+        Some(0),
+        Some(0),
+        LayoutRegionRole::Unknown,
+    )];
     let result = classify_collisions(&regions, &[make_collision_for_classify(0, 99)]);
     assert_eq!(result[0].kind, CollisionKind::Unknown);
     assert!(result[0].region_b.is_none());
@@ -1751,7 +1964,11 @@ fn classify_region_roles_propagated() {
 
 #[test]
 fn classify_empty_collisions_returns_empty() {
-    let regions = vec![make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown)];
+    let regions = vec![make_region_for_classify(
+        Some(0),
+        Some(0),
+        LayoutRegionRole::Unknown,
+    )];
     let result = classify_collisions(&regions, &[]);
     assert!(result.is_empty());
 }
@@ -1792,7 +2009,7 @@ fn collision_severity_absolute_fallback_when_area_zero() {
     // No box area → absolute thresholds
     assert_eq!(
         crate::extract::collision_severity(10.0, 0.0, 0.0),
-        crate::extract::CollisionSeverity::Minor,   // < 50 pt²
+        crate::extract::CollisionSeverity::Minor, // < 50 pt²
     );
     assert_eq!(
         crate::extract::collision_severity(200.0, 0.0, 0.0),
@@ -1800,7 +2017,7 @@ fn collision_severity_absolute_fallback_when_area_zero() {
     );
     assert_eq!(
         crate::extract::collision_severity(500.0, 0.0, 0.0),
-        crate::extract::CollisionSeverity::Major,    // ≥ 400 pt²
+        crate::extract::CollisionSeverity::Major, // ≥ 400 pt²
     );
 }
 
@@ -1821,18 +2038,28 @@ fn classify_collisions_sets_severity_field() {
 fn classify_collisions_out_of_bounds_uses_absolute_fallback() {
     // One region in-range (area 500 pt²), one out of bounds → box_b_area = 0
     // overlap_area = 100 → uses min(500, 0) = 0 → absolute: 100 < 400 → Moderate
-    let regions = vec![
-        make_region_for_classify(Some(0), Some(0), LayoutRegionRole::Unknown),
-    ];
+    let regions = vec![make_region_for_classify(
+        Some(0),
+        Some(0),
+        LayoutRegionRole::Unknown,
+    )];
     let result = classify_collisions(&regions, &[make_collision_for_classify(0, 99)]);
-    assert_eq!(result[0].severity, crate::extract::CollisionSeverity::Moderate);
+    assert_eq!(
+        result[0].severity,
+        crate::extract::CollisionSeverity::Moderate
+    );
 }
 
 // ---------------------------------------------------------------------------
 // extract_label_value_pairs (v1.14.0)
 // ---------------------------------------------------------------------------
 
-fn make_region_with_role_and_row(row: usize, col: usize, role: LayoutRegionRole, text: &str) -> LayoutRegion {
+fn make_region_with_role_and_row(
+    row: usize,
+    col: usize,
+    role: LayoutRegionRole,
+    text: &str,
+) -> LayoutRegion {
     LayoutRegion {
         kind: LayoutRegionKind::TableCell,
         role,
@@ -1880,9 +2107,12 @@ fn extract_label_value_pairs_multiple_values_per_label() {
 #[test]
 fn extract_label_value_pairs_lone_value_skipped() {
     // RightValue with no LeftLabel on the same row → not in output
-    let regions = vec![
-        make_region_with_role_and_row(0, 1, LayoutRegionRole::RightValue, "Orphan"),
-    ];
+    let regions = vec![make_region_with_role_and_row(
+        0,
+        1,
+        LayoutRegionRole::RightValue,
+        "Orphan",
+    )];
     let pairs = crate::extract::extract_label_value_pairs(&regions);
     assert!(pairs.is_empty());
 }
@@ -1890,7 +2120,7 @@ fn extract_label_value_pairs_lone_value_skipped() {
 #[test]
 fn extract_label_value_pairs_skips_regions_without_row() {
     let mut region = make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "X");
-    region.row = None;  // No row → skip
+    region.row = None; // No row → skip
     let regions = vec![region];
     let pairs = crate::extract::extract_label_value_pairs(&regions);
     assert!(pairs.is_empty());
@@ -1899,10 +2129,77 @@ fn extract_label_value_pairs_skips_regions_without_row() {
 #[test]
 fn extract_label_value_pairs_empty_values_list_ok() {
     // Label with no value siblings is still returned (values is empty Vec)
-    let regions = vec![
-        make_region_with_role_and_row(0, 0, LayoutRegionRole::LeftLabel, "Solo"),
-    ];
+    let regions = vec![make_region_with_role_and_row(
+        0,
+        0,
+        LayoutRegionRole::LeftLabel,
+        "Solo",
+    )];
     let pairs = crate::extract::extract_label_value_pairs(&regions);
     assert_eq!(pairs.len(), 1);
     assert!(pairs[0].values.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// PageLayoutQuality
+// ---------------------------------------------------------------------------
+
+fn make_fit_plan_for_quality(status: crate::PlacementStatus, used_rect: [f32; 4]) -> RegionFitPlan {
+    let mut region = make_region_with_role_and_row(0, 0, LayoutRegionRole::RightValue, "Source");
+    region.source_bbox = [10.0, 10.0, 40.0, 10.0];
+    region.usable_rect = [10.0, 10.0, 40.0, 10.0];
+    RegionFitPlan {
+        region,
+        fit: crate::FitResult {
+            lines: vec!["Translated".to_owned()],
+            font_size: 8.0,
+            used_rect,
+            overflow_horizontal: matches!(status, crate::PlacementStatus::Overflow),
+            overflow_vertical: false,
+            status,
+        },
+        collisions: vec![],
+    }
+}
+
+#[test]
+fn page_layout_quality_reports_overflow_and_image_overlap() {
+    let plans = vec![make_fit_plan_for_quality(
+        crate::PlacementStatus::Overflow,
+        [10.0, 10.0, 80.0, 10.0],
+    )];
+    let quality = PageLayoutQuality::from_plans(1, &plans, &[[50.0, 8.0, 20.0, 20.0]]);
+    assert_eq!(quality.page_num, 1);
+    assert_eq!(quality.overflow_count, 1);
+    assert_eq!(quality.image_overlap_count, 1);
+    assert!(
+        quality
+            .issues
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::TextOverflow)
+    );
+    assert!(
+        quality
+            .issues
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::ImageOverlap)
+    );
+    assert_eq!(quality.worst_severity, Some(LayoutIssueSeverity::Major));
+}
+
+#[test]
+fn page_layout_quality_reports_accepted_shrink_as_minor() {
+    let plans = vec![make_fit_plan_for_quality(
+        crate::PlacementStatus::Shrunk,
+        [10.0, 10.0, 35.0, 10.0],
+    )];
+    let quality = PageLayoutQuality::from_plans(1, &plans, &[]);
+    assert_eq!(quality.summary.shrunk_count, 1);
+    assert!(
+        quality
+            .issues
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::AcceptedShrink
+                && issue.severity == LayoutIssueSeverity::Minor)
+    );
 }

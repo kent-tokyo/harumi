@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.16.0] — 2026-06-21
+
+### Added
+
+- **`LayoutIssueKind`** enum (`src/extract.rs`) — problem category for a single layout issue:
+  `TextOverflow`, `TextCollision`, `ImageOverlap`, `BboxDrift`, `AcceptedShrink`.
+  `#[non_exhaustive]`.
+
+- **`LayoutIssueSeverity`** enum (`src/extract.rs`) — `Minor` / `Moderate` / `Major`
+  (mirrors `CollisionSeverity`; implements `From<CollisionSeverity>`).
+  `#[non_exhaustive]`.
+
+- **`LayoutIssue`** struct (`src/extract.rs`) — one concrete layout problem in a quality
+  report.  Fields: `page`, `id`, `kind`, `severity`, `rect`, `source_rect`,
+  `placed_rect`, `overlap_area`, `message`.  `#[non_exhaustive]`.
+
+- **`PageLayoutQuality`** struct (`src/extract.rs`) — page-level layout quality report
+  combining `PageFitSummary`, detailed `Vec<LayoutIssue>`, and image-overlap detection.
+  Fields: `page_num`, `summary`, `issues`, `overflow_count`, `collision_count`,
+  `image_overlap_count`, `bbox_drift_count`, `worst_severity`.
+
+- **`Document::assess_page_layout_quality(page_number, plans) -> Result<PageLayoutQuality>`**
+  (`src/document/mod.rs`) — convenience method that calls `page_image_bboxes` and
+  `PageLayoutQuality::from_plans` together.  Useful as a single-call layout quality gate
+  before writing the final translated PDF.
+
+---
+
 ## [1.15.0] — 2026-06-21
 
 ### Added

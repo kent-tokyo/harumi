@@ -282,7 +282,12 @@ pub fn text_fragment_bounds(fragments: &[TextFragment]) -> Option<[f32; 4]> {
     if !x_min.is_finite() {
         return None;
     }
-    Some([x_min, y_min, (x_max - x_min).max(0.0), (y_max - y_min).max(0.0)])
+    Some([
+        x_min,
+        y_min,
+        (x_max - x_min).max(0.0),
+        (y_max - y_min).max(0.0),
+    ])
 }
 
 /// A positioned rectangle for collision detection.
@@ -440,7 +445,11 @@ pub enum CollisionSeverity {
 /// // A 2×2 pt overlap in a 50×20 pt box (1000 pt²) is 0.4 % → Minor
 /// assert_eq!(collision_severity(4.0, 1000.0, 2000.0), CollisionSeverity::Minor);
 /// ```
-pub fn collision_severity(overlap_area: f32, box_a_area: f32, box_b_area: f32) -> CollisionSeverity {
+pub fn collision_severity(
+    overlap_area: f32,
+    box_a_area: f32,
+    box_b_area: f32,
+) -> CollisionSeverity {
     let ref_area = box_a_area.min(box_b_area);
     if ref_area > 0.0 && ref_area.is_finite() {
         let ratio = overlap_area / ref_area;
@@ -519,8 +528,12 @@ pub fn classify_collisions(
         .map(|c| {
             let ra = regions.get(c.index_a);
             let rb = regions.get(c.index_b);
-            let area_a = ra.map(|r| r.source_bbox[2] * r.source_bbox[3]).unwrap_or(0.0);
-            let area_b = rb.map(|r| r.source_bbox[2] * r.source_bbox[3]).unwrap_or(0.0);
+            let area_a = ra
+                .map(|r| r.source_bbox[2] * r.source_bbox[3])
+                .unwrap_or(0.0);
+            let area_b = rb
+                .map(|r| r.source_bbox[2] * r.source_bbox[3])
+                .unwrap_or(0.0);
             ClassifiedCollision {
                 collision: c.clone(),
                 kind: classify_collision_kind(ra, rb),
@@ -532,10 +545,7 @@ pub fn classify_collisions(
         .collect()
 }
 
-fn classify_collision_kind(
-    ra: Option<&LayoutRegion>,
-    rb: Option<&LayoutRegion>,
-) -> CollisionKind {
+fn classify_collision_kind(ra: Option<&LayoutRegion>, rb: Option<&LayoutRegion>) -> CollisionKind {
     use CollisionKind::*;
 
     if matches!(ra.map(|r| &r.role), Some(LayoutRegionRole::HeaderFooter))
@@ -549,8 +559,7 @@ fn classify_collision_kind(
     let col_a = ra.and_then(|r| r.col);
     let col_b = rb.and_then(|r| r.col);
 
-    if let (Some(ra_row), Some(rb_row), Some(ra_col), Some(rb_col)) =
-        (row_a, row_b, col_a, col_b)
+    if let (Some(ra_row), Some(rb_row), Some(ra_col), Some(rb_col)) = (row_a, row_b, col_a, col_b)
         && ra_row == rb_row
         && ra_col == rb_col
     {
@@ -711,7 +720,10 @@ pub fn detect_text_columns(fragments: &[TextFragment], page_width: f32) -> Vec<C
     }
 
     if gaps.is_empty() {
-        return vec![ColumnZone { x_start: 0.0, x_end: page_width }];
+        return vec![ColumnZone {
+            x_start: 0.0,
+            x_end: page_width,
+        }];
     }
 
     // Column zones are the occupied ranges between (and around) the gaps.
@@ -1095,7 +1107,9 @@ pub fn extract_table_cells(
                 .iter()
                 .enumerate()
                 .min_by(|(_, a), (_, b)| {
-                    (lm - *a).abs().partial_cmp(&(lm - *b).abs())
+                    (lm - *a)
+                        .abs()
+                        .partial_cmp(&(lm - *b).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .map(|(i, _)| i)
@@ -1133,9 +1147,7 @@ pub fn extract_table_cells(
     // Group fragments into rows by Y proximity.
     let mut rows: Vec<Vec<&TextFragment>> = Vec::new();
     for frag in &sorted {
-        let in_current_row = rows
-            .last()
-            .map(|r| (r[0].y - frag.y).abs() <= row_tol);
+        let in_current_row = rows.last().map(|r| (r[0].y - frag.y).abs() <= row_tol);
         if in_current_row == Some(true) {
             rows.last_mut().unwrap().push(frag);
         } else {
@@ -1170,7 +1182,10 @@ pub fn extract_table_cells(
                 .iter()
                 .map(|f| f.x + f.width.max(0.0))
                 .fold(f32::NEG_INFINITY, f32::max);
-            let height = frags.iter().map(|f| f.height.max(0.0)).fold(0.0f32, f32::max);
+            let height = frags
+                .iter()
+                .map(|f| f.height.max(0.0))
+                .fold(0.0f32, f32::max);
             let fragments_owned: Vec<TextFragment> = frags.iter().map(|f| (*f).clone()).collect();
             TableCell {
                 row,
@@ -1210,7 +1225,10 @@ fn collect_image_xobject_names(doc: &lopdf::Document, page_id: ObjectId) -> Vec<
                     _ => return None,
                 };
                 let xobj = doc.get_object(xobj_id).ok()?;
-                let xobj_dict = xobj.as_stream().ok().map(|s| &s.dict)
+                let xobj_dict = xobj
+                    .as_stream()
+                    .ok()
+                    .map(|s| &s.dict)
                     .or_else(|| xobj.as_dict().ok())?;
                 let subtype = xobj_dict.get(b"Subtype").ok()?;
                 if subtype == &Object::Name(b"Image".to_vec()) {
@@ -1263,35 +1281,34 @@ pub(crate) fn extract_image_bboxes_from_page(
                         let ns: Vec<f32> = tokens[i - 6..i]
                             .iter()
                             .filter_map(|(t, _)| {
-                                if let Token::Number(n) = t { Some(*n) } else { None }
+                                if let Token::Number(n) = t {
+                                    Some(*n)
+                                } else {
+                                    None
+                                }
                             })
                             .collect();
                         if ns.len() == 6 {
-                            ctm = multiply_ctm(
-                                ctm,
-                                [ns[0], ns[1], ns[2], ns[3], ns[4], ns[5]],
-                            );
+                            ctm = multiply_ctm(ctm, [ns[0], ns[1], ns[2], ns[3], ns[4], ns[5]]);
                         }
                     }
                     b"Do" => {
                         // Operand is the Name token immediately before `Do`.
                         if i > 0
                             && let Token::Name(name) = &tokens[i - 1].0
-                            && image_names.contains(name) {
-                                let [a, _b, _c, d, e, f] = ctm;
-                                let shear_b = ctm[1];
-                                let shear_c = ctm[2];
-                                // Only emit bbox for axis-aligned placements.
-                                if shear_b.abs() < 0.01 && shear_c.abs() < 0.01
-                                    && a.abs() > 1.0 && d.abs() > 1.0
-                                {
-                                    bboxes.push([
-                                        e + a.min(0.0),
-                                        f + d.min(0.0),
-                                        a.abs(),
-                                        d.abs(),
-                                        ]);
-                                }
+                            && image_names.contains(name)
+                        {
+                            let [a, _b, _c, d, e, f] = ctm;
+                            let shear_b = ctm[1];
+                            let shear_c = ctm[2];
+                            // Only emit bbox for axis-aligned placements.
+                            if shear_b.abs() < 0.01
+                                && shear_c.abs() < 0.01
+                                && a.abs() > 1.0
+                                && d.abs() > 1.0
+                            {
+                                bboxes.push([e + a.min(0.0), f + d.min(0.0), a.abs(), d.abs()]);
+                            }
                         }
                     }
                     _ => {}
@@ -1319,7 +1336,14 @@ pub(crate) fn extract_text_runs_from_page(
     // Carry graphics state (colour, render-mode) across streams on the same page.
     let mut carry = ParseCarryState::default();
     for (stream_idx, stream_bytes) in streams.iter().enumerate() {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx), None);
+        parse_content_stream(
+            stream_bytes,
+            &fonts,
+            &mut carry,
+            &mut fragments,
+            Some(stream_idx),
+            None,
+        );
     }
     // Also extract text from Form XObjects (headers, footers, watermarks).
     extract_text_from_xobjects(doc, page_id, &mut carry, &mut fragments, 0);
@@ -1355,7 +1379,9 @@ fn extract_text_from_xobjects(
         let do_ctm_map = std::mem::take(&mut carry.do_ctm_map);
 
         for (xobj_name, do_ctm) in &do_ctm_map {
-            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else { continue };
+            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else {
+                continue;
+            };
             if let Some(content) = decode_form_xobject(doc, xobj_id) {
                 let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
@@ -1388,9 +1414,13 @@ fn extract_text_from_xobjects(
 fn decode_form_xobject(doc: &lopdf::Document, xobj_id: ObjectId) -> Option<Vec<u8>> {
     let xobj_obj = doc.get_object(xobj_id).ok()?;
     let xobj_stream = xobj_obj.as_stream().ok()?;
-    let is_form = xobj_stream.dict.get(b"Subtype").ok()
-        .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
-        == Some(b"Form");
+    let is_form = xobj_stream.dict.get(b"Subtype").ok().and_then(|o| {
+        if let Object::Name(n) = o {
+            Some(n.as_slice())
+        } else {
+            None
+        }
+    }) == Some(b"Form");
     if !is_form {
         return None;
     }
@@ -1420,7 +1450,8 @@ fn xobject_fonts(
     // its own /Resources dict but no /Font sub-entry).
     let page_fonts = collect_fonts(doc, page_id);
 
-    let xobj_specific = doc.get_object(xobj_id)
+    let xobj_specific = doc
+        .get_object(xobj_id)
         .ok()
         .and_then(|o| o.as_stream().ok())
         .and_then(|s| s.dict.get(b"Resources").ok())
@@ -1503,18 +1534,27 @@ pub(crate) fn page_content_streams(doc: &lopdf::Document, page_id: ObjectId) -> 
 
 /// Returns the `ObjectId`s of the content streams in the page `/Contents` array,
 /// in order.  Used by `replace_text_fragments` to write back modified streams.
-pub(crate) fn page_content_stream_ids(
-    doc: &lopdf::Document,
-    page_id: ObjectId,
-) -> Vec<ObjectId> {
-    let Ok(page_obj) = doc.get_object(page_id) else { return vec![] };
-    let Ok(page_dict) = page_obj.as_dict() else { return vec![] };
-    let Ok(contents_obj) = page_dict.get(b"Contents") else { return vec![] };
+pub(crate) fn page_content_stream_ids(doc: &lopdf::Document, page_id: ObjectId) -> Vec<ObjectId> {
+    let Ok(page_obj) = doc.get_object(page_id) else {
+        return vec![];
+    };
+    let Ok(page_dict) = page_obj.as_dict() else {
+        return vec![];
+    };
+    let Ok(contents_obj) = page_dict.get(b"Contents") else {
+        return vec![];
+    };
     match contents_obj {
         Object::Reference(id) => vec![*id],
         Object::Array(arr) => arr
             .iter()
-            .filter_map(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+            .filter_map(|o| {
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect(),
         _ => vec![],
     }
@@ -1540,7 +1580,13 @@ pub(crate) fn page_content_streams_verbose(
         Object::Reference(id) => vec![*id],
         Object::Array(arr) => arr
             .iter()
-            .filter_map(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+            .filter_map(|o| {
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect(),
         _ => return (vec![], vec![]),
     };
@@ -1548,8 +1594,12 @@ pub(crate) fn page_content_streams_verbose(
     let mut result = Vec::new();
     let mut warnings = Vec::new();
     for id in ids {
-        let Ok(stream_obj) = doc.get_object(id) else { continue };
-        let Ok(stream) = stream_obj.as_stream() else { continue };
+        let Ok(stream_obj) = doc.get_object(id) else {
+            continue;
+        };
+        let Ok(stream) = stream_obj.as_stream() else {
+            continue;
+        };
         let has_filter = stream.dict.get(b"Filter").is_ok();
         if has_filter {
             let mut owned = stream.clone();
@@ -1584,7 +1634,14 @@ pub(crate) fn extract_text_runs_from_page_verbose(
     let mut fragments = Vec::new();
     let mut carry = ParseCarryState::default();
     for (stream_idx, stream_bytes) in streams.iter().enumerate() {
-        parse_content_stream(stream_bytes, &fonts, &mut carry, &mut fragments, Some(stream_idx), None);
+        parse_content_stream(
+            stream_bytes,
+            &fonts,
+            &mut carry,
+            &mut fragments,
+            Some(stream_idx),
+            None,
+        );
     }
     extract_text_from_xobjects_verbose(doc, page_id, &mut carry, &mut fragments, 0, &mut warnings);
     Ok((fragments, warnings))
@@ -1608,7 +1665,9 @@ fn extract_text_from_xobjects_verbose(
         let do_ctm_map = std::mem::take(&mut carry.do_ctm_map);
 
         for (xobj_name, do_ctm) in &do_ctm_map {
-            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else { continue };
+            let Some(&xobj_id) = xobj_name_map.get(xobj_name.as_slice()) else {
+                continue;
+            };
             match decode_form_xobject_verbose(doc, xobj_id) {
                 Ok(content) => {
                     let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
@@ -1617,7 +1676,9 @@ fn extract_text_from_xobjects_verbose(
                     carry.ctm_stack = vec![carry.ctm];
                     parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
                 }
-                Err(warn) => { warnings.push(warn); }
+                Err(warn) => {
+                    warnings.push(warn);
+                }
             }
         }
         carry.do_ctm_map = do_ctm_map;
@@ -1632,7 +1693,9 @@ fn extract_text_from_xobjects_verbose(
                     carry.ctm_stack = vec![carry.ctm];
                     parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
                 }
-                Err(warn) => { warnings.push(warn); }
+                Err(warn) => {
+                    warnings.push(warn);
+                }
             }
         }
     }
@@ -1679,10 +1742,19 @@ pub(crate) fn resolve_dict<'a>(
 fn parse_font_attributes(raw: &str) -> (String, bool, bool, String) {
     let name = raw.split('+').next_back().unwrap_or(raw);
     let lower = name.to_lowercase();
-    let is_bold = ["bold", "heavy", "black", "semibold", "demibold", "extrabold"]
+    let is_bold = [
+        "bold",
+        "heavy",
+        "black",
+        "semibold",
+        "demibold",
+        "extrabold",
+    ]
+    .iter()
+    .any(|kw| lower.contains(kw));
+    let is_italic = ["italic", "oblique", "slanted"]
         .iter()
         .any(|kw| lower.contains(kw));
-    let is_italic = ["italic", "oblique", "slanted"].iter().any(|kw| lower.contains(kw));
     let family = name.split(['-', ',']).next().unwrap_or(name).to_string();
     (name.to_string(), is_bold, is_italic, family)
 }
@@ -1742,17 +1814,26 @@ pub(crate) fn collect_inherited_xobject_ids(
 ) -> Vec<ObjectId> {
     let mut current_id = page_id;
     while let Ok(obj) = doc.get_object(current_id) {
-        let Some(dict) = obj.as_dict().ok() else { break };
+        let Some(dict) = obj.as_dict().ok() else {
+            break;
+        };
         if let Ok(res_obj) = dict.get(b"Resources") {
             let ids = resolve_dict(doc, res_obj)
                 .and_then(|res_dict| {
-                    res_dict.get(b"XObject").ok().and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
+                    res_dict
+                        .get(b"XObject")
+                        .ok()
+                        .and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
                 })
                 .map(|xobj_dict| {
                     xobj_dict
                         .iter()
                         .filter_map(|(_, v)| {
-                            if let Object::Reference(id) = v { Some(*id) } else { None }
+                            if let Object::Reference(id) = v {
+                                Some(*id)
+                            } else {
+                                None
+                            }
                         })
                         .collect::<Vec<_>>()
                 });
@@ -1761,8 +1842,12 @@ pub(crate) fn collect_inherited_xobject_ids(
             }
             break; // /Resources found but no /XObject — stop climbing
         }
-        let Ok(parent_ref) = dict.get(b"Parent") else { break };
-        let Object::Reference(parent_id) = parent_ref else { break };
+        let Ok(parent_ref) = dict.get(b"Parent") else {
+            break;
+        };
+        let Object::Reference(parent_id) = parent_ref else {
+            break;
+        };
         current_id = *parent_id;
     }
     vec![]
@@ -1776,11 +1861,16 @@ fn collect_inherited_xobject_name_map(
 ) -> HashMap<Vec<u8>, ObjectId> {
     let mut current_id = page_id;
     while let Ok(obj) = doc.get_object(current_id) {
-        let Some(dict) = obj.as_dict().ok() else { break };
+        let Some(dict) = obj.as_dict().ok() else {
+            break;
+        };
         if let Ok(res_obj) = dict.get(b"Resources") {
             let map = resolve_dict(doc, res_obj)
                 .and_then(|res_dict| {
-                    res_dict.get(b"XObject").ok().and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
+                    res_dict
+                        .get(b"XObject")
+                        .ok()
+                        .and_then(|xobj_ref| resolve_dict(doc, xobj_ref))
                 })
                 .map(|xobj_dict| {
                     xobj_dict
@@ -1799,8 +1889,12 @@ fn collect_inherited_xobject_name_map(
             }
             break;
         }
-        let Ok(parent_ref) = dict.get(b"Parent") else { break };
-        let Object::Reference(parent_id) = parent_ref else { break };
+        let Ok(parent_ref) = dict.get(b"Parent") else {
+            break;
+        };
+        let Object::Reference(parent_id) = parent_ref else {
+            break;
+        };
         current_id = *parent_id;
     }
     HashMap::new()
@@ -1839,10 +1933,12 @@ fn collect_font_dict_entries(
         let (base_font, is_bold, is_italic, font_family) = parse_font_attributes(&raw_base_font);
 
         let font_info = match subtype {
-            Some(b"Type0") => match collect_type0_font(fd, doc, base_font, is_bold, is_italic, font_family) {
-                Some(fi) => fi,
-                None => continue,
-            },
+            Some(b"Type0") => {
+                match collect_type0_font(fd, doc, base_font, is_bold, is_italic, font_family) {
+                    Some(fi) => fi,
+                    None => continue,
+                }
+            }
             Some(b"Type1") | Some(b"MMType1") | Some(b"TrueType") | Some(b"Type3") => {
                 collect_simple_font(fd, doc, base_font, is_bold, is_italic, font_family)
             }
@@ -3382,20 +3478,20 @@ fn parse_content_stream(
     let mut stack: Vec<(Token, usize)> = Vec::new();
     // Read text state from carry so that BT blocks split across stream boundaries
     // (a Distiller/PScript5 pattern) are handled correctly.
-    let mut in_bt          = state.in_bt;
-    let mut font_name      = state.font_name.clone();
-    let mut tf_font_size   = state.tf_font_size;
-    let mut font_size      = state.font_size;
-    let mut tm_y_scale     = state.tm_y_scale;
-    let mut tm_x_scale     = state.tm_x_scale;
-    let mut tm_lm_x        = state.tm_lm_x;
-    let mut tm_lm_y        = state.tm_lm_y;
-    let mut x              = state.text_x;
-    let mut y              = state.text_y;
-    let mut tm_origin_set  = state.tm_origin_set;
-    let mut text_leading   = state.text_leading;
-    let mut char_spacing   = state.char_spacing;
-    let mut word_spacing   = state.word_spacing;
+    let mut in_bt = state.in_bt;
+    let mut font_name = state.font_name.clone();
+    let mut tf_font_size = state.tf_font_size;
+    let mut font_size = state.font_size;
+    let mut tm_y_scale = state.tm_y_scale;
+    let mut tm_x_scale = state.tm_x_scale;
+    let mut tm_lm_x = state.tm_lm_x;
+    let mut tm_lm_y = state.tm_lm_y;
+    let mut x = state.text_x;
+    let mut y = state.text_y;
+    let mut tm_origin_set = state.tm_origin_set;
+    let mut text_leading = state.text_leading;
+    let mut char_spacing = state.char_spacing;
+    let mut word_spacing = state.word_spacing;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
@@ -3558,7 +3654,9 @@ fn parse_content_stream(
                     stack.clear();
                 }
                 b"q" => {
-                    state.ctm_stack.push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+                    state
+                        .ctm_stack
+                        .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
                     stack.clear();
                 }
                 b"Q" => {
@@ -3603,7 +3701,7 @@ fn parse_content_stream(
                 }
                 b"Tj" if in_bt => {
                     let op_start = Some(tok_pos);
-                    let op_end   = Some(tok_pos + 2); // "Tj" is 2 bytes
+                    let op_end = Some(tok_pos + 2); // "Tj" is 2 bytes
                     let bytes_opt = match stack.pop() {
                         Some((Token::HexStr(b), _)) => Some(b),
                         Some((Token::LitStr(b), _)) => Some(b),
@@ -3619,7 +3717,11 @@ fn parse_content_stream(
                         } else {
                             (None, None)
                         };
-                        let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        let tm_xs = if tm_origin_set {
+                            Some(tm_x_scale)
+                        } else {
+                            None
+                        };
                         let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
                             let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
                             (Some(lx), Some(ly))
@@ -3653,8 +3755,11 @@ fn parse_content_stream(
                         ) {
                             // frag.width is page-space (x-axis); reverse CTM scale to get
                             // local-space advance for the x cursor.
-                            let local_advance =
-                                if scale > 0.0 { frag.width / scale } else { frag.width };
+                            let local_advance = if scale > 0.0 {
+                                frag.width / scale
+                            } else {
+                                frag.width
+                            };
                             // Apply Tc/Tw spacing (in unscaled text space → user space via tm_x_scale).
                             let n_chars = frag.text.chars().count() as f32;
                             let n_spaces = frag.text.chars().filter(|&c| c == ' ').count() as f32;
@@ -3668,7 +3773,7 @@ fn parse_content_stream(
                 }
                 b"TJ" if in_bt => {
                     let op_start = Some(tok_pos);
-                    let op_end   = Some(tok_pos + 2); // "TJ" is 2 bytes
+                    let op_end = Some(tok_pos + 2); // "TJ" is 2 bytes
                     if let Some((Token::Array(items), _)) = stack.pop() {
                         let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
                         let scale = ctm_scale(ctm);
@@ -3678,7 +3783,11 @@ fn parse_content_stream(
                         } else {
                             (None, None)
                         };
-                        let tm_xs = if tm_origin_set { Some(tm_x_scale) } else { None };
+                        let tm_xs = if tm_origin_set {
+                            Some(tm_x_scale)
+                        } else {
+                            None
+                        };
                         let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
                             let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
                             (Some(lx), Some(ly))
@@ -3751,20 +3860,20 @@ fn parse_content_stream(
     }
 
     // Write text state back so the next stream on this page inherits it.
-    state.in_bt          = in_bt;
-    state.font_name      = font_name;
-    state.tf_font_size   = tf_font_size;
-    state.font_size      = font_size;
-    state.tm_y_scale     = tm_y_scale;
-    state.tm_x_scale     = tm_x_scale;
-    state.tm_lm_x        = tm_lm_x;
-    state.tm_lm_y        = tm_lm_y;
-    state.text_x         = x;
-    state.text_y         = y;
-    state.tm_origin_set  = tm_origin_set;
-    state.text_leading   = text_leading;
-    state.char_spacing   = char_spacing;
-    state.word_spacing   = word_spacing;
+    state.in_bt = in_bt;
+    state.font_name = font_name;
+    state.tf_font_size = tf_font_size;
+    state.font_size = font_size;
+    state.tm_y_scale = tm_y_scale;
+    state.tm_x_scale = tm_x_scale;
+    state.tm_lm_x = tm_lm_x;
+    state.tm_lm_y = tm_lm_y;
+    state.text_x = x;
+    state.text_y = y;
+    state.tm_origin_set = tm_origin_set;
+    state.text_leading = text_leading;
+    state.char_spacing = char_spacing;
+    state.word_spacing = word_spacing;
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
@@ -3946,7 +4055,11 @@ pub struct LayoutRegionOptions {
 
 impl Default for LayoutRegionOptions {
     fn default() -> Self {
-        Self { infer_row_heights: true, infer_column_widths: true, margin: 2.0 }
+        Self {
+            infer_row_heights: true,
+            infer_column_widths: true,
+            margin: 2.0,
+        }
     }
 }
 
@@ -3965,6 +4078,68 @@ pub struct RegionFitPlan {
     /// in the same planning batch.  Each entry carries the raw geometric [`Collision`]
     /// plus a [`CollisionKind`] and the roles of the two colliding regions.
     pub collisions: Vec<ClassifiedCollision>,
+}
+
+/// Type of layout problem found while checking planned replacement text.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutIssueKind {
+    /// The planned text does not fit inside the target rectangle.
+    TextOverflow,
+    /// Two planned text rectangles overlap.
+    TextCollision,
+    /// Planned text intersects an image on the page.
+    ImageOverlap,
+    /// The planned text rectangle moved too far from the source glyph bounds.
+    BboxDrift,
+    /// The text was shrunk but remains acceptable.
+    AcceptedShrink,
+}
+
+/// Severity of a layout issue.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LayoutIssueSeverity {
+    /// Low-risk issue, usually acceptable for best-effort output.
+    Minor,
+    /// Visible issue that should be considered for repair.
+    Moderate,
+    /// Significant issue that should be repaired or escalated.
+    Major,
+}
+
+impl From<CollisionSeverity> for LayoutIssueSeverity {
+    fn from(value: CollisionSeverity) -> Self {
+        match value {
+            CollisionSeverity::Minor => Self::Minor,
+            CollisionSeverity::Moderate => Self::Moderate,
+            CollisionSeverity::Major => Self::Major,
+        }
+    }
+}
+
+/// One concrete layout issue in a page-level quality report.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LayoutIssue {
+    /// 1-based page number.
+    pub page: u32,
+    /// Region index within the planning batch.
+    pub id: usize,
+    /// Problem category.
+    pub kind: LayoutIssueKind,
+    /// Problem severity.
+    pub severity: LayoutIssueSeverity,
+    /// Primary issue rectangle, when available.
+    pub rect: Option<[f32; 4]>,
+    /// Source glyph bounding box for the affected region, when available.
+    pub source_rect: Option<[f32; 4]>,
+    /// Planned text rectangle for the affected region, when available.
+    pub placed_rect: Option<[f32; 4]>,
+    /// Overlap area in PDF points², when relevant.
+    pub overlap_area: Option<f32>,
+    /// Short human-readable diagnostic.
+    pub message: String,
 }
 
 /// Page-level aggregate quality summary derived from a batch of [`RegionFitPlan`]s.
@@ -4019,7 +4194,10 @@ impl PageFitSummary {
         let shrunk_count = plans
             .iter()
             .filter(|p| {
-                matches!(p.fit.status, PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin)
+                matches!(
+                    p.fit.status,
+                    PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin
+                )
             })
             .count();
 
@@ -4045,6 +4223,221 @@ impl PageFitSummary {
             worst_overlap_rect: worst_rect,
         }
     }
+}
+
+/// Page-level layout quality report for translated or replacement text.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct PageLayoutQuality {
+    /// 1-based page number.
+    pub page_num: u32,
+    /// Backward-compatible aggregate fitting and collision summary.
+    pub summary: PageFitSummary,
+    /// Detailed issues suitable for debug overlays or AI repair prompts.
+    pub issues: Vec<LayoutIssue>,
+    /// Number of text overflow issues.
+    pub overflow_count: usize,
+    /// Number of unique text collision issues.
+    pub collision_count: usize,
+    /// Number of text-vs-image overlap issues.
+    pub image_overlap_count: usize,
+    /// Number of source-vs-placed drift issues.
+    pub bbox_drift_count: usize,
+    /// Worst issue severity on the page, or `None` when no issues were found.
+    pub worst_severity: Option<LayoutIssueSeverity>,
+}
+
+impl PageLayoutQuality {
+    /// Build a quality report from region fit plans and optional image bounding boxes.
+    ///
+    /// `image_bboxes` are `[x, y, width, height]` rectangles in PDF points, matching
+    /// [`crate::Document::page_image_bboxes`].
+    pub fn from_plans(page_num: u32, plans: &[RegionFitPlan], image_bboxes: &[[f32; 4]]) -> Self {
+        use crate::document::PlacementStatus;
+        use std::collections::HashSet;
+
+        let summary = PageFitSummary::from_plans(plans);
+        let mut issues = Vec::new();
+
+        for (idx, plan) in plans.iter().enumerate() {
+            if plan.fit.overflow()
+                || matches!(
+                    plan.fit.status,
+                    PlacementStatus::Overflow
+                        | PlacementStatus::Truncated
+                        | PlacementStatus::ShrunkToMin
+                )
+            {
+                let severity = if matches!(
+                    plan.fit.status,
+                    PlacementStatus::Overflow | PlacementStatus::Truncated
+                ) || plan.fit.overflow_vertical
+                {
+                    LayoutIssueSeverity::Major
+                } else {
+                    LayoutIssueSeverity::Moderate
+                };
+                issues.push(LayoutIssue {
+                    page: page_num,
+                    id: idx,
+                    kind: LayoutIssueKind::TextOverflow,
+                    severity,
+                    rect: Some(plan.fit.used_rect),
+                    source_rect: Some(plan.region.source_bbox),
+                    placed_rect: Some(plan.fit.used_rect),
+                    overlap_area: None,
+                    message: "planned text overflows its target rectangle".to_owned(),
+                });
+            } else if matches!(plan.fit.status, PlacementStatus::Shrunk) {
+                issues.push(LayoutIssue {
+                    page: page_num,
+                    id: idx,
+                    kind: LayoutIssueKind::AcceptedShrink,
+                    severity: LayoutIssueSeverity::Minor,
+                    rect: Some(plan.fit.used_rect),
+                    source_rect: Some(plan.region.source_bbox),
+                    placed_rect: Some(plan.fit.used_rect),
+                    overlap_area: None,
+                    message: "text was shrunk to fit".to_owned(),
+                });
+            }
+
+            let drift = bbox_drift_ratio(plan.region.source_bbox, plan.fit.used_rect);
+            if drift > 0.35 {
+                let severity = if drift > 1.0 {
+                    LayoutIssueSeverity::Major
+                } else {
+                    LayoutIssueSeverity::Moderate
+                };
+                issues.push(LayoutIssue {
+                    page: page_num,
+                    id: idx,
+                    kind: LayoutIssueKind::BboxDrift,
+                    severity,
+                    rect: Some(plan.fit.used_rect),
+                    source_rect: Some(plan.region.source_bbox),
+                    placed_rect: Some(plan.fit.used_rect),
+                    overlap_area: None,
+                    message: "planned text moved away from its source bounds".to_owned(),
+                });
+            }
+
+            for image_rect in image_bboxes {
+                if let Some(overlap) = rect_intersection(plan.fit.used_rect, *image_rect) {
+                    let overlap_area = rect_area(overlap);
+                    let placed_area = rect_area(plan.fit.used_rect);
+                    let severity =
+                        collision_severity(overlap_area, placed_area, rect_area(*image_rect))
+                            .into();
+                    issues.push(LayoutIssue {
+                        page: page_num,
+                        id: idx,
+                        kind: LayoutIssueKind::ImageOverlap,
+                        severity,
+                        rect: Some(overlap),
+                        source_rect: Some(plan.region.source_bbox),
+                        placed_rect: Some(plan.fit.used_rect),
+                        overlap_area: Some(overlap_area),
+                        message: "planned text overlaps an image".to_owned(),
+                    });
+                }
+            }
+        }
+
+        let mut seen_collisions = HashSet::new();
+        for plan in plans {
+            for cc in &plan.collisions {
+                let key = (cc.collision.index_a, cc.collision.index_b);
+                if seen_collisions.insert(key) {
+                    issues.push(LayoutIssue {
+                        page: page_num,
+                        id: cc.collision.index_a,
+                        kind: LayoutIssueKind::TextCollision,
+                        severity: cc.severity.clone().into(),
+                        rect: Some(cc.collision.overlap_rect),
+                        source_rect: plans
+                            .get(cc.collision.index_a)
+                            .map(|p| p.region.source_bbox),
+                        placed_rect: plans.get(cc.collision.index_a).map(|p| p.fit.used_rect),
+                        overlap_area: Some(cc.collision.overlap_area),
+                        message: format!(
+                            "planned text collides with region {}",
+                            cc.collision.index_b
+                        ),
+                    });
+                }
+            }
+        }
+
+        let overflow_count = issues
+            .iter()
+            .filter(|i| i.kind == LayoutIssueKind::TextOverflow)
+            .count();
+        let collision_count = issues
+            .iter()
+            .filter(|i| i.kind == LayoutIssueKind::TextCollision)
+            .count();
+        let image_overlap_count = issues
+            .iter()
+            .filter(|i| i.kind == LayoutIssueKind::ImageOverlap)
+            .count();
+        let bbox_drift_count = issues
+            .iter()
+            .filter(|i| i.kind == LayoutIssueKind::BboxDrift)
+            .count();
+        let worst_severity = issues.iter().map(|i| i.severity.clone()).max();
+
+        Self {
+            page_num,
+            summary,
+            issues,
+            overflow_count,
+            collision_count,
+            image_overlap_count,
+            bbox_drift_count,
+            worst_severity,
+        }
+    }
+}
+
+fn rect_area(rect: [f32; 4]) -> f32 {
+    if rect.iter().all(|v| v.is_finite()) {
+        rect[2].max(0.0) * rect[3].max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn rect_intersection(a: [f32; 4], b: [f32; 4]) -> Option<[f32; 4]> {
+    if !a.iter().chain(b.iter()).all(|v| v.is_finite()) {
+        return None;
+    }
+    let ax2 = a[0] + a[2];
+    let ay2 = a[1] + a[3];
+    let bx2 = b[0] + b[2];
+    let by2 = b[1] + b[3];
+    let x = a[0].max(b[0]);
+    let y = a[1].max(b[1]);
+    let x2 = ax2.min(bx2);
+    let y2 = ay2.min(by2);
+    if x2 > x && y2 > y {
+        Some([x, y, x2 - x, y2 - y])
+    } else {
+        None
+    }
+}
+
+fn bbox_drift_ratio(source: [f32; 4], placed: [f32; 4]) -> f32 {
+    if !source.iter().chain(placed.iter()).all(|v| v.is_finite()) {
+        return 0.0;
+    }
+    let source_diag = (source[2].powi(2) + source[3].powi(2)).sqrt().max(1.0);
+    let source_cx = source[0] + source[2] / 2.0;
+    let source_cy = source[1] + source[3] / 2.0;
+    let placed_cx = placed[0] + placed[2] / 2.0;
+    let placed_cy = placed[1] + placed[3] / 2.0;
+    let dist = ((placed_cx - source_cx).powi(2) + (placed_cy - source_cy).powi(2)).sqrt();
+    dist / source_diag
 }
 
 /// A matched label/value region pair extracted from a form or table layout.
@@ -4114,7 +4507,10 @@ pub fn extract_label_value_pairs(regions: &[LayoutRegion]) -> Vec<LabelValuePair
         .into_iter()
         .map(|(row, label)| {
             let vals = values.remove(&row).unwrap_or_default();
-            LabelValuePair { label, values: vals }
+            LabelValuePair {
+                label,
+                values: vals,
+            }
         })
         .collect()
 }
@@ -4307,8 +4703,7 @@ pub fn extract_layout_regions(
     };
 
     // ---- 5. Row-top map (row_idx → max ascender y in that row) ---------------
-    let mut row_top_map: std::collections::BTreeMap<usize, f32> =
-        std::collections::BTreeMap::new();
+    let mut row_top_map: std::collections::BTreeMap<usize, f32> = std::collections::BTreeMap::new();
     for cell in &cells {
         let top = cell
             .fragments
@@ -4338,11 +4733,12 @@ pub fn extract_layout_regions(
         let source_bbox = text_fragment_bounds(&cell.fragments).unwrap_or(cell.bbox());
 
         // --- Horizontal (usable_x, usable_w) ---
-        let (usable_x, usable_w) = if options.infer_column_widths && cell.col < col_usable_widths.len() {
-            (zones[cell.col].x_start, col_usable_widths[cell.col])
-        } else {
-            (source_bbox[0], source_bbox[2])
-        };
+        let (usable_x, usable_w) =
+            if options.infer_column_widths && cell.col < col_usable_widths.len() {
+                (zones[cell.col].x_start, col_usable_widths[cell.col])
+            } else {
+                (source_bbox[0], source_bbox[2])
+            };
 
         // --- Vertical (usable_y, usable_h) ---
         let (usable_y, usable_h) = if options.infer_row_heights {
@@ -4352,7 +4748,11 @@ pub fn extract_layout_regions(
                 .filter(|v| v.is_finite())
                 .unwrap_or(source_bbox[1] + source_bbox[3]);
             // Use checked_add to avoid usize overflow when cell.row == usize::MAX.
-            let next_top = cell.row.checked_add(1).and_then(|r| row_top_map.get(&r)).copied();
+            let next_top = cell
+                .row
+                .checked_add(1)
+                .and_then(|r| row_top_map.get(&r))
+                .copied();
             if let Some(next_top) = next_top {
                 let h = (current_top - next_top).max(source_bbox[3]);
                 (next_top, h)
@@ -4368,10 +4768,23 @@ pub fn extract_layout_regions(
 
         // --- Kind classification ---
         let avg_fs = {
-            let sizes: Vec<f32> = cell.fragments.iter().map(|f| f.font_size).filter(|fs| fs.is_finite() && *fs > 0.0).collect();
-            if sizes.is_empty() { median_fs } else { sizes.iter().sum::<f32>() / sizes.len() as f32 }
+            let sizes: Vec<f32> = cell
+                .fragments
+                .iter()
+                .map(|f| f.font_size)
+                .filter(|fs| fs.is_finite() && *fs > 0.0)
+                .collect();
+            if sizes.is_empty() {
+                median_fs
+            } else {
+                sizes.iter().sum::<f32>() / sizes.len() as f32
+            }
         };
-        let ratio = if median_fs > 0.0 { avg_fs / median_fs } else { 1.0 };
+        let ratio = if median_fs > 0.0 {
+            avg_fs / median_fs
+        } else {
+            1.0
+        };
         let is_bold = cell.fragments.iter().any(|f| f.is_bold);
         let kind = if ratio >= 1.8 || (ratio >= 1.5 && is_bold) {
             LayoutRegionKind::Heading(1)

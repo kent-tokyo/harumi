@@ -8,6 +8,7 @@ use crate::{
     builder::{self, OutputBlock, TranslatedPage},
     cache::TranslationCache,
     extractor,
+    layout_repair::{LayoutRepairMode, RasterizeOptions, VisionProvider},
     output::{DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality},
     quality::{QualityGate, QualityProfile, QualityResult},
 };
@@ -29,7 +30,9 @@ pub enum OverflowStrategy {
 }
 
 impl Default for OverflowStrategy {
-    fn default() -> Self { Self::Shrink { min_font_size: 6.0 } }
+    fn default() -> Self {
+        Self::Shrink { min_font_size: 6.0 }
+    }
 }
 
 impl OverflowStrategy {
@@ -133,6 +136,12 @@ pub struct TranslateOptions {
     /// Each round identifies overflowing or colliding lines and asks the AI to
     /// shorten them.  Setting `0` disables the correction loop entirely.
     pub max_correction_rounds: usize,
+    /// Post-translation layout repair strategy (default: [`LayoutRepairMode::GeometryThenVision`]).
+    pub layout_repair_mode: LayoutRepairMode,
+    /// Optional provider for vision-based page comparison and correction.
+    pub vision_provider: Option<Arc<dyn VisionProvider>>,
+    /// Poppler rasterization settings used by vision repair.
+    pub rasterize: RasterizeOptions,
     /// Controls which debug artifacts are included in [`TranslateOutput::debug`]
     /// (default: all `false`).
     pub debug: DebugOptions,
@@ -179,12 +188,12 @@ impl Clone for TranslateOptions {
             cover_color: self.cover_color,
             font_fallbacks: self.font_fallbacks.clone(),
             overflow: match &self.overflow {
-                OverflowStrategy::Shrink { min_font_size } => {
-                    OverflowStrategy::Shrink { min_font_size: *min_font_size }
-                }
-                OverflowStrategy::Truncate { min_font_size } => {
-                    OverflowStrategy::Truncate { min_font_size: *min_font_size }
-                }
+                OverflowStrategy::Shrink { min_font_size } => OverflowStrategy::Shrink {
+                    min_font_size: *min_font_size,
+                },
+                OverflowStrategy::Truncate { min_font_size } => OverflowStrategy::Truncate {
+                    min_font_size: *min_font_size,
+                },
             },
             progress_fn: self.progress_fn.clone(),
             profile: match self.profile {
@@ -194,6 +203,9 @@ impl Clone for TranslateOptions {
                 QualityProfile::BestEffort => QualityProfile::BestEffort,
             },
             max_correction_rounds: self.max_correction_rounds,
+            layout_repair_mode: self.layout_repair_mode.clone(),
+            vision_provider: self.vision_provider.as_ref().map(Arc::clone),
+            rasterize: self.rasterize.clone(),
             debug: self.debug.clone(),
             skip_header_footer: self.skip_header_footer,
             auto_skip_math: self.auto_skip_math,
@@ -225,6 +237,9 @@ impl TranslateOptions {
             progress_fn: None,
             profile: QualityProfile::default(),
             max_correction_rounds: 2,
+            layout_repair_mode: LayoutRepairMode::default(),
+            vision_provider: None,
+            rasterize: RasterizeOptions::default(),
             debug: DebugOptions::default(),
             skip_header_footer: false,
             auto_skip_math: false,
@@ -244,14 +259,17 @@ impl TranslateOptions {
     /// Protects: chemical formulas (H₂SO₄), CAS numbers (7664-93-9), UN
     /// numbers (UN1830), numeric value+unit strings, and comparison expressions.
     pub fn with_sds_patterns(mut self) -> Self {
-        self.skip_patterns.extend([
-            r"^[A-Z][a-z]?\d*(\([A-Z][a-z]?\d*\)[\d]?)+$",    // Ca(OH)2, Fe2(SO4)3
-            r"^[A-Z][a-z]?\d+([A-Z][a-z]?\d*)*$",              // H2SO4, NaOH, CO2
-            r"^\d{1,7}-\d{2}-\d$",                              // CAS: 7664-93-9
-            r"^UN\s?\d{4}$",                                     // UN1830
-            r"^\d+(\.\d+)?\s*(mg|kg|mL|L|ppm|ppb|%|°C|K|Pa|MPa|bar|mol|g|t|μg|ng)(/\w+)?$",
-            r"^[<>≤≥±]\s*[\d.,]+(\s*[\w%/°]+)?$",               // < 5, ≥ 10, ± 0.5 %
-        ].map(String::from));
+        self.skip_patterns.extend(
+            [
+                r"^[A-Z][a-z]?\d*(\([A-Z][a-z]?\d*\)[\d]?)+$", // Ca(OH)2, Fe2(SO4)3
+                r"^[A-Z][a-z]?\d+([A-Z][a-z]?\d*)*$",          // H2SO4, NaOH, CO2
+                r"^\d{1,7}-\d{2}-\d$",                         // CAS: 7664-93-9
+                r"^UN\s?\d{4}$",                               // UN1830
+                r"^\d+(\.\d+)?\s*(mg|kg|mL|L|ppm|ppb|%|°C|K|Pa|MPa|bar|mol|g|t|μg|ng)(/\w+)?$",
+                r"^[<>≤≥±]\s*[\d.,]+(\s*[\w%/°]+)?$", // < 5, ≥ 10, ± 0.5 %
+            ]
+            .map(String::from),
+        );
         self
     }
 
@@ -279,6 +297,9 @@ pub struct TranslateOptionsBuilder {
     progress_fn: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
     profile: Option<QualityProfile>,
     max_correction_rounds: Option<usize>,
+    layout_repair_mode: Option<LayoutRepairMode>,
+    vision_provider: Option<Arc<dyn VisionProvider>>,
+    rasterize: Option<RasterizeOptions>,
     debug: Option<DebugOptions>,
     cache: Option<Arc<Mutex<TranslationCache>>>,
     skip_patterns: Vec<String>,
@@ -376,6 +397,24 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Set the layout repair mode.
+    pub fn layout_repair_mode(mut self, mode: LayoutRepairMode) -> Self {
+        self.layout_repair_mode = Some(mode);
+        self
+    }
+
+    /// Set the provider used for vision-based layout repair.
+    pub fn vision_provider(mut self, provider: impl VisionProvider + 'static) -> Self {
+        self.vision_provider = Some(Arc::new(provider));
+        self
+    }
+
+    /// Set Poppler rasterization options for vision repair.
+    pub fn rasterize_options(mut self, options: RasterizeOptions) -> Self {
+        self.rasterize = Some(options);
+        self
+    }
+
     /// Debug artifact options (default: all disabled).
     pub fn debug(mut self, opts: DebugOptions) -> Self {
         self.debug = Some(opts);
@@ -416,7 +455,9 @@ impl TranslateOptionsBuilder {
             translator: self
                 .translator
                 .expect("TranslateOptionsBuilder: translator() is required"),
-            font: self.font.expect("TranslateOptionsBuilder: font() is required"),
+            font: self
+                .font
+                .expect("TranslateOptionsBuilder: font() is required"),
             font_fallbacks: self.font_fallbacks,
             layout: self.layout.unwrap_or_default(),
             concurrency: self.concurrency.unwrap_or(4),
@@ -427,6 +468,9 @@ impl TranslateOptionsBuilder {
             progress_fn: self.progress_fn,
             profile: self.profile.unwrap_or_default(),
             max_correction_rounds: self.max_correction_rounds.unwrap_or(2),
+            layout_repair_mode: self.layout_repair_mode.unwrap_or_default(),
+            vision_provider: self.vision_provider,
+            rasterize: self.rasterize.unwrap_or_default(),
             debug: self.debug.unwrap_or_default(),
             skip_header_footer: self.skip_header_footer,
             auto_skip_math: self.auto_skip_math,
@@ -491,15 +535,22 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
         TranslationMode::Overlay | TranslationMode::Auto => {
             crate::overlay::translate_pdf_overlay_full(pdf_bytes, opt).await?
         }
-        TranslationMode::InPlace => crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?,
-        TranslationMode::Bilingual => crate::overlay::translate_pdf_bilingual_full(pdf_bytes, opt).await?,
+        TranslationMode::InPlace => {
+            crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?
+        }
+        TranslationMode::Bilingual => {
+            crate::overlay::translate_pdf_bilingual_full(pdf_bytes, opt).await?
+        }
     };
 
     finalize_output(raw, profile, debug_opts, mode_for_report, None)
 }
 
 /// Quality-aware Auto cascade: InPlace → Overlay → NewDocument (Readable only).
-async fn translate_pdf_auto_cascade(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+async fn translate_pdf_auto_cascade(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<TranslateOutput> {
     let profile = clone_profile(&options.profile);
     let gate = QualityGate::from_profile(&profile);
     let debug_opts = options.debug.clone();
@@ -551,25 +602,44 @@ async fn translate_pdf_auto_cascade(pdf_bytes: &[u8], options: TranslateOptions)
 
     // For Strict: gate must pass after Overlay or we error.
     if matches!(profile, QualityProfile::Strict) {
-        return finalize_output(overlay_raw, profile, debug_opts, TranslationMode::Overlay, Some(reason1));
+        return finalize_output(
+            overlay_raw,
+            profile,
+            debug_opts,
+            TranslationMode::Overlay,
+            Some(reason1),
+        );
     }
 
     // For Readable: check if a NewDocument fallback is warranted.
     if matches!(profile, QualityProfile::Readable) {
-        let overlay_passes = overlay_raw.quality.pages.iter()
+        let overlay_passes = overlay_raw
+            .quality
+            .pages
+            .iter()
             .all(|r| gate.evaluate(&r.summary).is_pass());
-        if !overlay_passes
-            && let Some(nd_opts) = nd_opts {
-            let reason2 = format!(
-                "{reason1}; Overlay quality gate still failed; retried as NewDocument"
-            );
+        if !overlay_passes && let Some(nd_opts) = nd_opts {
+            let reason2 =
+                format!("{reason1}; Overlay quality gate still failed; retried as NewDocument");
             eprintln!("[harumi-ai] Auto cascade: cascading to NewDocument");
             let nd_raw = translate_pdf_new_document_full(pdf_bytes, nd_opts).await?;
-            return finalize_output(nd_raw, profile, debug_opts, TranslationMode::NewDocument, Some(reason2));
+            return finalize_output(
+                nd_raw,
+                profile,
+                debug_opts,
+                TranslationMode::NewDocument,
+                Some(reason2),
+            );
         }
     }
 
-    finalize_output(overlay_raw, profile, debug_opts, TranslationMode::Overlay, Some(reason1))
+    finalize_output(
+        overlay_raw,
+        profile,
+        debug_opts,
+        TranslationMode::Overlay,
+        Some(reason1),
+    )
 }
 
 /// Snapshot a `QualityProfile` value (QualityProfile doesn't derive Clone/Copy).
@@ -607,10 +677,17 @@ fn finalize_output(
 
     // Aggregate overall quality result.
     let overall = {
-        let all_violations: Vec<_> = raw.quality.pages.iter()
+        let all_violations: Vec<_> = raw
+            .quality
+            .pages
+            .iter()
             .flat_map(|r| gate.evaluate(&r.summary).violations().to_vec())
             .collect();
-        if all_violations.is_empty() { QualityResult::Pass } else { QualityResult::Fail(all_violations) }
+        if all_violations.is_empty() {
+            QualityResult::Pass
+        } else {
+            QualityResult::Fail(all_violations)
+        }
     };
 
     let needs_debug = debug_opts.layout_report
@@ -620,31 +697,48 @@ fn finalize_output(
 
     let debug = if needs_debug {
         let layout_report_json = if debug_opts.layout_report {
-            let entries: Vec<serde_json::Value> = raw.quality.pages.iter()
-                .map(|r| serde_json::json!({
-                    "page_num": r.page_num,
-                    "overflow_count": r.summary.overflow_count,
-                    "collision_count": r.summary.collision_count,
-                    "shrunk_count": r.summary.shrunk_count,
-                    "worst_overlap_area": r.summary.worst_overlap_area,
-                }))
+            let entries: Vec<serde_json::Value> = raw
+                .quality
+                .pages
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "page_num": r.page_num,
+                        "overflow_count": r.summary.overflow_count,
+                        "collision_count": r.summary.collision_count,
+                        "shrunk_count": r.summary.shrunk_count,
+                        "worst_overlap_area": r.summary.worst_overlap_area,
+                    })
+                })
                 .collect();
             Some(serde_json::to_string_pretty(&entries).unwrap_or_default())
-        } else { None };
+        } else {
+            None
+        };
 
         let correction_history = if debug_opts.correction_history {
-            raw.debug.as_ref().map_or_else(Vec::new, |d| d.correction_history.clone())
-        } else { Vec::new() };
+            raw.debug
+                .as_ref()
+                .map_or_else(Vec::new, |d| d.correction_history.clone())
+        } else {
+            Vec::new()
+        };
 
         Some(DebugArtifacts {
             layout_report_json,
             collision_report_json: None,
             debug_overlay_pdf: raw.debug.as_ref().and_then(|d| {
-                if debug_opts.overlay_pdf { d.debug_overlay_pdf.clone() } else { None }
+                if debug_opts.overlay_pdf {
+                    d.debug_overlay_pdf.clone()
+                } else {
+                    None
+                }
             }),
             correction_history,
         })
-    } else { None };
+    } else {
+        None
+    };
 
     Ok(TranslateOutput {
         pdf_bytes: raw.pdf_bytes,
@@ -675,7 +769,11 @@ fn detect_best_mode(pdf_bytes: &[u8]) -> TranslationMode {
     if frags.is_empty() {
         return TranslationMode::Overlay;
     }
-    let page_size = doc.page(1).ok().and_then(|p| p.size().ok()).unwrap_or((595.0, 842.0));
+    let page_size = doc
+        .page(1)
+        .ok()
+        .and_then(|p| p.size().ok())
+        .unwrap_or((595.0, 842.0));
     let regions = harumi::extract_layout_regions(
         &frags,
         page_size.0,
@@ -699,7 +797,10 @@ fn detect_best_mode(pdf_bytes: &[u8]) -> TranslationMode {
     }
 }
 
-async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+async fn translate_pdf_new_document_full(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<TranslateOutput> {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     // ── Phase 1: Extract (sync) ───────────────────────────────────────────────
@@ -732,10 +833,8 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
     let done_pages = Arc::new(AtomicU32::new(0));
 
     // Group consecutive pages into batches for cross-page context.
-    let batches: Vec<Vec<extractor::PageContent>> = pages
-        .chunks(batch_size)
-        .map(<[_]>::to_vec)
-        .collect();
+    let batches: Vec<Vec<extractor::PageContent>> =
+        pages.chunks(batch_size).map(<[_]>::to_vec).collect();
 
     let translated_pages: Vec<TranslatedPage> = stream::iter(batches)
         .map(|batch| {
@@ -751,7 +850,9 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
                     .translate(&[batch_json], &target, src.as_deref())
                     .await?;
                 let completed = done_pages.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
-                if let Some(f) = &progress { f(completed.min(total_pages), total_pages); }
+                if let Some(f) = &progress {
+                    f(completed.min(total_pages), total_pages);
+                }
 
                 let json = results
                     .into_iter()
@@ -764,9 +865,7 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
                 let translated: Vec<TranslatedPage> = batch
                     .iter()
                     .zip(
-                        page_block_lists
-                            .iter()
-                            .chain(std::iter::repeat(&vec![])), // pad if LLM returned fewer pages
+                        page_block_lists.iter().chain(std::iter::repeat(&vec![])), // pad if LLM returned fewer pages
                     )
                     .map(|(orig_page, t_blocks)| {
                         let output_blocks: Vec<OutputBlock> = t_blocks
@@ -780,7 +879,10 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
                                 })
                             })
                             .collect();
-                        TranslatedPage { size: orig_page.size, blocks: output_blocks }
+                        TranslatedPage {
+                            size: orig_page.size,
+                            blocks: output_blocks,
+                        }
                     })
                     .collect();
 

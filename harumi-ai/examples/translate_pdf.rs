@@ -92,9 +92,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let translated = translate_pdf(&pdf_bytes, opts).await
         .unwrap_or_else(|e| panic!("Translation failed: {e}"));
 
-    std::fs::write(output_path, &translated)
+    std::fs::write(output_path, &translated.pdf_bytes)
         .unwrap_or_else(|e| panic!("Cannot write '{output_path}': {e}"));
 
-    println!("[harumi-ai] Done: {output_path} ({} bytes)", translated.len());
+    println!("[harumi-ai] Done: {output_path} ({} bytes)", translated.pdf_bytes.len());
     Ok(())
 }

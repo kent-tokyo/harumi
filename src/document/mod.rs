@@ -1,14 +1,14 @@
-mod types;
 mod helpers;
 mod page;
+mod types;
 
+pub use helpers::{calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph};
+pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PdfMetadata,
     PlacementStatus, ReplaceOptions, TextFieldOptions, TextRun,
 };
-pub use page::{PageHandle, VerticalAlign};
-pub use helpers::{calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph};
 
 #[cfg(feature = "draw")]
 pub use page::DebugOverlayOptions;
@@ -31,15 +31,14 @@ use crate::{
     },
 };
 
-use types::{EncAlgorithm, PendingBookmark, PendingOp, RawFont};
 use helpers::{
     acroform_id, add_font_to_resources, add_font_to_xobject_resources, add_xobject_to_resources,
-    append_annotation_to_page, append_to_contents, collect_field_ids, collect_fields_recursive,
-    ensure_acroform, generate_file_id, inherited_media_box_raw, inherited_resources,
-    lopdf_string_to_rust, map_lopdf_password_err, pdf_text_string,
-    realize_page_inherited_attrs, root_pages_id,
-    wrap_page_contents_in_q_q, check_finite,
+    append_annotation_to_page, append_to_contents, check_finite, collect_field_ids,
+    collect_fields_recursive, ensure_acroform, generate_file_id, inherited_media_box_raw,
+    inherited_resources, lopdf_string_to_rust, map_lopdf_password_err, pdf_text_string,
+    realize_page_inherited_attrs, root_pages_id, wrap_page_contents_in_q_q,
 };
+use types::{EncAlgorithm, PendingBookmark, PendingOp, RawFont};
 
 #[cfg(feature = "draw")]
 use helpers::add_ext_gstate_to_resources;
@@ -696,8 +695,7 @@ impl Document {
                 inherited_resources(&self.inner, other_page_id).unwrap_or_default();
 
             // Decode and concatenate all of the other page's content streams.
-            let content_streams =
-                crate::extract::page_content_streams(&self.inner, other_page_id);
+            let content_streams = crate::extract::page_content_streams(&self.inner, other_page_id);
             let content_bytes: Vec<u8> = {
                 let mut all: Vec<u8> = Vec::new();
                 for (j, bytes) in content_streams.into_iter().enumerate() {
@@ -1369,7 +1367,10 @@ impl Document {
         field_dict.set("FT", Object::Name(b"Sig".to_vec()));
         field_dict.set(
             "T",
-            Object::String(options.field_name.as_bytes().to_vec(), StringFormat::Literal),
+            Object::String(
+                options.field_name.as_bytes().to_vec(),
+                StringFormat::Literal,
+            ),
         );
         field_dict.set(
             "Rect",
@@ -1530,10 +1531,7 @@ impl Document {
         let mut ef_dict = Dictionary::new();
         ef_dict.set("Type", Object::Name(b"EmbeddedFile".to_vec()));
         if !mime_type.is_empty() {
-            ef_dict.set(
-                "Subtype",
-                Object::Name(mime_type.as_bytes().to_vec()),
-            );
+            ef_dict.set("Subtype", Object::Name(mime_type.as_bytes().to_vec()));
         }
         let mut params = Dictionary::new();
         params.set("Size", Object::Integer(data.len() as i64));
@@ -1567,10 +1565,10 @@ impl Document {
                     // Inline dict — upgrade to indirect reference.
                     let d = catalog.get(b"Names")?.as_dict()?.clone();
                     let id = self.inner.add_object(Object::Dictionary(d));
-                    self.inner.get_object_mut(root_ref)?.as_dict_mut()?.set(
-                        "Names",
-                        Object::Reference(id),
-                    );
+                    self.inner
+                        .get_object_mut(root_ref)?
+                        .as_dict_mut()?
+                        .set("Names", Object::Reference(id));
                     id
                 }
                 _ => {
@@ -1592,10 +1590,10 @@ impl Document {
                 Some(Object::Dictionary(_)) => {
                     let d = names_dict.get(b"EmbeddedFiles")?.as_dict()?.clone();
                     let id = self.inner.add_object(Object::Dictionary(d));
-                    self.inner.get_object_mut(names_id)?.as_dict_mut()?.set(
-                        "EmbeddedFiles",
-                        Object::Reference(id),
-                    );
+                    self.inner
+                        .get_object_mut(names_id)?
+                        .as_dict_mut()?
+                        .set("EmbeddedFiles", Object::Reference(id));
                     id
                 }
                 _ => {
@@ -1662,17 +1660,13 @@ impl Document {
         let catalog = self.inner.get_object(root_ref)?.as_dict()?;
 
         let names_dict = match catalog.get(b"Names").ok() {
-            Some(Object::Reference(r)) => {
-                self.inner.get_object(*r)?.as_dict()?.clone()
-            }
+            Some(Object::Reference(r)) => self.inner.get_object(*r)?.as_dict()?.clone(),
             Some(Object::Dictionary(d)) => d.clone(),
             _ => return Ok(vec![]),
         };
 
         let ef_dict = match names_dict.get(b"EmbeddedFiles").ok() {
-            Some(Object::Reference(r)) => {
-                self.inner.get_object(*r)?.as_dict()?.clone()
-            }
+            Some(Object::Reference(r)) => self.inner.get_object(*r)?.as_dict()?.clone(),
             Some(Object::Dictionary(d)) => d.clone(),
             _ => return Ok(vec![]),
         };
@@ -1699,9 +1693,7 @@ impl Document {
 
             // Resolve filename from /F entry.
             let filename = match fs_dict.get(b"F").ok() {
-                Some(Object::String(bytes, _)) => {
-                    String::from_utf8_lossy(bytes).into_owned()
-                }
+                Some(Object::String(bytes, _)) => String::from_utf8_lossy(bytes).into_owned(),
                 _ => continue,
             };
 
@@ -1719,19 +1711,15 @@ impl Document {
                     };
                     if let Some(efd) = ef_ref_dict {
                         let ef_stream_obj = match efd.get(b"F").ok() {
-                            Some(Object::Reference(r)) => {
-                                self.inner.get_object(*r).ok().cloned()
-                            }
+                            Some(Object::Reference(r)) => self.inner.get_object(*r).ok().cloned(),
                             _ => None,
                         };
                         if let Some(Object::Stream(s)) = ef_stream_obj {
                             let size = match s.dict.get(b"Params").ok() {
-                                Some(Object::Dictionary(p)) => {
-                                    match p.get(b"Size").ok() {
-                                        Some(Object::Integer(n)) => *n as usize,
-                                        _ => 0,
-                                    }
-                                }
+                                Some(Object::Dictionary(p)) => match p.get(b"Size").ok() {
+                                    Some(Object::Integer(n)) => *n as usize,
+                                    _ => 0,
+                                },
                                 _ => 0,
                             };
                             let mime = match s.dict.get(b"Subtype").ok() {
@@ -1862,13 +1850,16 @@ impl Document {
                     sizes.iter().sum::<f32>() / sizes.len() as f32
                 }
             };
-            let fit = helpers::plan_text_fit(replacement, &face, region.usable_rect, font_size, &opts);
+            let fit =
+                helpers::plan_text_fit(replacement, &face, region.usable_rect, font_size, &opts);
             fits.push(fit);
         }
 
         // Detect collisions among all used_rects
-        let placed: Vec<crate::extract::PlacedBox> =
-            fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
+        let placed: Vec<crate::extract::PlacedBox> = fits
+            .iter()
+            .map(|f| crate::extract::PlacedBox::new(f.used_rect))
+            .collect();
         let all_collisions = crate::extract::detect_collisions(&placed);
         let all_classified = crate::extract::classify_collisions(regions, &all_collisions);
 
@@ -1882,7 +1873,11 @@ impl Document {
                     .filter(|cc| cc.collision.index_a == i || cc.collision.index_b == i)
                     .cloned()
                     .collect();
-                crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }
+                crate::extract::RegionFitPlan {
+                    region: region.clone(),
+                    fit,
+                    collisions,
+                }
             })
             .collect();
 
@@ -1970,13 +1965,10 @@ impl Document {
                 BaselinePolicy::PreserveSourceBaseline => {
                     (region.source_bbox[1], region.source_bbox[3].max(1.0))
                 }
-                BaselinePolicy::TopAlignToRegion => {
-                    (region.usable_rect[1], region.usable_rect[3])
-                }
+                BaselinePolicy::TopAlignToRegion => (region.usable_rect[1], region.usable_rect[3]),
                 BaselinePolicy::CenterInRegion => {
                     let center = region.usable_rect[1] + region.usable_rect[3] / 2.0;
-                    let h = region
-                        .source_bbox[3]
+                    let h = region.source_bbox[3]
                         .max(region.usable_rect[3] * 0.5)
                         .max(1.0);
                     (center - h / 2.0, h)
@@ -1992,7 +1984,11 @@ impl Document {
                     .map(|f| f.font_size)
                     .filter(|fs| fs.is_finite() && *fs > 0.0)
                     .collect();
-                if sizes.is_empty() { 10.0_f32 } else { sizes.iter().sum::<f32>() / sizes.len() as f32 }
+                if sizes.is_empty() {
+                    10.0_f32
+                } else {
+                    sizes.iter().sum::<f32>() / sizes.len() as f32
+                }
             };
 
             let box_opts = types::BoxFitOptions {
@@ -2005,8 +2001,10 @@ impl Document {
             fits.push(fit);
         }
 
-        let placed: Vec<crate::extract::PlacedBox> =
-            fits.iter().map(|f| crate::extract::PlacedBox::new(f.used_rect)).collect();
+        let placed: Vec<crate::extract::PlacedBox> = fits
+            .iter()
+            .map(|f| crate::extract::PlacedBox::new(f.used_rect))
+            .collect();
         let all_collisions = crate::extract::detect_collisions(&placed);
         let all_classified = crate::extract::classify_collisions(regions, &all_collisions);
 
@@ -2020,7 +2018,11 @@ impl Document {
                     .filter(|cc| cc.collision.index_a == i || cc.collision.index_b == i)
                     .cloned()
                     .collect();
-                crate::extract::RegionFitPlan { region: region.clone(), fit, collisions }
+                crate::extract::RegionFitPlan {
+                    region: region.clone(),
+                    fit,
+                    collisions,
+                }
             })
             .collect();
 
@@ -2051,7 +2053,10 @@ impl Document {
     pub fn extract_text_runs_verbose(
         &self,
         page: u32,
-    ) -> Result<(Vec<crate::extract::TextFragment>, Vec<crate::extract::ExtractionWarning>)> {
+    ) -> Result<(
+        Vec<crate::extract::TextFragment>,
+        Vec<crate::extract::ExtractionWarning>,
+    )> {
         let all_pages = self.inner.get_pages();
         let page_id = all_pages
             .get(&page)
@@ -2069,7 +2074,11 @@ impl Document {
     /// Returns [`Error::PageNotFound`] if `page` is out of range.
     pub fn extract_text(&self, page: u32) -> Result<String> {
         let fragments = self.extract_text_runs(page)?;
-        Ok(fragments.into_iter().map(|frag| frag.text).collect::<Vec<_>>().join(""))
+        Ok(fragments
+            .into_iter()
+            .map(|frag| frag.text)
+            .collect::<Vec<_>>()
+            .join(""))
     }
 
     /// Extracts text runs from all pages, returning a flat vector of
@@ -2169,7 +2178,31 @@ impl Document {
             .get(&page_number)
             .copied()
             .ok_or(Error::PageNotFound(page_number))?;
-        Ok(crate::extract::extract_image_bboxes_from_page(&self.inner, page_id))
+        Ok(crate::extract::extract_image_bboxes_from_page(
+            &self.inner,
+            page_id,
+        ))
+    }
+
+    /// Assess page-level layout quality for a batch of planned replacement text.
+    ///
+    /// This combines [`PageFitSummary`](crate::PageFitSummary), detailed
+    /// [`LayoutIssue`](crate::LayoutIssue) generation, collision severity, and
+    /// image-overlap checks using [`Document::page_image_bboxes`].
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page_number` is zero or exceeds page count.
+    pub fn assess_page_layout_quality(
+        &self,
+        page_number: u32,
+        plans: &[crate::RegionFitPlan],
+    ) -> Result<crate::PageLayoutQuality> {
+        let image_bboxes = self.page_image_bboxes(page_number)?;
+        Ok(crate::PageLayoutQuality::from_plans(
+            page_number,
+            plans,
+            &image_bboxes,
+        ))
     }
 
     /// Extracts all raster images embedded on the given page (1-indexed).
@@ -2292,9 +2325,9 @@ impl Document {
         context: &crate::SigningContext,
         field_name: &str,
     ) -> Result<Vec<u8>> {
-        use crate::signature_create::inner::{hash_pdf_content, sign_hash};
         use crate::cms_builder::CmsSignedDataBuilder;
         use crate::pdf_incremental::IncrementalUpdateBuilder;
+        use crate::signature_create::inner::{hash_pdf_content, sign_hash};
 
         if self.finalized {
             return Err(Error::InvalidInput(
@@ -2313,11 +2346,7 @@ impl Document {
         let sig_bytes = sign_hash(context.private_key(), &hash)?;
 
         // 4. Build PKCS#7/CMS SignedData
-        let cms_builder = CmsSignedDataBuilder::new(
-            context.cert_der().to_vec(),
-            sig_bytes,
-            hash,
-        );
+        let cms_builder = CmsSignedDataBuilder::new(context.cert_der().to_vec(), sig_bytes, hash);
         let cms_hex = cms_builder.to_hex_string()?;
 
         // 5. Build PDF incremental update section with metadata
@@ -3305,7 +3334,9 @@ impl Document {
         }
 
         // Validate page exists once, upfront.
-        let page_id = self.inner.get_pages()
+        let page_id = self
+            .inner
+            .get_pages()
             .get(&page)
             .copied()
             .ok_or(Error::PageNotFound(page))?;

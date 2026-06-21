@@ -140,6 +140,7 @@ doc.save("searchable.pdf")?;
 | PDF에서 레이아웃 충돌과 텍스트 배치를 시각적으로 디버깅하고 싶은 경우 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 색상별 스트로크 사각형 그리기（파란색=소스 bbox, 녹색=배치 텍스트, 빨간색=충돌 겹침）；`DebugOverlayOptions`로 색상과 선 너비 설정；NaN/잘못된 좌표는 자동 건너뜀（`draw` feature, v1.13.0+） |
 | 텍스트 배치 시 미세한 너비 차이를 문자 간격으로 흡수해야 할 때 | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 연산자; 음수 `char_spacing`으로 폰트 크기 변경 없이 텍스트 너비 압축 (v1.15.0+) |
 | 페이지의 이미지 경계 상자를 가져와야 할 때 (오버레이 회피용) | `doc.page_image_bboxes(page)` — 축 정렬 Image XObject의 `[x, y, width, height]` 반환; `image` feature 불필요 (v1.15.0+) |
+| 오버플로우·충돌·이미지 겹침을 한 번에 통합 레이아웃 품질 보고서로 받고 싶을 때 | `doc.assess_page_layout_quality(page, &plans) -> PageLayoutQuality` — `page_image_bboxes`와 `PageLayoutQuality::from_plans`를 일괄 호출；`issues: Vec<LayoutIssue>`（종류: `TextOverflow`/`TextCollision`/`ImageOverlap`/`BboxDrift`/`AcceptedShrink`，심각도: `Minor`/`Moderate`/`Major`）및 각 카운트와 `worst_severity` (v1.16.0+) |
 
 ---
 
@@ -837,6 +838,8 @@ harumi는 **외부 런타임 의존성 없음**（PDF 핵심 처리 제외）을
 | **v1.12.0** | `CollisionKind` + `ClassifiedCollision` + `classify_collisions` — 구조적 충돌 분류；`RegionFitPlan.collisions`를 `Vec<ClassifiedCollision>`으로 변경 |
 | **v1.13.0** | `Collision::overlap_area`（pt² 심각도 필드）；`PlacementStatus` enum + `FitResult::status`；`PageFitSummary::from_plans`；`add_fit_debug_overlay` + `DebugOverlayOptions`（`draw` feature）；버그 수정: Report+max_lines Truncated 상태, WrapThenShrink 하한 폰트 오버플로우, Truncate rh=0 잘못된 Ok, NaN 좌표 보호 |
 | **v1.14.0** | `CollisionSeverity`（Minor/Moderate/Major）+ `ClassifiedCollision::severity` 필드（source_bbox 면적 비율로 자동 계산）；`collision_severity()` 독립 함수；`LabelValuePair` + `extract_label_value_pairs()` — LeftLabel/RightValue 영역 쌍 추출（밀집 양식/SDS PDF 감지용） |
+| **v1.15.0** | `add_text_styled_with_char_spacing` — PDF `Tc` 문자 간격 연산자；음수 값으로 폰트 크기 유지하며 너비 압축；`page_image_bboxes` — `image` feature 없이 이미지 bbox 획득；harumi-ai v0.5.0: Tc 최적화 + 이미지 영역 회피 |
+| **v1.16.0** *(현재)* | `LayoutIssue` / `LayoutIssueKind` / `LayoutIssueSeverity` / `PageLayoutQuality` — 문제 종류·심각도 포함 레이아웃 품질 보고서；`assess_page_layout_quality` — 이미지 bbox 감지와 `PageFitSummary`를 단일 호출로 제공；harumi-ai v0.6.0: `LayoutRepairMode`·`VisionProvider` 트레이트·`AnthropicTranslator` 비전 지원·Poppler `RasterizeOptions`·수정 프롬프트 개선 |
 
 ---
 

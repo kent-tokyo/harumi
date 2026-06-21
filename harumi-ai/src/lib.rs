@@ -27,27 +27,34 @@
 //! - **Paragraph classification**: `extract_text_chunks` uses font-size heuristics;
 //!   complex PDFs may have imperfect heading/paragraph classification.
 
+mod builder;
 pub mod cache;
 mod error;
 mod extractor;
-mod builder;
 mod inplace;
 mod layout;
+mod layout_repair;
 mod output;
 mod overlay;
 mod pdf_translator;
 mod prompts;
+pub mod providers;
 mod quality;
 mod repair;
 mod translator;
-pub mod providers;
 
 pub use cache::TranslationCache;
 pub use error::{Error, Result};
 pub use layout::LayoutOptions;
-pub use output::{CorrectionRound, DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality,
-                 PageQualityReport};
-pub use pdf_translator::{OverflowStrategy, TranslateOptions, TranslateOptionsBuilder,
-                         TranslationMode, translate_pdf};
+pub use layout_repair::{
+    LayoutCorrection, LayoutRepairMode, RasterizeOptions, VisionProvider, VisionRepairRequest,
+};
+pub use output::{
+    CorrectionRound, DebugArtifacts, DebugOptions, PageQualityReport, TranslateOutput,
+    TranslateQuality,
+};
+pub use pdf_translator::{
+    OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf,
+};
 pub use quality::{QualityGate, QualityProfile, QualityResult, QualityViolation};
 pub use translator::Translator;
