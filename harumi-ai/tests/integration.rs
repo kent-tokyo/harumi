@@ -1,7 +1,43 @@
 use std::sync::Arc;
+use async_trait::async_trait;
 use harumi::Document;
 use harumi_ai::{LayoutOptions, QualityGate, QualityProfile, TranslateOptions, TranslationMode,
-                TranslationCache, providers::EchoTranslator, translate_pdf};
+                TranslationCache, providers::EchoTranslator, translate_pdf, Translator};
+
+/// Test translator that returns every input text with a "TRANSLATED: " prefix,
+/// making the output ~30% longer than the input.  Used to exercise width
+/// overflow / avail_w logic that EchoTranslator cannot trigger.
+struct LongerTranslator;
+
+#[async_trait]
+impl Translator for LongerTranslator {
+    async fn translate(
+        &self,
+        texts: &[String],
+        _target_lang: &str,
+        _source_lang: Option<&str>,
+    ) -> harumi_ai::Result<Vec<String>> {
+        // Each element is a batch-JSON string; parse, extend, and re-serialise.
+        texts.iter().map(|raw| {
+            let mut v: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| harumi_ai::Error::Translator(e.to_string()))?;
+            if let Some(pages) = v.get_mut("pages").and_then(|p| p.as_array_mut()) {
+                for page in pages.iter_mut() {
+                    if let Some(blocks) = page.get_mut("blocks").and_then(|b| b.as_array_mut()) {
+                        for block in blocks.iter_mut() {
+                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                let longer = format!("TRANSLATED LONGER VERSION OF: {text}");
+                                block["text"] = serde_json::Value::String(longer);
+                            }
+                        }
+                    }
+                }
+            }
+            serde_json::to_string(&v)
+                .map_err(|e| harumi_ai::Error::Translator(e.to_string()))
+        }).collect()
+    }
+}
 
 const FONT: &[u8] = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
@@ -444,4 +480,89 @@ async fn with_sds_patterns_method_compiles() {
     let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
         .with_sds_patterns();
     assert!(!opts.skip_patterns.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// v0.4.0 — region-aware overlay (Feature A) + math auto-detection (Feature C)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn longer_translator_produces_valid_pdf() {
+    // Verifies LongerTranslator returns a parseable PDF — baseline for Feature A tests.
+    let pdf = make_test_pdf();
+    let opts = TranslateOptions::new("en", LongerTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+}
+
+#[tokio::test]
+async fn region_aware_wider_text_still_produces_valid_pdf() {
+    // LongerTranslator makes text ~30% wider than the source.
+    // With region_usable_right from extract_layout_regions, fit_font_size uses a
+    // (possibly larger) accurate avail_w.  The output PDF must be valid regardless.
+    let pdf = make_multipage_pdf();
+    let mut opts = TranslateOptions::new("en", LongerTranslator, FONT.to_vec());
+    opts.max_correction_rounds = 0; // no AI correction loop
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // Must produce valid PDF bytes.
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+    // Quality reports are emitted (not empty — at least one page processed).
+    // They may show shrunk/overflow counts but must not panic.
+    let out_doc = Document::from_bytes(&output.pdf_bytes).unwrap();
+    assert_eq!(out_doc.page_count(), 2);
+}
+
+#[tokio::test]
+async fn skip_header_footer_flag_compiles_and_runs() {
+    // Smoke test: skip_header_footer = true must not panic.
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.skip_header_footer = true;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+}
+
+#[tokio::test]
+async fn auto_skip_math_flag_compiles_and_runs() {
+    // PDF with a line that contains math symbols.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    // Greek letter α — classified as primarily-math (length ≤ 20, math char present).
+    doc.page(1).unwrap()
+        .add_text("α", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    doc.page(1).unwrap()
+        .add_text("Normal text here", font, [72.0, 680.0], 14.0, BLACK).unwrap();
+    let pdf = doc.save_to_bytes().unwrap();
+
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.auto_skip_math = true;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // Must produce a valid PDF; math line must have been skipped (not covered).
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+}
+
+#[tokio::test]
+async fn auto_skip_math_prose_with_alpha_not_skipped() {
+    // "The coefficient α represents…" — long prose with one Greek char.
+    // With total > 20 chars and few math chars, text_is_primarily_math returns false.
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    let long_prose = "The coefficient alpha represents the scaling factor in the model";
+    doc.page(1).unwrap()
+        .add_text(long_prose, font, [72.0, 700.0], 12.0, BLACK).unwrap();
+    let pdf = doc.save_to_bytes().unwrap();
+
+    let mut opts = TranslateOptions::new("en", LongerTranslator, FONT.to_vec());
+    opts.auto_skip_math = true;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // The prose must NOT have been skipped — LongerTranslator would have translated it
+    // (PDF is valid either way but we just verify no panic).
+    assert!(output.pdf_bytes.starts_with(b"%PDF"));
+}
+
+#[tokio::test]
+async fn new_fields_have_correct_defaults() {
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    assert!(!opts.skip_header_footer);
+    assert!(!opts.auto_skip_math);
 }

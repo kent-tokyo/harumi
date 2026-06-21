@@ -136,6 +136,20 @@ pub struct TranslateOptions {
     /// Controls which debug artifacts are included in [`TranslateOutput::debug`]
     /// (default: all `false`).
     pub debug: DebugOptions,
+    /// Skip headers and footers — they will not be covered or translated
+    /// (default: `false`).
+    ///
+    /// When `true`, lines whose layout region role is
+    /// [`harumi::LayoutRegionRole::HeaderFooter`] are left completely untouched.
+    pub skip_header_footer: bool,
+    /// Automatically skip text that is primarily math/formula characters
+    /// (Greek letters, math operators, Mathematical Alphanumeric Symbols)
+    /// (default: `false`).
+    ///
+    /// Lines classified as math are passed through verbatim — not covered
+    /// and not sent to the AI provider.  See `with_math_patterns()` to add
+    /// explicit regex patterns instead.
+    pub auto_skip_math: bool,
     /// Optional shared in-memory translation cache.
     ///
     /// When set, repeated phrases are resolved from the cache instead of being
@@ -181,6 +195,8 @@ impl Clone for TranslateOptions {
             },
             max_correction_rounds: self.max_correction_rounds,
             debug: self.debug.clone(),
+            skip_header_footer: self.skip_header_footer,
+            auto_skip_math: self.auto_skip_math,
             cache: self.cache.as_ref().map(Arc::clone),
             skip_patterns: self.skip_patterns.clone(),
         }
@@ -210,6 +226,8 @@ impl TranslateOptions {
             profile: QualityProfile::default(),
             max_correction_rounds: 2,
             debug: DebugOptions::default(),
+            skip_header_footer: false,
+            auto_skip_math: false,
             cache: None,
             skip_patterns: vec![],
         }
@@ -264,6 +282,8 @@ pub struct TranslateOptionsBuilder {
     debug: Option<DebugOptions>,
     cache: Option<Arc<Mutex<TranslationCache>>>,
     skip_patterns: Vec<String>,
+    skip_header_footer: bool,
+    auto_skip_math: bool,
 }
 
 impl TranslateOptionsBuilder {
@@ -396,6 +416,8 @@ impl TranslateOptionsBuilder {
             profile: self.profile.unwrap_or_default(),
             max_correction_rounds: self.max_correction_rounds.unwrap_or(2),
             debug: self.debug.unwrap_or_default(),
+            skip_header_footer: self.skip_header_footer,
+            auto_skip_math: self.auto_skip_math,
             cache: self.cache,
             skip_patterns: self.skip_patterns,
         }

@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 
 use futures::stream::{self, StreamExt};
-use harumi::{FontHandle, detect_text_columns, sort_by_reading_order, Document, TextFragment};
+use harumi::{
+    FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
+    detect_text_columns, extract_layout_regions, sort_by_reading_order, Document, TextFragment,
+};
 use ttf_parser::Face;
 
 use crate::{
@@ -62,6 +65,14 @@ pub(crate) struct OverlayLine {
     pub(crate) fragment_texts: Vec<String>,
     /// Font size of the original text (PDF points), derived from TextFragment.font_size.
     pub(crate) font_size: f32,
+    /// Right edge of the containing layout region's usable_rect.
+    /// Falls back to col_right when no region is matched.
+    pub(crate) region_usable_right: f32,
+    /// Semantic role of the containing layout region (HeaderFooter, ParagraphBody, …).
+    pub(crate) region_role: LayoutRegionRole,
+    /// True when this line must not be covered or translated.
+    /// Set in `extract_and_translate` based on `skip_header_footer` / `auto_skip_math`.
+    pub(crate) is_skip: bool,
 }
 
 pub(crate) struct OverlayPage {
@@ -188,15 +199,55 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
         // CJK glyphs fill the full em-square; use a larger leading ratio (1.6).
         let body_font_size = (body_line_h / 1.6).max(6.0);
 
+        // Extract semantic layout regions to get precise usable_rect per line.
+        let page_height = size.1;
+        let regions = extract_layout_regions(
+            &visible,
+            page_width,
+            page_height,
+            LayoutRegionOptions::default(),
+        );
+
         let raw_lines = &all_raw_lines;
-        let lines = raw_lines
+        let lines: Vec<OverlayLine> = raw_lines
             .iter()
             .enumerate()
             .map(|(i, rl)| {
                 let gap_above = if i > 0 { (raw_lines[i - 1].y - rl.y).abs() } else { body_line_h };
                 let gap_below = if i + 1 < raw_lines.len() { (rl.y - raw_lines[i + 1].y).abs() } else { body_line_h };
-                // Heading: large gap above AND starts near left margin, OR bold font.
-                let is_heading = (gap_above > body_line_h * 2.2 && rl.x < page_width * 0.2)
+
+                // Find the layout region that contains this line.
+                // Require both y-overlap and x-containment to avoid cross-column matches.
+                let matched = regions.iter()
+                    .filter(|r| {
+                        let b = r.source_bbox;
+                        let y_ok = rl.y >= b[1] - 2.0 && rl.y <= b[1] + b[3] + 2.0;
+                        let x_ok = rl.x >= b[0] - 5.0 && rl.x <= b[0] + b[2] + 5.0;
+                        y_ok && x_ok
+                    })
+                    .min_by(|a, b_| {
+                        let ca = a.source_bbox[0] + a.source_bbox[2] / 2.0;
+                        let cb = b_.source_bbox[0] + b_.source_bbox[2] / 2.0;
+                        (ca - rl.x).abs().partial_cmp(&(cb - rl.x).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                let region_usable_right = matched
+                    .map(|r| r.usable_rect[0] + r.usable_rect[2])
+                    .unwrap_or(rl.col_right)
+                    .max(rl.x + 50.0);
+
+                let region_role = matched
+                    .map(|r| r.role.clone())
+                    .unwrap_or(LayoutRegionRole::Unknown);
+
+                // Region-aware heading detection supplements the heuristic.
+                let region_is_heading = matched.is_some_and(|r| {
+                    matches!(r.kind, LayoutRegionKind::Heading(_))
+                });
+
+                let is_heading = region_is_heading
+                    || (gap_above > body_line_h * 2.2 && rl.x < page_width * 0.2)
                     || rl.is_bold;
                 let lh = gap_below.min(body_line_h * 1.5).max(body_line_h);
                 OverlayLine {
@@ -211,6 +262,9 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
                     text: rl.text.clone(),
                     fragment_texts: rl.fragments.clone(),
                     font_size: rl.font_size,
+                    region_usable_right,
+                    region_role,
+                    is_skip: false,
                 }
             })
             .collect();
@@ -346,7 +400,7 @@ async fn run_correction_loop(
                 let max_fs = line.line_height * 0.85;
                 let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
                 let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
-                let avail_w = (line.col_right - line.x).max(50.0);
+                let avail_w = (line.region_usable_right - line.x).max(50.0);
                 let text_w = measure_text_width(text, face, desired);
                 let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
                 let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
@@ -458,6 +512,39 @@ async fn run_correction_loop(
     Ok(rounds)
 }
 
+// ── Math-detection helpers ────────────────────────────────────────────────────
+
+fn is_math_char(c: char) -> bool {
+    let cp = c as u32;
+    matches!(cp,
+        0x0370..=0x03FF   |  // Greek and Coptic
+        0x2200..=0x22FF   |  // Mathematical Operators
+        0x1D400..=0x1D7FF |  // Mathematical Alphanumeric Symbols
+        0x2070..=0x2079   |  // Superscript digits
+        0x2080..=0x2089   |  // Subscript digits
+        0x00B2 | 0x00B3 | 0x00B9  // ², ³, ¹
+    )
+}
+
+/// Returns true when a line's text is primarily math/formula content.
+///
+/// Heuristic: short text (≤ 20 chars) with any math char; or longer text
+/// where math chars dominate AND ordinary alphabetic prose is sparse.
+/// Does NOT flag "The coefficient α represents …" — prose with occasional symbols.
+fn text_is_primarily_math(text: &str) -> bool {
+    if text.is_empty() { return false; }
+    let total = text.chars().count();
+    let math_count = text.chars().filter(|&c| is_math_char(c)).count();
+    if math_count == 0 { return false; }
+    let alpha_prose = text.chars()
+        .filter(|c| c.is_alphabetic() && !is_math_char(*c))
+        .count();
+    // Short token: flag on any math char (e.g. "α", "H₂SO₄", "∑x²").
+    if total <= 20 { return true; }
+    // Long text: require math to be the majority AND prose to be sparse.
+    math_count * 2 > total && alpha_prose * 4 < total
+}
+
 // ── Shared extract + translate helper ────────────────────────────────────────
 
 /// Phases 1 and 2 shared between Overlay and InPlace modes.
@@ -477,7 +564,7 @@ pub(crate) async fn extract_and_translate(
 ) -> Result<(Vec<OverlayPage>, HashMap<u32, Vec<String>>, f32)> {
     // ── Phase 1: Extract positioned lines ────────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
-    let overlay_pages = extract_overlay_pages(&mut doc)?;
+    let mut overlay_pages = extract_overlay_pages(&mut doc)?;
     drop(doc);
 
     let global_body_fs = {
@@ -539,6 +626,29 @@ pub(crate) async fn extract_and_translate(
             cache_hits, cache_misses,
             cache_hits as f64 / (cache_hits + cache_misses) as f64 * 100.0
         );
+    }
+
+    // 3. is_skip: HeaderFooter (when skip_header_footer) and math lines (when auto_skip_math).
+    //    Marked lines are added to resolved as "" so they're excluded from the AI batch
+    //    and skipped in apply_overlay (no white rect, no text placement).
+    for op in &mut overlay_pages {
+        for (idx, line) in op.lines.iter_mut().enumerate() {
+            if resolved.contains_key(&(op.page_num, idx)) { continue; }
+            let skip = (options.skip_header_footer
+                && line.region_role == LayoutRegionRole::HeaderFooter)
+                || (options.auto_skip_math && text_is_primarily_math(line.text.trim()));
+            if skip {
+                if options.auto_skip_math && text_is_primarily_math(line.text.trim()) {
+                    eprintln!(
+                        "[harumi-ai] auto_skip_math: p{} \"{}\"",
+                        op.page_num,
+                        line.text.chars().take(40).collect::<String>()
+                    );
+                }
+                line.is_skip = true;
+                resolved.insert((op.page_num, idx), String::new());
+            }
+        }
     }
 
     // ── Phase 2: Translate (only non-resolved blocks) ────────────────────────
@@ -780,7 +890,7 @@ fn compute_page_quality(
             let max_fs_cap = line.line_height * 0.85;
             let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
             let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
-            let avail_w = (line.col_right - line.x).max(50.0);
+            let avail_w = (line.region_usable_right - line.x).max(50.0);
             let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
             let text_w = measure_text_width(text, face, desired);
             if text_w > avail_w * 1.05 || actual_fs < desired * 0.9 {
@@ -885,10 +995,12 @@ fn apply_overlay(
         let translated_texts = page_translations.get(&page_num);
 
         // First pass: cover rectangles over original text.
+        // Lines with is_skip = true are left untouched (no coverage, no translation).
         for &rect in &overlay_page.invisible_rects {
             doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
         for line in &overlay_page.lines {
+            if line.is_skip { continue; }
             let x = line.x - 1.0;
             // Extend below the baseline by the font's actual descender depth (per-line).
             let below = line.font_size.max(global_body_fs) * descender_ratio;
@@ -908,7 +1020,9 @@ fn apply_overlay(
                 let max_fs = line.line_height * 0.85;
                 let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
                 let desired = if line.is_heading { (fs * 1.4).min(max_fs) } else { fs.min(max_fs) };
-                let avail_w = (line.col_right - line.x).max(50.0);
+                // Use region_usable_right (from extract_layout_regions) for a more
+                // precise column-right boundary than the heuristic col_right.
+                let avail_w = (line.region_usable_right - line.x).max(50.0);
                 let scaled = fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95);
                 // Apply overflow strategy: truncate if still too wide.
                 let display_text: std::borrow::Cow<str> = match &options.overflow {

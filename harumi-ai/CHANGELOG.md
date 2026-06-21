@@ -2,6 +2,42 @@
 
 ---
 
+## [0.4.0] — 2026-06-21
+
+### Added
+
+- **Region-aware overlay** — `extract_overlay_pages` now calls
+  `harumi::extract_layout_regions()` per page, annotating every `OverlayLine`
+  with the containing layout region's `usable_rect`.  The right edge of that
+  rect (`region_usable_right`) replaces the previous histogram-based `col_right`
+  heuristic as the available-width constraint in `apply_overlay`,
+  `run_correction_loop`, and `compute_page_quality`.  The match requires both
+  y-overlap and x-containment to prevent cross-column false matches.
+
+- **Heading detection via region kind** — lines inside a
+  `LayoutRegionKind::Heading` region are classified as headings even when the
+  gap-above / bold heuristics do not fire.
+
+- **`TranslateOptions::skip_header_footer`** (default `false`) — when `true`,
+  lines whose layout-region role is `HeaderFooter` are left completely untouched:
+  no white-rectangle coverage and no AI translation.
+
+- **`TranslateOptions::auto_skip_math`** (default `false`) — automatically
+  skips text lines that are primarily math/formula characters (Greek letters
+  U+0370–U+03FF, Mathematical Operators U+2200–U+22FF, Mathematical Alphanumeric
+  Symbols U+1D400–U+1D7FF, superscript/subscript digits).  Short tokens (≤ 20
+  chars) are flagged on any math character; longer text requires math chars to
+  be the majority while prose alphabetics are sparse, so sentences like "The
+  coefficient α represents…" are not dropped.  Skipped lines are logged to
+  stderr.
+
+- **`OverlayLine::is_skip`** (internal) — when `true`, the line is excluded
+  from the AI batch, its white-rectangle cover is not drawn, and no translated
+  text is placed.  Set by `skip_header_footer` and `auto_skip_math` processing
+  in `extract_and_translate`.
+
+---
+
 ## [0.3.0] — 2026-06-21
 
 ### Added
