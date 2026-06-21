@@ -654,6 +654,7 @@ pub async fn translate_pdf_overlay_full(pdf_bytes: &[u8], options: TranslateOpti
             overall: crate::quality::QualityResult::Pass, // re-evaluated in translate_pdf
             correction_rounds: correction_rounds.len(),
             mode_used: crate::TranslationMode::Overlay,
+            fallback_reason: None,
         },
         debug: debug_out,
     })

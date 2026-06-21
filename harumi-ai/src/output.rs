@@ -47,6 +47,12 @@ pub struct TranslateQuality {
     pub correction_rounds: usize,
     /// Translation mode that was actually used (relevant when `Auto` was requested).
     pub mode_used: TranslationMode,
+    /// Why the mode was changed from the initially selected one, if it was.
+    ///
+    /// `None` when the first-chosen mode was used throughout.  Populated during
+    /// [`TranslationMode::Auto`] cascade when the initial attempt was rejected by
+    /// the quality gate and a fallback mode was tried.
+    pub fallback_reason: Option<String>,
 }
 
 /// Layout quality summary for a single translated page.

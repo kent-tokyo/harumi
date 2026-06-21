@@ -39,7 +39,7 @@ impl OverflowStrategy {
 }
 
 /// Controls how the translated PDF is produced.
-#[derive(Default)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum TranslationMode {
     /// Keep the original PDF intact and overlay translated text on top,
     /// covering original text with white rectangles.
@@ -128,6 +128,40 @@ pub struct TranslateOptions {
     /// Controls which debug artifacts are included in [`TranslateOutput::debug`]
     /// (default: all `false`).
     pub debug: DebugOptions,
+}
+
+impl Clone for TranslateOptions {
+    fn clone(&self) -> Self {
+        Self {
+            target_lang: self.target_lang.clone(),
+            source_lang: self.source_lang.clone(),
+            translator: Arc::clone(&self.translator),
+            font: self.font.clone(),
+            layout: self.layout.clone(),
+            concurrency: self.concurrency,
+            pages_per_batch: self.pages_per_batch,
+            mode: self.mode.clone(),
+            cover_color: self.cover_color,
+            font_fallbacks: self.font_fallbacks.clone(),
+            overflow: match &self.overflow {
+                OverflowStrategy::Shrink { min_font_size } => {
+                    OverflowStrategy::Shrink { min_font_size: *min_font_size }
+                }
+                OverflowStrategy::Truncate { min_font_size } => {
+                    OverflowStrategy::Truncate { min_font_size: *min_font_size }
+                }
+            },
+            progress_fn: self.progress_fn.clone(),
+            profile: match self.profile {
+                QualityProfile::PreserveLayout => QualityProfile::PreserveLayout,
+                QualityProfile::Readable => QualityProfile::Readable,
+                QualityProfile::Strict => QualityProfile::Strict,
+                QualityProfile::BestEffort => QualityProfile::BestEffort,
+            },
+            max_correction_rounds: self.max_correction_rounds,
+            debug: self.debug.clone(),
+        }
+    }
 }
 
 impl TranslateOptions {
@@ -325,95 +359,159 @@ impl TranslateOptionsBuilder {
 ///    [`TranslateOptions::profile`].  Only [`QualityProfile::Strict`] causes an
 ///    error on failure; all other profiles return the PDF regardless.
 pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
-    // Resolve Auto mode before dispatch.
-    let resolved_mode = match options.mode {
-        TranslationMode::Auto => detect_best_mode(pdf_bytes),
-        _ => {
-            // Keep a clone of the mode for the quality report; mode is moved below.
-            match &options.mode {
-                TranslationMode::Overlay => TranslationMode::Overlay,
-                TranslationMode::NewDocument => TranslationMode::NewDocument,
-                TranslationMode::InPlace => TranslationMode::InPlace,
-                TranslationMode::Auto => unreachable!(),
-            }
+    // Auto mode with quality-aware profiles uses a multi-stage cascade.
+    if matches!(options.mode, TranslationMode::Auto)
+        && !matches!(options.profile, QualityProfile::BestEffort)
+    {
+        return translate_pdf_auto_cascade(pdf_bytes, options).await;
+    }
+
+    // All other cases: resolve to one concrete mode and dispatch once.
+    let mut opt = options;
+    let mode_for_report = if matches!(opt.mode, TranslationMode::Auto) {
+        let m = detect_best_mode(pdf_bytes);
+        opt.mode = m;
+        match opt.mode {
+            TranslationMode::Overlay => TranslationMode::Overlay,
+            TranslationMode::InPlace => TranslationMode::InPlace,
+            _ => TranslationMode::Overlay,
+        }
+    } else {
+        match opt.mode {
+            TranslationMode::Overlay => TranslationMode::Overlay,
+            TranslationMode::NewDocument => TranslationMode::NewDocument,
+            TranslationMode::InPlace => TranslationMode::InPlace,
+            TranslationMode::Auto => TranslationMode::Overlay,
         }
     };
 
-    // Build options with the resolved mode.
-    let profile = std::mem::replace(
-        // We need profile for the gate; borrow it before options is moved.
-        // We'll re-read it below from a clone.
-        &mut { QualityProfile::BestEffort },  // placeholder
-        QualityProfile::BestEffort,
-    );
-    let _ = profile; // will use options.profile below
+    let profile = clone_profile(&opt.profile);
+    let debug_opts = opt.debug.clone();
 
-    let mode_for_report = match &resolved_mode {
-        TranslationMode::Overlay => TranslationMode::Overlay,
-        TranslationMode::NewDocument => TranslationMode::NewDocument,
-        TranslationMode::InPlace => TranslationMode::InPlace,
-        TranslationMode::Auto => TranslationMode::Overlay,
+    let raw = match opt.mode {
+        TranslationMode::NewDocument => translate_pdf_new_document_full(pdf_bytes, opt).await?,
+        TranslationMode::Overlay | TranslationMode::Auto => {
+            crate::overlay::translate_pdf_overlay_full(pdf_bytes, opt).await?
+        }
+        TranslationMode::InPlace => crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?,
     };
 
-    // Snapshot fields we need after options is consumed.
-    let profile = match &options.profile {
+    finalize_output(raw, profile, debug_opts, mode_for_report, None)
+}
+
+/// Quality-aware Auto cascade: InPlace → Overlay → NewDocument (Readable only).
+async fn translate_pdf_auto_cascade(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+    let profile = clone_profile(&options.profile);
+    let gate = QualityGate::from_profile(&profile);
+    let debug_opts = options.debug.clone();
+
+    // ── Stage 1: InPlace ─────────────────────────────────────────────────────
+    let (inplace_bytes, inplace_stats) =
+        crate::inplace::translate_pdf_inplace_inner(pdf_bytes, &options).await?;
+
+    // Decide whether to cascade: high fallback rate OR quality gate would fail
+    // (for Strict/PreserveLayout/Readable the gate is not permissive, so always
+    // try a better mode).
+    let inplace_quality_ok = inplace_stats.fallback_rate() <= 0.30 && gate.is_permissive();
+
+    if inplace_quality_ok {
+        // InPlace looks good — no cascade needed.
+        let raw = TranslateOutput {
+            pdf_bytes: inplace_bytes,
+            quality: TranslateQuality {
+                pages: vec![],
+                overall: QualityResult::Pass,
+                correction_rounds: 0,
+                mode_used: TranslationMode::InPlace,
+                fallback_reason: None,
+            },
+            debug: None,
+        };
+        return finalize_output(raw, profile, debug_opts, TranslationMode::InPlace, None);
+    }
+
+    let reason1 = format!(
+        "InPlace overlay-fallback rate {:.0}% exceeded threshold; retried as Overlay",
+        inplace_stats.fallback_rate() * 100.0
+    );
+    eprintln!("[harumi-ai] Auto cascade: {reason1}");
+
+    // ── Stage 2: Overlay ─────────────────────────────────────────────────────
+    // For Readable profile we may still cascade to NewDocument, so keep a clone.
+    let nd_opts = if matches!(profile, QualityProfile::Readable) {
+        let mut o = options.clone();
+        o.mode = TranslationMode::NewDocument;
+        Some(o)
+    } else {
+        None
+    };
+
+    let mut overlay_opts = options;
+    overlay_opts.mode = TranslationMode::Overlay;
+    let overlay_raw = crate::overlay::translate_pdf_overlay_full(pdf_bytes, overlay_opts).await?;
+
+    // For Strict: gate must pass after Overlay or we error.
+    if matches!(profile, QualityProfile::Strict) {
+        return finalize_output(overlay_raw, profile, debug_opts, TranslationMode::Overlay, Some(reason1));
+    }
+
+    // For Readable: check if a NewDocument fallback is warranted.
+    if matches!(profile, QualityProfile::Readable) {
+        let overlay_passes = overlay_raw.quality.pages.iter()
+            .all(|r| gate.evaluate(&r.summary).is_pass());
+        if !overlay_passes
+            && let Some(nd_opts) = nd_opts {
+            let reason2 = format!(
+                "{reason1}; Overlay quality gate still failed; retried as NewDocument"
+            );
+            eprintln!("[harumi-ai] Auto cascade: cascading to NewDocument");
+            let nd_raw = translate_pdf_new_document_full(pdf_bytes, nd_opts).await?;
+            return finalize_output(nd_raw, profile, debug_opts, TranslationMode::NewDocument, Some(reason2));
+        }
+    }
+
+    finalize_output(overlay_raw, profile, debug_opts, TranslationMode::Overlay, Some(reason1))
+}
+
+/// Snapshot a `QualityProfile` value (QualityProfile doesn't derive Clone/Copy).
+fn clone_profile(p: &QualityProfile) -> QualityProfile {
+    match p {
         QualityProfile::PreserveLayout => QualityProfile::PreserveLayout,
         QualityProfile::Readable => QualityProfile::Readable,
         QualityProfile::Strict => QualityProfile::Strict,
         QualityProfile::BestEffort => QualityProfile::BestEffort,
-    };
-    let debug_opts = options.debug.clone();
+    }
+}
 
-    // Dispatch to the appropriate mode implementation.
-    let mut opt = options;
-    // Replace the mode with the resolved one so inner functions see the concrete choice.
-    opt.mode = resolved_mode;
-
-    let output = match &opt.mode {
-        TranslationMode::NewDocument => {
-            translate_pdf_new_document_full(pdf_bytes, opt).await?
-        }
-        TranslationMode::Overlay | TranslationMode::Auto => {
-            crate::overlay::translate_pdf_overlay_full(pdf_bytes, opt).await?
-        }
-        TranslationMode::InPlace => {
-            crate::inplace::translate_pdf_inplace_full(pdf_bytes, opt).await?
-        }
-    };
-
-    // Evaluate quality gate.
+/// Evaluate gate, build debug artifacts, and assemble the final [`TranslateOutput`].
+fn finalize_output(
+    raw: TranslateOutput,
+    profile: QualityProfile,
+    debug_opts: DebugOptions,
+    mode_used: TranslationMode,
+    fallback_reason: Option<String>,
+) -> Result<TranslateOutput> {
     let gate = QualityGate::from_profile(&profile);
-    if !gate.is_permissive() {
-        // Evaluate against the worst page's summary.
+
+    // Strict profile: fail on any gate violation.
+    if matches!(profile, QualityProfile::Strict) && !gate.is_permissive() {
         let mut violations = Vec::new();
-        for report in &output.quality.pages {
+        for report in &raw.quality.pages {
             if let QualityResult::Fail(mut v) = gate.evaluate(&report.summary) {
                 violations.append(&mut v);
             }
         }
-        if !violations.is_empty() && matches!(profile, QualityProfile::Strict) {
+        if !violations.is_empty() {
             return Err(Error::QualityGateFailed(violations));
         }
     }
 
-    // Rebuild overall quality result.
+    // Aggregate overall quality result.
     let overall = {
-        let gate = QualityGate::from_profile(&profile);
-        let all_violations: Vec<_> = output
-            .quality
-            .pages
-            .iter()
-            .flat_map(|r| {
-                gate.evaluate(&r.summary)
-                    .violations()
-                    .to_vec()
-            })
+        let all_violations: Vec<_> = raw.quality.pages.iter()
+            .flat_map(|r| gate.evaluate(&r.summary).violations().to_vec())
             .collect();
-        if all_violations.is_empty() {
-            QualityResult::Pass
-        } else {
-            QualityResult::Fail(all_violations)
-        }
+        if all_violations.is_empty() { QualityResult::Pass } else { QualityResult::Fail(all_violations) }
     };
 
     let needs_debug = debug_opts.layout_report
@@ -423,51 +521,40 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
 
     let debug = if needs_debug {
         let layout_report_json = if debug_opts.layout_report {
-            // Serialize page quality reports as JSON.
-            let entries: Vec<serde_json::Value> = output
-                .quality
-                .pages
-                .iter()
-                .map(|r| {
-                    serde_json::json!({
-                        "page_num": r.page_num,
-                        "overflow_count": r.summary.overflow_count,
-                        "collision_count": r.summary.collision_count,
-                        "shrunk_count": r.summary.shrunk_count,
-                        "worst_overlap_area": r.summary.worst_overlap_area,
-                    })
-                })
+            let entries: Vec<serde_json::Value> = raw.quality.pages.iter()
+                .map(|r| serde_json::json!({
+                    "page_num": r.page_num,
+                    "overflow_count": r.summary.overflow_count,
+                    "collision_count": r.summary.collision_count,
+                    "shrunk_count": r.summary.shrunk_count,
+                    "worst_overlap_area": r.summary.worst_overlap_area,
+                }))
                 .collect();
             Some(serde_json::to_string_pretty(&entries).unwrap_or_default())
-        } else {
-            None
-        };
+        } else { None };
 
         let correction_history = if debug_opts.correction_history {
-            output.debug.as_ref().map_or_else(Vec::new, |d| d.correction_history.clone())
-        } else {
-            Vec::new()
-        };
+            raw.debug.as_ref().map_or_else(Vec::new, |d| d.correction_history.clone())
+        } else { Vec::new() };
 
         Some(DebugArtifacts {
             layout_report_json,
-            collision_report_json: None, // TODO: populate in overlay pass
-            debug_overlay_pdf: output.debug.as_ref().and_then(|d| {
+            collision_report_json: None,
+            debug_overlay_pdf: raw.debug.as_ref().and_then(|d| {
                 if debug_opts.overlay_pdf { d.debug_overlay_pdf.clone() } else { None }
             }),
             correction_history,
         })
-    } else {
-        None
-    };
+    } else { None };
 
     Ok(TranslateOutput {
-        pdf_bytes: output.pdf_bytes,
+        pdf_bytes: raw.pdf_bytes,
         quality: TranslateQuality {
-            pages: output.quality.pages,
+            pages: raw.quality.pages,
             overall,
-            correction_rounds: output.quality.correction_rounds,
-            mode_used: mode_for_report,
+            correction_rounds: raw.quality.correction_rounds,
+            mode_used,
+            fallback_reason,
         },
         debug,
     })
@@ -531,6 +618,7 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
                 overall: crate::quality::QualityResult::Pass,
                 correction_rounds: 0,
                 mode_used: TranslationMode::NewDocument,
+                fallback_reason: None,
             },
             debug: None,
         });
@@ -614,11 +702,11 @@ async fn translate_pdf_new_document_full(pdf_bytes: &[u8], options: TranslateOpt
     Ok(TranslateOutput {
         pdf_bytes,
         quality: TranslateQuality {
-            // NewDocument doesn't do region fitting, so no per-page summaries.
             pages: vec![],
             overall: crate::quality::QualityResult::Pass,
             correction_rounds: 0,
             mode_used: TranslationMode::NewDocument,
+            fallback_reason: None,
         },
         debug: None,
     })

@@ -308,3 +308,58 @@ async fn max_correction_rounds_zero_disables_loop() {
     let output = translate_pdf(&pdf, opts).await.unwrap();
     assert_eq!(output.quality.correction_rounds, 0);
 }
+
+// ---------------------------------------------------------------------------
+// v0.2.1 — Auto cascade + fallback_reason
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn auto_best_effort_no_cascade_no_fallback_reason() {
+    // BestEffort profile: Auto picks one mode, no cascade, fallback_reason stays None.
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::Auto;
+    opts.profile = QualityProfile::BestEffort;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert!(
+        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
+        "mode_used must be a concrete mode, not Auto"
+    );
+    assert!(
+        output.quality.fallback_reason.is_none(),
+        "BestEffort Auto should not set fallback_reason"
+    );
+}
+
+#[tokio::test]
+async fn auto_preserve_layout_cascade_sets_fallback_reason() {
+    // PreserveLayout: Auto starts with InPlace; a simple PDF with EchoTranslator
+    // may or may not cascade, but fallback_reason is either None or a non-empty string.
+    let pdf = make_test_pdf();
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.mode = TranslationMode::Auto;
+    opts.profile = QualityProfile::PreserveLayout;
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // mode_used must always be concrete
+    assert!(
+        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
+        "mode_used {:?} must be concrete", output.quality.mode_used
+    );
+    // If there was a cascade, fallback_reason must be Some (non-empty)
+    if output.quality.mode_used != TranslationMode::InPlace {
+        assert!(
+            output.quality.fallback_reason.is_some(),
+            "when mode changed from InPlace, fallback_reason must be set"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fallback_reason_field_accessible() {
+    // Ensure the field exists and is accessible (compile + runtime smoke test).
+    let pdf = make_test_pdf();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    // Default mode (Overlay) with no cascade → None
+    let _reason: Option<&str> = output.quality.fallback_reason.as_deref();
+}

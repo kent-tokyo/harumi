@@ -2,6 +2,34 @@
 
 ---
 
+## [0.2.1] — 2026-06-21
+
+### Added
+
+- **`TranslateQuality::fallback_reason: Option<String>`** — records why
+  `TranslationMode::Auto` switched from the initially selected mode during the
+  cascade.  `None` when the first-chosen mode was used throughout.
+
+- **Auto mode quality cascade** — `TranslationMode::Auto` with a non-`BestEffort`
+  profile now attempts a multi-stage cascade driven by actual layout quality rather
+  than a static heuristic:
+  - *Stage 1* — InPlace is attempted first. If the overlay-fallback rate exceeds 30 %
+    (too many lines that `replace_text` could not match), cascade to Overlay.
+  - *Stage 2 (PreserveLayout / Strict)* — Overlay result is returned (with
+    `fallback_reason` set).  `Strict` returns `Error::QualityGateFailed` if the gate
+    still fails.
+  - *Stage 2 → Stage 3 (Readable only)* — if the Overlay quality gate also fails,
+    cascade to NewDocument as a last resort.
+
+- **`TranslationMode` derives `Debug`, `Clone`, `PartialEq`, `Eq`** — enables
+  comparisons and debug output in application code.
+
+- **`InPlaceStats`** (internal) — exposes `replaced`, `fallback`, `total_lines` and
+  `fallback_rate()` from an InPlace translation pass so the Auto cascade can
+  evaluate quality before deciding whether to cascade.
+
+---
+
 ## [0.2.0] — 2026-06-21
 
 ### Breaking changes
