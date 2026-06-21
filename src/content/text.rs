@@ -27,6 +27,7 @@ pub fn text_stream(
     gs_name: Option<&str>,
     bold: bool,
     italic: bool,
+    char_spacing: f32,
 ) -> Vec<u8> {
     let hex = chars_to_hex(chars, char_to_gid);
     if hex.is_empty() {
@@ -52,6 +53,9 @@ pub fn text_stream(
         String::from_utf8_lossy(font_name),
         font_size
     ));
+    if char_spacing != 0.0 {
+        s.push_str(&format!("{:.4} Tc\n", char_spacing));
+    }
     if render_mode == 0 {
         let fill_color = match color {
             Color::Rgb([r, g, b]) => format!("{r:.4} {g:.4} {b:.4} rg"),
@@ -100,6 +104,10 @@ pub fn text_stream(
         ));
     }
     s.push_str(&format!("<{}> Tj\n", hex));
+    // Reset character spacing so subsequent text operators start from the default.
+    if char_spacing != 0.0 {
+        s.push_str("0 Tc\n");
+    }
     s.push_str("ET\n");
     s.push_str("Q\n");
 
@@ -129,6 +137,7 @@ pub fn invisible_text_stream(
         None,
         false,
         false,
+        0.0,
     )
 }
 
@@ -184,6 +193,7 @@ mod tests {
             None,
             false,
             false,
+            0.0,
         );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("0 Tr"), "visible mode should use Tr 0");
@@ -210,6 +220,7 @@ mod tests {
             None,
             false,
             false,
+            0.0,
         );
         let s = String::from_utf8(bytes).unwrap();
         assert!(
@@ -236,6 +247,7 @@ mod tests {
             None,
             false,
             false,
+            0.0,
         );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("Tm"), "non-zero rotation should use Tm");
@@ -261,6 +273,7 @@ mod tests {
             Some("GS0"),
             false,
             false,
+            0.0,
         );
         let s = String::from_utf8(bytes).unwrap();
         assert!(

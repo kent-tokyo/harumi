@@ -159,6 +159,7 @@ impl<'doc> PageHandle<'doc> {
             rotation_degrees: 0.0,
             bold: false,
             italic: false,
+            char_spacing: 0.0,
         });
         Ok(())
     }
@@ -206,6 +207,7 @@ impl<'doc> PageHandle<'doc> {
             rotation_degrees: 0.0,
             bold: false,
             italic: false,
+            char_spacing: 0.0,
         });
         Ok(())
     }
@@ -243,6 +245,49 @@ impl<'doc> PageHandle<'doc> {
             rotation_degrees: 0.0,
             bold,
             italic,
+            char_spacing: 0.0,
+        });
+        Ok(())
+    }
+
+    /// Like [`add_text_styled`] but also sets the PDF `Tc` (character spacing) operator.
+    ///
+    /// `char_spacing` is in PDF text-space points. Negative values compress characters
+    /// (useful when translated text is slightly wider than the original bounding box);
+    /// positive values expand them. Practical range: approximately `−1.0` to `+2.0`.
+    ///
+    /// Formula for fitting text into a known width:
+    /// `Tc = (target_width_pt − natural_width_pt) / char_count`
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_text_styled_with_char_spacing(
+        &mut self,
+        text: &str,
+        font: FontHandle,
+        position: [f32; 2],
+        font_size: f32,
+        color: impl Into<Color>,
+        bold: bool,
+        italic: bool,
+        char_spacing: f32,
+    ) -> Result<()> {
+        let color = color.into();
+        check_finite(
+            &[position[0], position[1], font_size, char_spacing],
+            "add_text_styled_with_char_spacing",
+        )?;
+        self.push_text(PendingText {
+            font,
+            text: text.to_owned(),
+            x: position[0],
+            y: position[1],
+            font_size,
+            render_mode: 0,
+            color,
+            opacity: 1.0,
+            rotation_degrees: 0.0,
+            bold,
+            italic,
+            char_spacing,
         });
         Ok(())
     }
@@ -266,6 +311,7 @@ impl<'doc> PageHandle<'doc> {
                 rotation_degrees: 0.0,
                 bold: false,
                 italic: false,
+                char_spacing: 0.0,
             });
         }
         Ok(())
@@ -777,6 +823,7 @@ impl<'doc> PageHandle<'doc> {
                         rotation_degrees: 0.0,
                         bold: false,
                         italic: false,
+                        char_spacing: 0.0,
                     }));
                 }
             }
@@ -954,6 +1001,7 @@ impl<'doc> PageHandle<'doc> {
                     rotation_degrees: 0.0,
                     bold: false,
                     italic: false,
+                    char_spacing: 0.0,
                 }));
             }
         }
@@ -1072,6 +1120,7 @@ impl<'doc> PageHandle<'doc> {
                     font, text: line, x: p.x, y: ly,
                     font_size: p.fs, render_mode: 0, color: p.color,
                     opacity: 1.0, rotation_degrees: 0.0, bold: false, italic: false,
+                    char_spacing: 0.0,
                 }));
             }
         }
@@ -1664,6 +1713,7 @@ impl<'doc> PageHandle<'doc> {
                 rotation_degrees: 0.0,
                 bold: false,
                 italic: false,
+                char_spacing: 0.0,
             });
         }
         Ok(())
@@ -2208,6 +2258,7 @@ impl<'doc> PageHandle<'doc> {
             rotation_degrees: 0.0,
             bold: false,
             italic: false,
+            char_spacing: 0.0,
         });
         Ok(())
     }
@@ -2253,6 +2304,7 @@ impl<'doc> PageHandle<'doc> {
             rotation_degrees,
             bold: false,
             italic: false,
+            char_spacing: 0.0,
         });
         Ok(())
     }
@@ -2329,6 +2381,7 @@ impl<'doc> PageHandle<'doc> {
                 rotation_degrees: 0.0,
                 bold: false,
                 italic: false,
+                char_spacing: 0.0,
             });
         }
         Ok(())

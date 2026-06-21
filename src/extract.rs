@@ -1188,6 +1188,123 @@ pub fn extract_table_cells(
 }
 
 // ---------------------------------------------------------------------------
+// Image bbox extraction
+// ---------------------------------------------------------------------------
+
+/// Collect XObject resource names that are Image XObjects (Subtype == /Image).
+fn collect_image_xobject_names(doc: &lopdf::Document, page_id: ObjectId) -> Vec<Vec<u8>> {
+    use lopdf::Object;
+    (|| -> Option<Vec<Vec<u8>>> {
+        let page_obj = doc.get_object(page_id).ok()?;
+        let page_dict = page_obj.as_dict().ok()?;
+        let resources_obj = page_dict.get(b"Resources").ok()?;
+        let resources_dict = doc.dereference(resources_obj).ok()?.1.as_dict().ok()?;
+        let xobject_obj = resources_dict.get(b"XObject").ok()?;
+        let xobject_dict = doc.dereference(xobject_obj).ok()?.1.as_dict().ok()?;
+
+        let names: Vec<Vec<u8>> = xobject_dict
+            .iter()
+            .filter_map(|(name, value)| {
+                let xobj_id = match value {
+                    Object::Reference(id) => *id,
+                    _ => return None,
+                };
+                let xobj = doc.get_object(xobj_id).ok()?;
+                let xobj_dict = xobj.as_stream().ok().map(|s| &s.dict)
+                    .or_else(|| xobj.as_dict().ok())?;
+                let subtype = xobj_dict.get(b"Subtype").ok()?;
+                if subtype == &Object::Name(b"Image".to_vec()) {
+                    Some(name.to_vec())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Some(names)
+    })()
+    .unwrap_or_default()
+}
+
+/// Returns `[x, y, width, height]` in PDF points for each Image XObject on the page.
+///
+/// Uses the CTM at each `Do` invocation to compute placement.  Only axis-aligned
+/// images (shear ≈ 0) with non-degenerate dimensions are returned.
+pub(crate) fn extract_image_bboxes_from_page(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+) -> Vec<[f32; 4]> {
+    let image_names = collect_image_xobject_names(doc, page_id);
+    if image_names.is_empty() {
+        return vec![];
+    }
+
+    let streams = page_content_streams(doc, page_id);
+    let identity: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut ctm = identity;
+    let mut ctm_stack: Vec<[f32; 6]> = Vec::new();
+    let mut bboxes: Vec<[f32; 4]> = Vec::new();
+
+    for stream_bytes in &streams {
+        let tokens = tokenize(stream_bytes);
+        let mut i = 0;
+        while i < tokens.len() {
+            if let Token::Keyword(kw) = &tokens[i].0 {
+                match kw.as_slice() {
+                    b"q" => {
+                        ctm_stack.push(ctm);
+                    }
+                    b"Q" => {
+                        if let Some(saved) = ctm_stack.pop() {
+                            ctm = saved;
+                        }
+                    }
+                    b"cm" if i >= 6 => {
+                        // Expect 6 Number tokens immediately before `cm`.
+                        let ns: Vec<f32> = tokens[i - 6..i]
+                            .iter()
+                            .filter_map(|(t, _)| {
+                                if let Token::Number(n) = t { Some(*n) } else { None }
+                            })
+                            .collect();
+                        if ns.len() == 6 {
+                            ctm = multiply_ctm(
+                                ctm,
+                                [ns[0], ns[1], ns[2], ns[3], ns[4], ns[5]],
+                            );
+                        }
+                    }
+                    b"Do" => {
+                        // Operand is the Name token immediately before `Do`.
+                        if i > 0
+                            && let Token::Name(name) = &tokens[i - 1].0
+                            && image_names.contains(name) {
+                                let [a, _b, _c, d, e, f] = ctm;
+                                let shear_b = ctm[1];
+                                let shear_c = ctm[2];
+                                // Only emit bbox for axis-aligned placements.
+                                if shear_b.abs() < 0.01 && shear_c.abs() < 0.01
+                                    && a.abs() > 1.0 && d.abs() > 1.0
+                                {
+                                    bboxes.push([
+                                        e + a.min(0.0),
+                                        f + d.min(0.0),
+                                        a.abs(),
+                                        d.abs(),
+                                        ]);
+                                }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+    }
+
+    bboxes
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 

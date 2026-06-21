@@ -2151,6 +2151,27 @@ impl Document {
         crate::extract_image::extract_largest_image_on_page(&self.inner, page_id)
     }
 
+    /// Returns bounding boxes `[x, y, width, height]` in PDF points for every
+    /// axis-aligned Image XObject on `page_number` (1-indexed).
+    ///
+    /// The coordinates use the PDF bottom-left origin.  Use the bounding boxes to
+    /// detect image regions and avoid covering them with white rectangles during
+    /// overlay translation.
+    ///
+    /// Returns an empty `Vec` for pages with no images, or when image placement
+    /// uses a rotated/sheared matrix (uncommon in standard documents).
+    ///
+    /// # Errors
+    /// Returns [`Error::PageNotFound`] if `page_number` is zero or exceeds page count.
+    pub fn page_image_bboxes(&self, page_number: u32) -> Result<Vec<[f32; 4]>> {
+        let page_ids = self.inner.get_pages();
+        let page_id = page_ids
+            .get(&page_number)
+            .copied()
+            .ok_or(Error::PageNotFound(page_number))?;
+        Ok(crate::extract::extract_image_bboxes_from_page(&self.inner, page_id))
+    }
+
     /// Extracts all raster images embedded on the given page (1-indexed).
     ///
     /// Designed for **scanned PDFs** where a page may contain multiple Image XObjects.
@@ -2806,6 +2827,7 @@ impl Document {
                             gs_opt.as_deref(),
                             t.bold,
                             t.italic,
+                            t.char_spacing,
                         );
                         page_stream.extend_from_slice(&fragment);
                         if !registered_fonts.contains(&t.font.0) {

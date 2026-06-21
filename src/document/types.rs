@@ -82,6 +82,8 @@ pub(super) struct PendingText {
     pub(super) rotation_degrees: f32,
     pub(super) bold: bool,
     pub(super) italic: bool,
+    /// PDF `Tc` operator value (character spacing in text-space points). `0.0` = default.
+    pub(super) char_spacing: f32,
 }
 
 /// A pending operation on a page (text or drawing primitive).

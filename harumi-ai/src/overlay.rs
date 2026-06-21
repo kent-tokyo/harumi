@@ -83,6 +83,10 @@ pub(crate) struct OverlayPage {
     pub(crate) body_font_size: f32,
     /// Bboxes of invisible (render-mode-3) text fragments to also white-out.
     pub(crate) invisible_rects: Vec<[f32; 4]>,
+    /// Bboxes `[x, y, w, h]` of Image XObjects on this page (PDF coords, bottom-left origin).
+    /// Lines that overlap these rects are not covered by white rectangles so that
+    /// images and logos remain visible through the overlay.
+    pub(crate) image_bboxes: Vec<[f32; 4]>,
 }
 
 // ── Extraction helpers ────────────────────────────────────────────────────────
@@ -158,13 +162,16 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             .map(|r| [r.x - 1.0, r.y - 1.0, r.width.max(2.0) + 2.0, r.height.max(2.0) + 2.0])
             .collect();
 
+        // Collect image XObject bboxes so white cover rects can skip them.
+        let image_bboxes: Vec<[f32; 4]> = doc.page_image_bboxes(page_num).unwrap_or_default();
+
         let mut visible: Vec<TextFragment> = runs
             .into_iter()
             .filter(|r| !r.invisible && !r.text.trim().is_empty())
             .collect();
 
         if visible.is_empty() {
-            pages.push(OverlayPage { page_num, lines: vec![], body_font_size: 12.0, invisible_rects });
+            pages.push(OverlayPage { page_num, lines: vec![], body_font_size: 12.0, invisible_rects, image_bboxes });
             continue;
         }
 
@@ -271,7 +278,7 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
             })
             .collect();
 
-        pages.push(OverlayPage { page_num, lines, body_font_size, invisible_rects });
+        pages.push(OverlayPage { page_num, lines, body_font_size, invisible_rects, image_bboxes });
     }
     Ok(pages)
 }
@@ -512,6 +519,18 @@ async fn run_correction_loop(
     }
 
     Ok(rounds)
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+
+/// True when two axis-aligned bounding boxes overlap (non-zero intersection area).
+/// Each rect is `[x, y, width, height]` in PDF points (bottom-left origin).
+fn rects_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+    let a_right = a[0] + a[2];
+    let a_top = a[1] + a[3];
+    let b_right = b[0] + b[2];
+    let b_top = b[1] + b[3];
+    a[0] < b_right && a_right > b[0] && a[1] < b_top && a_top > b[1]
 }
 
 // ── Math-detection helpers ────────────────────────────────────────────────────
@@ -1030,19 +1049,23 @@ fn apply_overlay(
 
         // First pass: cover rectangles over original text.
         // Lines with is_skip = true are left untouched (no coverage, no translation).
+        // Lines that overlap an Image XObject are also left uncovered so the image
+        // (logo, watermark, etc.) remains visible beneath the translated text.
         for &rect in &overlay_page.invisible_rects {
             doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
         for line in &overlay_page.lines {
             if line.is_skip { continue; }
             let x = line.x - 1.0;
-            // Extend below the baseline by the font's actual descender depth (per-line).
             let below = line.font_size.max(global_body_fs) * descender_ratio;
             let y = line.y - below;
-            // Width: cover from left edge to actual text right edge + 2pt padding.
             let w = (line.right - x + 2.0).max(10.0);
-            // Height: use per-line spacing, not a global fixed multiplier.
             let h = line.line_height + below;
+            // Skip white rect if the line overlaps an image region.
+            let line_rect = [x, y, w, h];
+            if overlay_page.image_bboxes.iter().any(|img| rects_overlap(line_rect, *img)) {
+                continue;
+            }
             doc.page(page_num)?.add_rect([x, y, w, h], cover_color, 1.0)?;
         }
 
@@ -1057,13 +1080,31 @@ fn apply_overlay(
                 // Use region_usable_right (from extract_layout_regions) for a more
                 // precise column-right boundary than the heuristic col_right.
                 let avail_w = (line.region_usable_right - line.x).max(50.0);
-                let scaled = fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95);
+
+                // Tc character-spacing approach: before scaling the font down, try
+                // absorbing minor overflow (≤25%) by compressing character spacing.
+                // Tc = (target_w − natural_w) / char_count (in text-space points).
+                // Practical limit: Tc ≥ −1.0 pt (tighter looks distorted).
+                let base_w = measure_text_width(text, face, desired);
+                let (display_fs, char_spacing) =
+                    if base_w > avail_w && base_w <= avail_w * 1.25 {
+                        let char_count = text.chars().count().max(1) as f32;
+                        let tc = (avail_w - base_w) / char_count;
+                        if tc >= -1.0 {
+                            (desired, tc) // keep original font size
+                        } else {
+                            (fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95), 0.0)
+                        }
+                    } else {
+                        (fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95), 0.0)
+                    };
+
                 // Apply overflow strategy: truncate if still too wide.
                 let display_text: std::borrow::Cow<str> = match &options.overflow {
                     OverflowStrategy::Truncate { .. }
-                        if measure_text_width(text, face, scaled) > avail_w * 1.05 =>
+                        if measure_text_width(text, face, display_fs) > avail_w * 1.05 =>
                     {
-                        truncate_to_fit(text, face, scaled, avail_w).into()
+                        truncate_to_fit(text, face, display_fs, avail_w).into()
                     }
                     _ => text.into(),
                 };
@@ -1071,6 +1112,7 @@ fn apply_overlay(
                 let bold = line.is_heading || line.is_bold;
 
                 // Split text into font-specific runs and render each sub-run.
+                // Character spacing (Tc) is distributed evenly across all runs.
                 let runs = split_by_font(&display_text, all_faces);
                 let mut run_x = line.x;
                 for (run_text, fidx) in runs {
@@ -1081,10 +1123,13 @@ fn apply_overlay(
                     }
                     let fh = font_handles[fidx].unwrap();
                     let run_face = all_faces[fidx];
-                    doc.page(page_num)?.add_text_styled(
-                        &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
+                    doc.page(page_num)?.add_text_styled_with_char_spacing(
+                        &run_text, fh, [run_x, line.y], display_fs,
+                        [0.0f32, 0.0, 0.0], bold, false, char_spacing,
                     )?;
-                    run_x += measure_text_width(&run_text, run_face, scaled);
+                    let char_count_run = run_text.chars().count() as f32;
+                    run_x += measure_text_width(&run_text, run_face, display_fs)
+                        + char_spacing * char_count_run;
                 }
             }
         }
