@@ -139,6 +139,8 @@ doc.save("searchable.pdf")?;
 | テキスト配置の結果（縮小・オーバーフロー・切り詰め）を知りたい | `FitResult::status: PlacementStatus` — `Ok`（調整なしで収まった）、`Shrunk`（フォント縮小・下限以上）、`ShrunkToMin`（`min_font_size` 下限到達・溢れる場合あり）、`Overflow`（`OverflowPolicy::Report` 時のオーバーフロー）、`Truncated`（`OverflowPolicy::Truncate` または `Report + max_lines` での行切り捨て）。フラグを個別確認せず一つのシグナルとして使用可能（v1.13.0+） |
 | 翻訳レイアウトのページ単位品質ゲートが欲しい | `PageFitSummary::from_plans(plans) -> PageFitSummary` — `RegionFitPlan` バッチの集計。フィールド: `overflow_count`・`collision_count`・`shrunk_count`・`worst_overlap_area`・`worst_overlap_rect`。最終 PDF 書き出し前の品質判定に使用（v1.13.0+） |
 | PDF 上でレイアウト衝突や配置をビジュアルデバッグしたい | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 色付きストローク矩形を描画（青=ソース bbox、緑=配置テキスト、赤=衝突重複）。`DebugOverlayOptions` で色と線幅を設定。NaN/無効座標は自動スキップ（`draw` feature、v1.13.0+） |
+| テキスト配置時に微小な幅差を文字間隔で吸収したい | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 演算子; 負の `char_spacing` でフォントサイズを維持したまま文字幅を縮小 (v1.15.0+) |
+| ページ上の画像ボックスを取得したい（オーバーレイ回避用） | `doc.page_image_bboxes(page)` — 軸平行 Image XObject の `[x, y, width, height]` を返す; `image` feature 不要 (v1.15.0+) |
 
 ---
 

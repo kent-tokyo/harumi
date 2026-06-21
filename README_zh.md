@@ -136,6 +136,8 @@ doc.save("searchable.pdf")?;
 | 需要了解文字排版结果（缩小/溢出/截断） | `FitResult::status: PlacementStatus` — `Ok`（无需调整）、`Shrunk`（字体缩小但在下限以上）、`ShrunkToMin`（已达 `min_font_size` 下限，可能仍溢出）、`Overflow`（`OverflowPolicy::Report` 下溢出）、`Truncated`（`OverflowPolicy::Truncate` 或 `Report + max_lines` 下行被截断）；无需逐一检查各标志位即可做出处置决策（v1.13.0+） |
 | 需要翻译布局的页面级质量门控 | `PageFitSummary::from_plans(plans) -> PageFitSummary` — 对 `RegionFitPlan` 批次进行汇总；字段：`overflow_count`、`collision_count`、`shrunk_count`、`worst_overlap_area`、`worst_overlap_rect`；在写出最终 PDF 前用于质量判断（v1.13.0+） |
 | 需要在 PDF 上可视化调试布局碰撞和文字放置 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 绘制彩色描边矩形（蓝色=源 bbox，绿色=排版文字，红色=碰撞重叠区域）；通过 `DebugOverlayOptions` 配置颜色和线宽；NaN/无效坐标自动跳过（`draw` feature，v1.13.0+） |
+| 放置文字时需要通过字符间距吸收细微宽度差异 | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 算子; 负值 `char_spacing` 在不改变字体大小的情况下压缩文字宽度 (v1.15.0+) |
+| 需要获取页面上图片的边界框（用于叠加回避） | `doc.page_image_bboxes(page)` — 返回轴对齐 Image XObject 的 `[x, y, width, height]`; 不需要 `image` feature (v1.15.0+) |
 
 ---
 

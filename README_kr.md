@@ -138,6 +138,8 @@ doc.save("searchable.pdf")?;
 | 텍스트 배치 결과（축소/오버플로우/잘림）를 알고 싶은 경우 | `FitResult::status: PlacementStatus` — `Ok`（조정 없이 맞음）、`Shrunk`（폰트 축소, 하한선 이상）、`ShrunkToMin`（`min_font_size` 하한선 도달, 여전히 오버플로우 가능）、`Overflow`（`OverflowPolicy::Report` 하에서 오버플로우）、`Truncated`（`OverflowPolicy::Truncate` 또는 `Report + max_lines`에서 줄 잘림）；개별 플래그 확인 없이 단일 신호로 사용 가능（v1.13.0+） |
 | 번역 레이아웃의 페이지 수준 품질 게이트가 필요한 경우 | `PageFitSummary::from_plans(plans) -> PageFitSummary` — `RegionFitPlan` 배치 집계；필드: `overflow_count`·`collision_count`·`shrunk_count`·`worst_overlap_area`·`worst_overlap_rect`；최종 PDF 작성 전 품질 판단에 사용（v1.13.0+） |
 | PDF에서 레이아웃 충돌과 텍스트 배치를 시각적으로 디버깅하고 싶은 경우 | `page.add_fit_debug_overlay(&plans, DebugOverlayOptions::default())` — 색상별 스트로크 사각형 그리기（파란색=소스 bbox, 녹색=배치 텍스트, 빨간색=충돌 겹침）；`DebugOverlayOptions`로 색상과 선 너비 설정；NaN/잘못된 좌표는 자동 건너뜀（`draw` feature, v1.13.0+） |
+| 텍스트 배치 시 미세한 너비 차이를 문자 간격으로 흡수해야 할 때 | `add_text_styled_with_char_spacing(text, font, pos, size, color, bold, italic, char_spacing)` — PDF `Tc` 연산자; 음수 `char_spacing`으로 폰트 크기 변경 없이 텍스트 너비 압축 (v1.15.0+) |
+| 페이지의 이미지 경계 상자를 가져와야 할 때 (오버레이 회피용) | `doc.page_image_bboxes(page)` — 축 정렬 Image XObject의 `[x, y, width, height]` 반환; `image` feature 불필요 (v1.15.0+) |
 
 ---
 

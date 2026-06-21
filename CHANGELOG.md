@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.15.0] — 2026-06-21
+
+### Added
+
+- **`PendingText::char_spacing: f32`** (internal, `src/document/types.rs`) — PDF `Tc`
+  character-spacing value carried through the pending-op pipeline. Default `0.0` (no effect).
+
+- **`text_stream()` now accepts `char_spacing: f32`** (`src/content/text.rs`) — emits
+  `{value} Tc` immediately after `Tf` when non-zero, and resets with `0 Tc` before `ET`
+  to avoid leaking spacing state to subsequent text operators.
+
+- **`PageHandle::add_text_styled_with_char_spacing()`** (`src/document/page.rs`) —
+  new public method following the existing `add_text_with_*` naming convention.
+  Accepts the same parameters as `add_text_styled` plus `char_spacing: f32`.
+  Formula: `Tc = (target_width_pt − natural_width_pt) / char_count`.
+  Practical range approximately `−1.0` to `+2.0` pt.
+
+- **`Document::page_image_bboxes(page_number) -> Result<Vec<[f32; 4]>>`**
+  (`src/document/mod.rs`) — returns `[x, y, width, height]` in PDF points for every
+  axis-aligned Image XObject on the page, without requiring the `image` feature.
+  Uses a minimal CTM tracker (`q`/`Q`/`cm`/`Do`) over the page content stream;
+  rotated/sheared placements are omitted. Useful for detecting image regions that
+  should not be covered by white overlay rectangles during translation.
+
+- **`extract_image_bboxes_from_page()`** (internal, `src/extract.rs`) — CTM-tracking
+  helper for `page_image_bboxes`.
+
+---
+
 ## [1.14.0] — 2026-06-21
 
 ### Added (harumi)
