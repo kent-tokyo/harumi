@@ -376,6 +376,308 @@ pub fn detect_collisions(boxes: &[PlacedBox]) -> Vec<Collision> {
     out
 }
 
+/// A ruling line or table/box border extracted from a page's vector graphics.
+///
+/// Coordinates use PDF bottom-left origin, in PDF points.
+///
+/// Obtain via [`extract_vector_rules`] (free function) or
+/// [`crate::Document::extract_vector_rules`] (convenience method on a loaded document).
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct VectorRule {
+    /// Start x coordinate.
+    pub x1: f32,
+    /// Start y coordinate (bottom-left origin).
+    pub y1: f32,
+    /// End x coordinate.
+    pub x2: f32,
+    /// End y coordinate.
+    pub y2: f32,
+    /// Effective stroke/fill width in PDF points.
+    pub line_width: f32,
+}
+
+impl VectorRule {
+    /// Construct a [`VectorRule`] from endpoint coordinates and a line width.
+    pub fn new(x1: f32, y1: f32, x2: f32, y2: f32, line_width: f32) -> Self {
+        Self { x1, y1, x2, y2, line_width }
+    }
+
+    /// Returns `true` when the rule spans more in X than Y (approximately horizontal).
+    pub fn is_horizontal(&self) -> bool {
+        (self.x2 - self.x1).abs() >= (self.y2 - self.y1).abs()
+    }
+
+    /// Returns `true` when the rule spans more in Y than X (approximately vertical).
+    pub fn is_vertical(&self) -> bool {
+        (self.y2 - self.y1).abs() > (self.x2 - self.x1).abs()
+    }
+
+    /// Bounding box `[x, y, width, height]` in PDF points, expanded by half the line width.
+    pub fn bbox(&self) -> [f32; 4] {
+        let half = self.line_width / 2.0;
+        let x = self.x1.min(self.x2) - half;
+        let y = self.y1.min(self.y2) - half;
+        let w = (self.x2 - self.x1).abs() + self.line_width;
+        let h = (self.y2 - self.y1).abs() + self.line_width;
+        [x, y, w, h]
+    }
+}
+
+/// Extract ruling lines and table/box borders from a raw PDF content stream.
+///
+/// The function recognises:
+/// - Stroked line segments (`m`/`l` + `S`/`s`/`B`/`b` operators)
+/// - Thin filled rectangles (`re` + `f`/`F`/`B`/`b` where `min(w,h) ≤ 3 pt`) — these are
+///   the most common form for table rules in SDS/GHS and other business PDFs.
+///
+/// The current transformation matrix (`cm`, `q`/`Q`) is tracked so that rules drawn in a
+/// scaled or translated coordinate space are returned in page coordinates.
+///
+/// **Limitation**: Form XObject content is not descended into.  Rules painted exclusively
+/// inside XObjects are not returned.
+///
+/// # Arguments
+/// - `content` — raw (decompressed) page content stream bytes.
+/// - `page_height` — height of the MediaBox in PDF points; used to preserve the
+///   bottom-left coordinate origin.
+pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule> {
+    let tokens = tokenize(content);
+    let identity: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut ctm = identity;
+    let mut ctm_stack: Vec<[f32; 6]> = Vec::new();
+
+    // Graphics state parameters
+    let mut line_width = 1.0_f32;
+    let mut gs_stack: Vec<f32> = Vec::new(); // saved line_width values
+
+    // Current path
+    let mut path_points: Vec<(f32, f32)> = Vec::new();
+    let mut path_rects: Vec<[f32; 4]> = Vec::new(); // rectangles from `re`
+
+    let mut rules: Vec<VectorRule> = Vec::new();
+    let _ = page_height; // reserved for future use (coordinates already in page space)
+
+    let mut stack: Vec<Token> = Vec::new();
+
+    let emit_stroked = |pts: &[(f32, f32)], rects: &[[f32; 4]], lw: f32, ctm: [f32; 6], rules: &mut Vec<VectorRule>| {
+        // Emit line-segment pairs as rules
+        for chunk in pts.windows(2) {
+            let (ax, ay) = apply_ctm(ctm, chunk[0].0, chunk[0].1);
+            let (bx, by) = apply_ctm(ctm, chunk[1].0, chunk[1].1);
+            let effective_w = lw * ctm_scale(ctm);
+            rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+        }
+        // Stroked rectangles: emit all four edges if the rectangle is thin
+        for &[rx, ry, rw, rh] in rects {
+            let (ax, ay) = apply_ctm(ctm, rx, ry);
+            let (bx, by) = apply_ctm(ctm, rx + rw, ry + rh);
+            let effective_w = lw * ctm_scale(ctm);
+            let w = (bx - ax).abs();
+            let h = (by - ay).abs();
+            if rw.min(rh).abs() <= 3.0 || w.min(h) <= 3.0 {
+                // Thin rectangle — treat as a single rule
+                rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+            } else {
+                // Thick rectangle — emit four border lines
+                let (c1x, c1y) = apply_ctm(ctm, rx + rw, ry);
+                let (c2x, c2y) = apply_ctm(ctm, rx, ry + rh);
+                rules.push(VectorRule { x1: ax, y1: ay, x2: c1x, y2: c1y, line_width: effective_w });
+                rules.push(VectorRule { x1: c1x, y1: c1y, x2: bx, y2: by, line_width: effective_w });
+                rules.push(VectorRule { x1: bx, y1: by, x2: c2x, y2: c2y, line_width: effective_w });
+                rules.push(VectorRule { x1: c2x, y1: c2y, x2: ax, y2: ay, line_width: effective_w });
+            }
+        }
+    };
+
+    let emit_filled = |rects: &[[f32; 4]], lw: f32, ctm: [f32; 6], rules: &mut Vec<VectorRule>| {
+        for &[rx, ry, rw, rh] in rects {
+            let (ax, ay) = apply_ctm(ctm, rx, ry);
+            let (bx, by) = apply_ctm(ctm, rx + rw, ry + rh);
+            let effective_w = lw * ctm_scale(ctm);
+            let w = (bx - ax).abs();
+            let h = (by - ay).abs();
+            // Only emit filled rects when they are thin (≤ 3 pt in the narrow dimension)
+            if rw.min(rh).abs() <= 3.0 || w.min(h) <= 3.0 {
+                rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+            }
+        }
+    };
+
+    for (token, _) in tokens {
+        match token {
+            Token::Keyword(ref kw) => {
+                match kw.as_slice() {
+                    b"q" => {
+                        ctm_stack.push(ctm);
+                        gs_stack.push(line_width);
+                    }
+                    b"Q" => {
+                        if let Some(saved) = ctm_stack.pop() { ctm = saved; }
+                        if let Some(saved) = gs_stack.pop() { line_width = saved; }
+                        stack.clear();
+                        continue;
+                    }
+                    b"cm" => {
+                        // Expect 6 numbers on stack
+                        if stack.len() >= 6 {
+                            let mut ns = [0.0f32; 6];
+                            let len = stack.len();
+                            for (i, slot) in ns.iter_mut().enumerate() {
+                                if let Token::Number(v) = stack[len - 6 + i] { *slot = v; }
+                            }
+                            ctm = multiply_ctm(ctm, ns);
+                        }
+                        stack.clear();
+                        continue;
+                    }
+                    b"w" => {
+                        if let Some(Token::Number(v)) = stack.last() { line_width = *v; }
+                        stack.clear();
+                        continue;
+                    }
+                    // Path construction operators
+                    b"m" => {
+                        if stack.len() >= 2 {
+                            let len = stack.len();
+                            if let (Token::Number(y), Token::Number(x)) = (&stack[len-1], &stack[len-2]) {
+                                path_points.push((*x, *y));
+                            }
+                        }
+                        stack.clear();
+                        continue;
+                    }
+                    b"l" => {
+                        if stack.len() >= 2 {
+                            let len = stack.len();
+                            if let (Token::Number(y), Token::Number(x)) = (&stack[len-1], &stack[len-2]) {
+                                path_points.push((*x, *y));
+                            }
+                        }
+                        stack.clear();
+                        continue;
+                    }
+                    b"re" => {
+                        if stack.len() >= 4 {
+                            let len = stack.len();
+                            if let (Token::Number(h), Token::Number(w), Token::Number(y), Token::Number(x)) =
+                                (&stack[len-1], &stack[len-2], &stack[len-3], &stack[len-4])
+                            {
+                                path_rects.push([*x, *y, *w, *h]);
+                            }
+                        }
+                        stack.clear();
+                        continue;
+                    }
+                    b"h" | b"v" | b"y" | b"c" => {
+                        // Close/curve — just clear the operand stack; don't track curves as rules.
+                        stack.clear();
+                        continue;
+                    }
+                    // Path painting operators — stroke
+                    b"S" | b"s" => {
+                        let pts = path_points.clone();
+                        let rects = path_rects.clone();
+                        emit_stroked(&pts, &rects, line_width, ctm, &mut rules);
+                        path_points.clear(); path_rects.clear(); stack.clear();
+                        continue;
+                    }
+                    // Path painting operators — fill only
+                    b"f" | b"F" | b"f*" => {
+                        let rects = path_rects.clone();
+                        emit_filled(&rects, line_width, ctm, &mut rules);
+                        path_points.clear(); path_rects.clear(); stack.clear();
+                        continue;
+                    }
+                    // Path painting operators — fill + stroke
+                    b"B" | b"b" | b"B*" | b"b*" => {
+                        let pts = path_points.clone();
+                        let rects = path_rects.clone();
+                        emit_stroked(&pts, &rects, line_width, ctm, &mut rules);
+                        emit_filled(&rects, line_width, ctm, &mut rules);
+                        path_points.clear(); path_rects.clear(); stack.clear();
+                        continue;
+                    }
+                    // No-op path operators
+                    b"n" => {
+                        path_points.clear(); path_rects.clear(); stack.clear();
+                        continue;
+                    }
+                    // Text block markers: skip everything inside BT..ET
+                    b"BT" | b"ET" => {
+                        stack.clear();
+                        continue;
+                    }
+                    _ => { stack.clear(); continue; }
+                }
+            }
+            other => stack.push(other),
+        }
+    }
+
+    rules
+}
+
+/// Check whether any text rectangle in `text_rects` overlaps a [`VectorRule`].
+///
+/// Returns a list of `(text_index, rule_index, severity)` tuples for each overlap found.
+/// Only overlaps with positive area (excluding mere edge-touches) are reported.
+pub fn detect_text_vs_rule_collisions(
+    text_rects: &[[f32; 4]],
+    rules: &[VectorRule],
+) -> Vec<(usize, usize, crate::CollisionSeverity)> {
+    let mut out = Vec::new();
+    for (ti, &text_rect) in text_rects.iter().enumerate() {
+        let text_area = rect_area(text_rect);
+        if text_area <= 0.0 { continue; }
+        for (ri, rule) in rules.iter().enumerate() {
+            let rule_bbox = rule.bbox();
+            if let Some(overlap) = rect_intersection(text_rect, rule_bbox) {
+                let overlap_area = rect_area(overlap);
+                if overlap_area > 0.0 {
+                    let severity = collision_severity(overlap_area, text_area, rect_area(rule_bbox));
+                    out.push((ti, ri, severity));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A minimal placement description for use with [`PageLayoutQuality::from_simple_placements`].
+///
+/// Downstream crates that compute their own text placements (without going through
+/// [`crate::Document::plan_text_for_regions`]) can use this type to feed placements into
+/// the layout quality assessment pipeline without needing to construct the
+/// `#[non_exhaustive]` [`RegionFitPlan`] / [`LayoutRegion`] types directly.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SimplePlacement {
+    /// Caller-assigned identifier for this placement (echoed back in [`LayoutIssue::id`]).
+    pub id: usize,
+    /// Bounding box of the source glyphs: `[x, y, width, height]` in PDF points.
+    pub source_rect: [f32; 4],
+    /// Bounding box of the placed (translated) text: `[x, y, width, height]` in PDF points.
+    pub placed_rect: [f32; 4],
+    /// Effective font size used for the placed text, in PDF points.
+    pub font_size: f32,
+    /// Whether the text overflowed its available space.
+    pub overflow: bool,
+}
+
+impl SimplePlacement {
+    /// Construct a new [`SimplePlacement`].
+    pub fn new(
+        id: usize,
+        source_rect: [f32; 4],
+        placed_rect: [f32; 4],
+        font_size: f32,
+        overflow: bool,
+    ) -> Self {
+        Self { id, source_rect, placed_rect, font_size, overflow }
+    }
+}
+
 /// Structural relationship between two overlapping [`LayoutRegion`]s.
 ///
 /// Returned as part of [`ClassifiedCollision`] by [`classify_collisions`].
@@ -4094,6 +4396,16 @@ pub enum LayoutIssueKind {
     BboxDrift,
     /// The text was shrunk but remains acceptable.
     AcceptedShrink,
+    /// Planned text rectangle overlaps a ruling line or table border.
+    TextVsTableBorder,
+    /// Planned text overflows its detected table cell boundary.
+    TableCellSpillover,
+    /// Text appears clipped by the page or clip-box boundary.
+    ClippedText,
+    /// Same-row label and value pair have a significant baseline difference.
+    BaselineMismatch,
+    /// Font size is a significant outlier compared to column neighbors.
+    FontSizeOutlier,
 }
 
 /// Severity of a layout issue.
@@ -4395,6 +4707,177 @@ impl PageLayoutQuality {
             collision_count,
             image_overlap_count,
             bbox_drift_count,
+            worst_severity,
+        }
+    }
+
+    /// Like [`from_plans`](Self::from_plans) but also checks placements against
+    /// `rules` (ruling lines / table borders) extracted from the page.
+    ///
+    /// Issues of kind [`LayoutIssueKind::TextVsTableBorder`] are appended for any
+    /// placement rectangle that overlaps a [`VectorRule`].
+    pub fn from_plans_with_rules(
+        page_num: u32,
+        plans: &[RegionFitPlan],
+        image_bboxes: &[[f32; 4]],
+        rules: &[VectorRule],
+    ) -> Self {
+        let mut quality = Self::from_plans(page_num, plans, image_bboxes);
+        let placed_rects: Vec<[f32; 4]> = plans.iter().map(|p| p.fit.used_rect).collect();
+        let rule_hits = detect_text_vs_rule_collisions(&placed_rects, rules);
+        for (text_idx, _rule_idx, severity) in rule_hits {
+            quality.issues.push(LayoutIssue {
+                page: page_num,
+                id: text_idx,
+                kind: LayoutIssueKind::TextVsTableBorder,
+                severity: severity.into(),
+                rect: plans.get(text_idx).map(|p| p.fit.used_rect),
+                source_rect: plans.get(text_idx).map(|p| p.region.source_bbox),
+                placed_rect: plans.get(text_idx).map(|p| p.fit.used_rect),
+                overlap_area: None,
+                message: "planned text overlaps a ruling line or table border".to_owned(),
+            });
+        }
+        if quality.worst_severity.as_ref().map(|s| s < &LayoutIssueSeverity::Major).unwrap_or(true) {
+            quality.worst_severity = quality.issues.iter().map(|i| i.severity.clone()).max();
+        }
+        quality
+    }
+
+    /// Build a quality report from externally computed [`SimplePlacement`]s.
+    ///
+    /// This is the entry point for downstream crates (such as `harumi-ai`) that compute
+    /// their own text placements without going through [`crate::Document::plan_text_for_regions`].
+    /// Because [`RegionFitPlan`] and [`LayoutRegion`] are `#[non_exhaustive]`, they cannot be
+    /// constructed with struct literal syntax; this method accepts the lightweight
+    /// [`SimplePlacement`] type instead.
+    ///
+    /// Checks performed:
+    /// - Text/text collision between all `placements`.
+    /// - Text/image overlap against `image_bboxes`.
+    /// - Text/rule overlap against `rules` (pass `&[]` to skip).
+    /// - Overflow flag from each placement.
+    pub fn from_simple_placements(
+        page_num: u32,
+        placements: &[SimplePlacement],
+        image_bboxes: &[[f32; 4]],
+        rules: &[VectorRule],
+    ) -> Self {
+        let mut issues = Vec::new();
+
+        let placed_boxes: Vec<PlacedBox> = placements
+            .iter()
+            .map(|p| PlacedBox::new(p.placed_rect))
+            .collect();
+        let placed_rects: Vec<[f32; 4]> = placements.iter().map(|p| p.placed_rect).collect();
+
+        // Overflow
+        let mut overflow_count = 0usize;
+        for p in placements {
+            if p.overflow {
+                overflow_count += 1;
+                issues.push(LayoutIssue {
+                    page: page_num,
+                    id: p.id,
+                    kind: LayoutIssueKind::TextOverflow,
+                    severity: LayoutIssueSeverity::Major,
+                    rect: Some(p.placed_rect),
+                    source_rect: Some(p.source_rect),
+                    placed_rect: Some(p.placed_rect),
+                    overlap_area: None,
+                    message: "placed text overflows its target rectangle".to_owned(),
+                });
+            }
+        }
+
+        // Text/text collisions
+        let raw_collisions = detect_collisions(&placed_boxes);
+        let mut collision_count = 0usize;
+        for col in &raw_collisions {
+            let area_a = rect_area(placements[col.index_a].placed_rect);
+            let area_b = rect_area(placements[col.index_b].placed_rect);
+            let severity: LayoutIssueSeverity =
+                collision_severity(col.overlap_area, area_a, area_b).into();
+            collision_count += 1;
+            issues.push(LayoutIssue {
+                page: page_num,
+                id: col.index_a,
+                kind: LayoutIssueKind::TextCollision,
+                severity,
+                rect: Some(col.overlap_rect),
+                source_rect: placements.get(col.index_a).map(|p| p.source_rect),
+                placed_rect: placements.get(col.index_a).map(|p| p.placed_rect),
+                overlap_area: Some(col.overlap_area),
+                message: format!("placed text collides with placement {}", col.index_b),
+            });
+        }
+
+        // Text/image overlaps
+        let mut image_overlap_count = 0usize;
+        for (i, p) in placements.iter().enumerate() {
+            for img_rect in image_bboxes {
+                if let Some(overlap) = rect_intersection(p.placed_rect, *img_rect) {
+                    let overlap_area = rect_area(overlap);
+                    let placed_area = rect_area(p.placed_rect);
+                    let severity: LayoutIssueSeverity =
+                        collision_severity(overlap_area, placed_area, rect_area(*img_rect)).into();
+                    image_overlap_count += 1;
+                    issues.push(LayoutIssue {
+                        page: page_num,
+                        id: i,
+                        kind: LayoutIssueKind::ImageOverlap,
+                        severity,
+                        rect: Some(overlap),
+                        source_rect: Some(p.source_rect),
+                        placed_rect: Some(p.placed_rect),
+                        overlap_area: Some(overlap_area),
+                        message: "placed text overlaps an image".to_owned(),
+                    });
+                }
+            }
+        }
+
+        // Text/rule overlaps
+        let rule_hits = detect_text_vs_rule_collisions(&placed_rects, rules);
+        for (ti, _ri, severity) in rule_hits {
+            issues.push(LayoutIssue {
+                page: page_num,
+                id: placements.get(ti).map(|p| p.id).unwrap_or(ti),
+                kind: LayoutIssueKind::TextVsTableBorder,
+                severity: severity.into(),
+                rect: placements.get(ti).map(|p| p.placed_rect),
+                source_rect: placements.get(ti).map(|p| p.source_rect),
+                placed_rect: placements.get(ti).map(|p| p.placed_rect),
+                overlap_area: None,
+                message: "placed text overlaps a ruling line or table border".to_owned(),
+            });
+        }
+
+        let worst_severity = issues.iter().map(|i| i.severity.clone()).max();
+
+        let summary = {
+            let worst_overlap_area = raw_collisions.iter().map(|c| c.overlap_area).fold(0.0_f32, f32::max);
+            let worst_overlap_rect = raw_collisions
+                .iter()
+                .max_by(|a, b| a.overlap_area.partial_cmp(&b.overlap_area).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|c| c.overlap_rect);
+            PageFitSummary {
+                overflow_count,
+                collision_count,
+                shrunk_count: 0,
+                worst_overlap_area,
+                worst_overlap_rect,
+            }
+        };
+
+        Self {
+            page_num,
+            summary,
+            issues,
+            overflow_count,
+            collision_count,
+            image_overlap_count,
+            bbox_drift_count: 0,
             worst_severity,
         }
     }

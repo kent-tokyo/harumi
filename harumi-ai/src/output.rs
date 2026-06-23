@@ -1,6 +1,6 @@
 // output.rs — TranslateOutput and supporting diagnostic types
 
-use harumi::PageFitSummary;
+use harumi::{LayoutIssueKind, LayoutIssueSeverity, PageFitSummary};
 
 use crate::{TranslationMode, quality::QualityResult};
 
@@ -61,6 +61,36 @@ pub struct PageQualityReport {
     pub page_num: u32,
     /// Aggregate fitting/collision summary for this page.
     pub summary: PageFitSummary,
+    /// Per-line issue list for CI and UI review.
+    ///
+    /// Empty when no issues were detected.  Populated from [`harumi::PageLayoutQuality::issues`]
+    /// after the final quality pass.
+    pub issues: Vec<LineIssue>,
+}
+
+/// A single layout issue on a specific translated line.
+///
+/// Returned as part of [`PageQualityReport::issues`].
+#[derive(Debug, Clone)]
+pub struct LineIssue {
+    /// Index of the translated block within the page (matches [`harumi::LayoutIssue::id`]).
+    pub block_id: usize,
+    /// Issue category.
+    pub kind: LayoutIssueKind,
+    /// Issue severity.
+    pub severity: LayoutIssueSeverity,
+    /// Bounding box of the source text: `[x, y, width, height]` in PDF points.
+    pub source_rect: [f32; 4],
+    /// Bounding box of the placed translated text, when available.
+    pub placed_rect: Option<[f32; 4]>,
+    /// Original (source-language) text for this block.
+    pub original_text: String,
+    /// Translated text actually placed in the output PDF.
+    pub translated_text: String,
+    /// AI-suggested shorter text from a correction round, if one was applied.
+    pub suggested_correction: Option<String>,
+    /// Whether the issue was resolved by a correction round.
+    pub resolved: bool,
 }
 
 /// Debug artifacts optionally produced alongside the translated PDF.

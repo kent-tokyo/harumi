@@ -1,10 +1,11 @@
 //! Integration tests for Document::fit_text_to_box, Document::measure_text,
 //! detect_collisions (issue #20), classify_collisions (issue #23),
-//! and layout quality primitives (issue #24).
+//! layout quality primitives (issue #24), and vector rule extraction (issue #26).
 
 use harumi::{
-    BoxFitOptions, ClassifiedCollision, CollisionKind, Document, OverflowPolicy, PageFitSummary,
-    PlacedBox, PlacementStatus, classify_collisions, detect_collisions,
+    BoxFitOptions, ClassifiedCollision, CollisionKind, Document, LayoutIssueKind, OverflowPolicy,
+    PageFitSummary, PlacedBox, PlacementStatus, SimplePlacement, classify_collisions,
+    detect_collisions, detect_text_vs_rule_collisions, extract_vector_rules,
 };
 
 fn noto_bytes() -> Vec<u8> {
@@ -540,4 +541,73 @@ fn truncate_zero_height_rect_gives_truncated_status() {
         result.status
     );
     assert!(result.overflow_vertical);
+}
+
+// ---------------------------------------------------------------------------
+// extract_vector_rules — issue #26
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stroked_line_is_detected() {
+    // Simple m/l + S (stroke) sequence: a horizontal line at y=100
+    let content = b"1 w 0 100 m 200 100 l S";
+    let rules = extract_vector_rules(content, 842.0);
+    assert_eq!(rules.len(), 1);
+    let r = &rules[0];
+    assert!((r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5, "y should be 100, got {}/{}", r.y1, r.y2);
+    assert!(r.is_horizontal(), "expected horizontal rule");
+    assert!((r.line_width - 1.0).abs() < 0.1);
+}
+
+#[test]
+fn thin_filled_rect_is_detected_as_rule() {
+    // re + f: a thin (1pt tall) filled rectangle — typical for table borders
+    let content = b"0 100 200 1 re f";
+    let rules = extract_vector_rules(content, 842.0);
+    assert_eq!(rules.len(), 1, "thin filled rect should emit one rule");
+    let r = &rules[0];
+    assert!(r.is_horizontal(), "1pt-tall rect should be horizontal rule");
+}
+
+#[test]
+fn thick_filled_rect_is_not_emitted() {
+    // A 200×100 filled rect — not a ruling line
+    let content = b"0 0 200 100 re f";
+    let rules = extract_vector_rules(content, 842.0);
+    assert!(rules.is_empty(), "thick filled rect should not produce rules");
+}
+
+#[test]
+fn ctm_scaling_applied_to_rule() {
+    // Scale x/y by 2 via cm, then draw a unit horizontal line
+    let content = b"2 0 0 2 0 0 cm 0 50 m 100 50 l S";
+    let rules = extract_vector_rules(content, 842.0);
+    assert_eq!(rules.len(), 1);
+    let r = &rules[0];
+    // After CTM [2,0,0,2,0,0]: x*2, y*2 — so y=100 in page space
+    assert!((r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5,
+        "CTM scaling should be applied: expected y=100 got y1={} y2={}", r.y1, r.y2);
+}
+
+#[test]
+fn detect_text_vs_rule_collision_basic() {
+    use harumi::VectorRule;
+    let text_rects = vec![[10.0_f32, 95.0, 100.0, 12.0]]; // [x, y, w, h]
+    let rules = vec![VectorRule::new(0.0, 100.0, 200.0, 100.0, 2.0)];
+    let hits = detect_text_vs_rule_collisions(&text_rects, &rules);
+    assert!(!hits.is_empty(), "text overlapping a rule line should be detected");
+}
+
+#[test]
+fn simple_placement_quality_detects_rule_collision() {
+    use harumi::{PageLayoutQuality, VectorRule};
+    let placements = vec![
+        SimplePlacement::new(0, [10.0, 95.0, 100.0, 12.0], [10.0, 95.0, 100.0, 12.0], 10.0, false),
+    ];
+    let rules = vec![VectorRule::new(0.0, 100.0, 200.0, 100.0, 2.0)];
+    let quality = PageLayoutQuality::from_simple_placements(1, &placements, &[], &rules);
+    let border_issues: Vec<_> = quality.issues.iter()
+        .filter(|i| i.kind == LayoutIssueKind::TextVsTableBorder)
+        .collect();
+    assert!(!border_issues.is_empty(), "border collision should be reported as TextVsTableBorder issue");
 }

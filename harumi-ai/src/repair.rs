@@ -1,8 +1,6 @@
 // repair.rs — empty-translation detection and mojibake detection
 
 /// Returns `true` if `text` looks like mojibake or garbled binary content.
-// Used in the empty-translation retry path (called from pdf_translator in a future pass).
-#[allow(dead_code)]
 ///
 /// Heuristic: if more than 30 % of the characters are non-printable control
 /// characters (other than common whitespace) and the string has at least
@@ -24,29 +22,6 @@ pub(crate) fn is_likely_mojibake(text: &str) -> bool {
     garbage as f32 / total as f32 > 0.30
 }
 
-/// Identify translation blocks that came back empty or as mojibake.
-#[allow(dead_code)]
-///
-/// Returns `(page_num, block_id)` pairs from `translated` that need to be
-/// re-translated.  A block is flagged when its translated text is blank
-/// or passes [`is_likely_mojibake`].
-pub(crate) fn find_bad_blocks(
-    original: &[crate::extractor::PageContent],
-    translated: &[(u32, Vec<crate::extractor::TranslatedBlock>)],
-) -> Vec<(u32, usize)> {
-    let mut bad = Vec::new();
-    for (page_num, blocks) in translated {
-        for tb in blocks {
-            if (tb.text.trim().is_empty() || is_likely_mojibake(&tb.text))
-                && let Some(orig_page) = original.iter().find(|p| p.page_num == *page_num)
-                && orig_page.blocks.iter().any(|b| b.id == tb.id && !b.text.trim().is_empty())
-            {
-                bad.push((*page_num, tb.id));
-            }
-        }
-    }
-    bad
-}
 
 #[cfg(test)]
 mod tests {

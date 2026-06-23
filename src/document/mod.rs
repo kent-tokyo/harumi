@@ -2205,6 +2205,58 @@ impl Document {
         ))
     }
 
+    /// Like [`assess_page_layout_quality`](Self::assess_page_layout_quality) but also checks
+    /// the planned placements against `rules` (ruling lines / table borders).
+    ///
+    /// Issues of kind [`crate::LayoutIssueKind::TextVsTableBorder`] are added for any
+    /// placement that overlaps a ruling line.  Pass `&[]` to skip rule checking.
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if `page_number` is out of range.
+    pub fn assess_page_layout_quality_with_rules(
+        &self,
+        page_number: u32,
+        plans: &[crate::RegionFitPlan],
+        rules: &[crate::VectorRule],
+    ) -> Result<crate::PageLayoutQuality> {
+        let image_bboxes = self.page_image_bboxes(page_number)?;
+        Ok(crate::PageLayoutQuality::from_plans_with_rules(
+            page_number,
+            plans,
+            &image_bboxes,
+            rules,
+        ))
+    }
+
+    /// Extract ruling lines and table/box borders from a page's vector graphics.
+    ///
+    /// Analyses the raw content stream for stroked line segments and thin filled
+    /// rectangles (`re` operators where `min(width, height) ≤ 3 pt`), which are the
+    /// two most common forms for table and section borders in business PDFs.
+    ///
+    /// The current transformation matrix (`cm`, `q`/`Q`) is tracked so rules drawn in
+    /// scaled/translated coordinates are returned in page (MediaBox) coordinates.
+    ///
+    /// **Limitation**: rules drawn exclusively inside Form XObjects are not returned.
+    ///
+    /// # Errors
+    /// - [`Error::PageNotFound`] if `page_number` is zero or exceeds the page count.
+    pub fn extract_vector_rules(&self, page_number: u32) -> Result<Vec<crate::VectorRule>> {
+        let page_ids = self.inner.get_pages();
+        let page_id = page_ids
+            .get(&page_number)
+            .copied()
+            .ok_or(Error::PageNotFound(page_number))?;
+        let media_box = helpers::inherited_media_box_raw(&self.inner, page_id);
+        let page_height = media_box[3] - media_box[1];
+        let content_streams = crate::extract::page_content_streams(&self.inner, page_id);
+        let rules = content_streams
+            .iter()
+            .flat_map(|c| crate::extract::extract_vector_rules(c, page_height))
+            .collect();
+        Ok(rules)
+    }
+
     /// Extracts all raster images embedded on the given page (1-indexed).
     ///
     /// Designed for **scanned PDFs** where a page may contain multiple Image XObjects.

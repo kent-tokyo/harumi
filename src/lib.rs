@@ -114,11 +114,12 @@ pub use extract::{
     BaselinePolicy, ClassifiedCollision, Collision, CollisionKind, CollisionSeverity, ColumnZone,
     ExtractionWarning, GroupingStrategy, LabelValuePair, LayoutIssue, LayoutIssueKind,
     LayoutIssueSeverity, LayoutRegion, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
-    PageFitSummary, PageLayoutQuality, PlacedBox, RegionFitPlan, RegionTextFitOptions, TableCell,
-    TextFragment, TextGroup, WarningKind, WidthPolicy, classify_collisions, collision_severity,
-    detect_collisions, detect_text_columns, extract_label_value_pairs, extract_layout_regions,
-    extract_table_cells, group_text_fragments, merge_short_cjk_tails, sort_by_reading_order,
-    text_fragment_bounds,
+    PageFitSummary, PageLayoutQuality, PlacedBox, RegionFitPlan, RegionTextFitOptions,
+    SimplePlacement, TableCell, TextFragment, TextGroup, VectorRule, WarningKind, WidthPolicy,
+    classify_collisions, collision_severity, detect_collisions, detect_text_columns,
+    detect_text_vs_rule_collisions, extract_label_value_pairs, extract_layout_regions,
+    extract_table_cells, extract_vector_rules, group_text_fragments, merge_short_cjk_tails,
+    sort_by_reading_order, text_fragment_bounds,
 };
 pub use font::FontHandle;
 

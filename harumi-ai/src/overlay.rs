@@ -16,7 +16,7 @@ use ttf_parser::Face;
 use crate::{
     Error, OverflowStrategy, Result, TranslateOptions, extractor,
     layout_repair::{LayoutRepairMode, VisionRepairRequest, rasterize_page_png},
-    output::{CorrectionRound, PageQualityReport, TranslateOutput, TranslateQuality},
+    output::{CorrectionRound, TranslateOutput, TranslateQuality},
     prompts::layout_correction_prompt,
 };
 
@@ -1032,6 +1032,28 @@ pub(crate) async fn extract_and_translate(
         page_translations.insert(op.page_num, texts);
     }
 
+    // ── Mojibake rejection pass ───────────────────────────────────────────────
+    // Scan merged translations for garbled output. Detected entries are cleared
+    // (empty string = leave original in place) and logged.
+    for op in &overlay_pages {
+        if let Some(texts) = page_translations.get_mut(&op.page_num) {
+            for (idx, text) in texts.iter_mut().enumerate() {
+                if !text.is_empty() && crate::repair::is_likely_mojibake(text) {
+                    let safe: String = op.lines.get(idx)
+                        .map(|l| l.text.chars().take(40)
+                            .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+                            .collect())
+                        .unwrap_or_default();
+                    eprintln!(
+                        "[harumi-ai] Mojibake detected p{}:{idx} ({safe:?}) — original preserved",
+                        op.page_num
+                    );
+                    *text = String::new();
+                }
+            }
+        }
+    }
+
     Ok((overlay_pages, page_translations, global_body_fs))
 }
 
@@ -1112,6 +1134,7 @@ pub async fn translate_pdf_overlay_full(
 
     // ── Phase 5: Compute per-page quality summaries ───────────────────────────
     let page_reports = compute_page_quality(
+        pdf_bytes,
         &overlay_pages,
         &page_translations,
         &face,
@@ -1159,14 +1182,21 @@ pub async fn translate_pdf_overlay_full(
     })
 }
 
-/// Compute a simple per-page quality summary from overlay line placements.
+/// Compute per-page quality summaries including per-line issues and border collision checks.
 fn compute_page_quality(
+    pdf_bytes: &[u8],
     overlay_pages: &[OverlayPage],
     page_translations: &HashMap<u32, Vec<String>>,
     face: &Face<'_>,
     global_body_fs: f32,
     min_fs: f32,
-) -> Vec<PageQualityReport> {
+) -> Vec<crate::output::PageQualityReport> {
+    use harumi::{LayoutIssueKind, LayoutIssueSeverity, SimplePlacement};
+    use crate::output::LineIssue;
+
+    // Load the document once for vector rule extraction.
+    let doc = harumi::Document::from_bytes(pdf_bytes).ok();
+
     let mut reports = Vec::new();
     for overlay_page in overlay_pages {
         let page_num = overlay_page.page_num;
@@ -1174,70 +1204,135 @@ fn compute_page_quality(
             continue;
         };
 
-        let mut boxes: Vec<harumi::PlacedBox> = Vec::new();
+        // Extract vector rules for this page (table borders, box borders).
+        let rules: Vec<harumi::VectorRule> = doc
+            .as_ref()
+            .and_then(|d| d.extract_vector_rules(page_num).ok())
+            .unwrap_or_default();
+
+        // Build per-line placement data.
+        struct LinePlacement {
+            source_rect: [f32; 4],
+            placed_rect: [f32; 4],
+            actual_fs: f32,
+            overflow: bool,
+            original_text: String,
+            translated_text: String,
+        }
+
+        let mut placements: Vec<LinePlacement> = Vec::new();
         let mut overflow_count = 0usize;
         let mut shrunk_count = 0usize;
 
-        for (line, trans_text) in overlay_page.lines.iter().zip(translations.iter()) {
+        for (idx, (line, trans_text)) in overlay_page.lines.iter().zip(translations.iter()).enumerate() {
             let text = trans_text.trim();
             if text.is_empty() {
                 continue;
             }
             let max_fs_cap = line.line_height * 0.85;
-            let fs = if line.font_size > 0.0 {
-                line.font_size
-            } else {
-                global_body_fs
-            };
-            let desired = if line.is_heading {
-                (fs * 1.4).min(max_fs_cap)
-            } else {
-                fs.min(max_fs_cap)
-            };
+            let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
+            let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
             let avail_w = (line.region_usable_right - line.x).max(50.0);
             let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
             let text_w = measure_text_width(text, face, desired);
-            if text_w > avail_w * 1.05 || actual_fs < desired * 0.9 {
-                overflow_count += 1;
-            }
-            if actual_fs < desired * 0.99 {
-                shrunk_count += 1;
-            }
+            let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
+            if overflow { overflow_count += 1; }
+            if actual_fs < desired * 0.99 { shrunk_count += 1; }
             let placed_w = text_w.min(avail_w * 1.5);
             let placed_rect = [line.x, line.y, placed_w, line.line_height];
-            if overlay_page
-                .image_bboxes
-                .iter()
-                .any(|img| rects_overlap(placed_rect, *img))
-            {
-                overflow_count += 1;
-            }
-            boxes.push(harumi::PlacedBox::new(placed_rect));
+            let source_rect = [line.x, line.y, line.right - line.x, line.line_height];
+            let _ = idx; // used implicitly via enumerate position
+            placements.push(LinePlacement {
+                source_rect,
+                placed_rect,
+                actual_fs,
+                overflow,
+                original_text: line.text.clone(),
+                translated_text: trans_text.clone(),
+            });
         }
 
-        let collisions = harumi::detect_collisions(&boxes);
-        let worst_overlap_area = collisions
-            .iter()
-            .map(|c| c.overlap_area)
-            .fold(0.0_f32, f32::max);
-        let worst_overlap_rect = collisions
-            .iter()
-            .max_by(|a, b| {
-                a.overlap_area
-                    .partial_cmp(&b.overlap_area)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .map(|c| c.overlap_rect);
+        // Use SimplePlacement + PageLayoutQuality for collision + border detection.
+        let simple_placements: Vec<SimplePlacement> = placements.iter().enumerate().map(|(i, p)| {
+            SimplePlacement::new(i, p.source_rect, p.placed_rect, p.actual_fs, p.overflow)
+        }).collect();
+        let quality = harumi::PageLayoutQuality::from_simple_placements(
+            page_num,
+            &simple_placements,
+            &overlay_page.image_bboxes,
+            &rules,
+        );
 
-        // PageFitSummary is #[non_exhaustive]; construct via from_plans and then
-        // overwrite the fields with our overlay-computed values.
+        // Font-size outlier detection: group lines by column (source x within ±20 pt),
+        // compute median font size per column, flag >1.5× outliers.
+        let font_size_outlier_ids: std::collections::HashSet<usize> = {
+            let col_tol = 20.0_f32;
+            // col_groups: Vec< Vec<(placement_index, col_x, actual_fs)> >
+            let mut col_groups: Vec<(f32, Vec<(usize, f32)>)> = Vec::new();
+            for (i, p) in placements.iter().enumerate() {
+                let col_x = p.source_rect[0];
+                if let Some((_, grp)) = col_groups.iter_mut().find(|(cx, _)| (cx - col_x).abs() <= col_tol) {
+                    grp.push((i, p.actual_fs));
+                } else {
+                    col_groups.push((col_x, vec![(i, p.actual_fs)]));
+                }
+            }
+            let mut outliers = std::collections::HashSet::new();
+            for (_, grp) in &col_groups {
+                if grp.len() < 2 { continue; }
+                let mut sizes: Vec<f32> = grp.iter().map(|(_, fs)| *fs).collect();
+                sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let median = sizes[sizes.len() / 2];
+                for &(i, fs) in grp {
+                    if fs > median * 1.5 {
+                        outliers.insert(i);
+                    }
+                }
+            }
+            outliers
+        };
+
+        // Build LineIssue list from PageLayoutQuality issues + font-size outliers.
+        let mut issues: Vec<LineIssue> = quality.issues.iter().map(|qi| {
+            let p = placements.get(qi.id);
+            LineIssue {
+                block_id: qi.id,
+                kind: qi.kind.clone(),
+                severity: qi.severity.clone(),
+                source_rect: p.map(|x| x.source_rect).unwrap_or([0.0; 4]),
+                placed_rect: qi.placed_rect,
+                original_text: p.map(|x| x.original_text.clone()).unwrap_or_default(),
+                translated_text: p.map(|x| x.translated_text.clone()).unwrap_or_default(),
+                suggested_correction: None,
+                resolved: false,
+            }
+        }).collect();
+
+        for &i in &font_size_outlier_ids {
+            if let Some(p) = placements.get(i) {
+                issues.push(LineIssue {
+                    block_id: i,
+                    kind: LayoutIssueKind::FontSizeOutlier,
+                    severity: LayoutIssueSeverity::Moderate,
+                    source_rect: p.source_rect,
+                    placed_rect: Some(p.placed_rect),
+                    original_text: p.original_text.clone(),
+                    translated_text: p.translated_text.clone(),
+                    suggested_correction: None,
+                    resolved: false,
+                });
+            }
+        }
+
+        // Build summary using the quality report aggregate.
         let mut summary = harumi::PageFitSummary::from_plans(&[]);
         summary.overflow_count = overflow_count;
-        summary.collision_count = collisions.len();
+        summary.collision_count = quality.collision_count;
         summary.shrunk_count = shrunk_count;
-        summary.worst_overlap_area = worst_overlap_area;
-        summary.worst_overlap_rect = worst_overlap_rect;
-        reports.push(PageQualityReport { page_num, summary });
+        summary.worst_overlap_area = quality.summary.worst_overlap_area;
+        summary.worst_overlap_rect = quality.summary.worst_overlap_rect;
+
+        reports.push(crate::output::PageQualityReport { page_num, summary, issues });
     }
     reports
 }

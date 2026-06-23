@@ -2565,6 +2565,13 @@ impl<'doc> PageHandle<'doc> {
                 crate::LayoutIssueKind::ImageOverlap => opts.image_overlap_box_color,
                 crate::LayoutIssueKind::BboxDrift => opts.bbox_drift_box_color,
                 crate::LayoutIssueKind::AcceptedShrink => opts.accepted_shrink_box_color,
+                // New variants: reuse overflow color for border/cell issues, collision for
+                // baseline/size outliers. Fall through to None for any future variants.
+                crate::LayoutIssueKind::TextVsTableBorder
+                | crate::LayoutIssueKind::TableCellSpillover
+                | crate::LayoutIssueKind::ClippedText => opts.overflow_box_color,
+                crate::LayoutIssueKind::BaselineMismatch
+                | crate::LayoutIssueKind::FontSizeOutlier => opts.collision_box_color,
             };
             if let (Some(rect), Some(color)) = (issue.rect, color)
                 && rect_ok(rect)
