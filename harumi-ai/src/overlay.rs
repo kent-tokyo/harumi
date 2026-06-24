@@ -70,6 +70,9 @@ pub(crate) struct OverlayLine {
     pub(crate) fragment_texts: Vec<String>,
     /// Font size of the original text (PDF points), derived from TextFragment.font_size.
     pub(crate) font_size: f32,
+    /// Normalized font size after applying [`FontSizePolicy`]. Populated in
+    /// `extract_overlay_pages` after per-role medians are computed.
+    pub(crate) normalized_font_size: f32,
     /// Right edge of the containing layout region's usable_rect.
     /// Falls back to col_right when no region is matched.
     pub(crate) region_usable_right: f32,
@@ -144,7 +147,10 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
 
 // ── Extraction ────────────────────────────────────────────────────────────────
 
-pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPage>> {
+pub(crate) fn extract_overlay_pages(
+    doc: &mut Document,
+    font_size_policy: &crate::font_sizing::FontSizePolicy,
+) -> Result<Vec<OverlayPage>> {
     let page_count = doc.page_count();
     let mut pages = Vec::new();
 
@@ -301,12 +307,25 @@ pub(crate) fn extract_overlay_pages(doc: &mut Document) -> Result<Vec<OverlayPag
                     text: rl.text.clone(),
                     fragment_texts: rl.fragments.clone(),
                     font_size: rl.font_size,
+                    normalized_font_size: 0.0,
                     region_usable_right,
                     region_role,
                     is_skip: false,
                 }
             })
             .collect();
+
+        // Second pass: compute per-role medians and populate normalized_font_size.
+        let role_medians = crate::font_sizing::compute_role_medians(&lines);
+        let mut lines = lines;
+        for line in &mut lines {
+            line.normalized_font_size = crate::font_sizing::resolve_font_size(
+                line,
+                font_size_policy,
+                &role_medians,
+                body_font_size,
+            );
+        }
 
         pages.push(OverlayPage {
             page_num,
@@ -468,8 +487,8 @@ async fn run_correction_loop(
                     continue;
                 }
                 let max_fs = line.line_height * 0.85;
-                let fs = if line.font_size > 0.0 {
-                    line.font_size
+                let fs = if line.normalized_font_size > 0.0 {
+                    line.normalized_font_size
                 } else {
                     global_body_fs
                 };
@@ -763,7 +782,7 @@ pub(crate) async fn extract_and_translate(
 ) -> Result<(Vec<OverlayPage>, HashMap<u32, Vec<String>>, f32)> {
     // ── Phase 1: Extract positioned lines ────────────────────────────────────
     let mut doc = Document::from_bytes(pdf_bytes)?;
-    let mut overlay_pages = extract_overlay_pages(&mut doc)?;
+    let mut overlay_pages = extract_overlay_pages(&mut doc, &options.font_size_policy)?;
     drop(doc);
 
     let global_body_fs = {
@@ -1230,7 +1249,7 @@ fn compute_page_quality(
                 continue;
             }
             let max_fs_cap = line.line_height * 0.85;
-            let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
+            let fs = if line.normalized_font_size > 0.0 { line.normalized_font_size } else { global_body_fs };
             let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
             let avail_w = (line.region_usable_right - line.x).max(50.0);
             let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
@@ -1473,8 +1492,8 @@ fn overlay_geometry_issues_json(
             continue;
         }
         let max_fs = line.line_height * 0.85;
-        let fs = if line.font_size > 0.0 {
-            line.font_size
+        let fs = if line.normalized_font_size > 0.0 {
+            line.normalized_font_size
         } else {
             global_body_fs
         };
@@ -1664,8 +1683,8 @@ fn apply_overlay(
                     continue;
                 }
                 let max_fs = line.line_height * 0.85;
-                let fs = if line.font_size > 0.0 {
-                    line.font_size
+                let fs = if line.normalized_font_size > 0.0 {
+                    line.normalized_font_size
                 } else {
                     global_body_fs
                 };
@@ -1678,27 +1697,21 @@ fn apply_overlay(
                 // precise column-right boundary than the heuristic col_right.
                 let avail_w = (line.region_usable_right - line.x).max(50.0);
 
-                // Tc character-spacing approach: before scaling the font down, try
-                // absorbing minor overflow (≤25%) by compressing character spacing.
-                // Tc = (target_w − natural_w) / char_count (in text-space points).
+                // Tc-before-shrink: try character spacing compression for any overflow,
+                // then fall back to font size reduction only when Tc would be too tight.
+                // Tc = (target_w − natural_w) / char_count (text-space points).
                 // Practical limit: Tc ≥ −1.0 pt (tighter looks distorted).
                 let base_w = measure_text_width(text, face, desired);
-                let (display_fs, char_spacing) = if base_w > avail_w && base_w <= avail_w * 1.25 {
+                let (display_fs, char_spacing) = if base_w > avail_w {
                     let char_count = text.chars().count().max(1) as f32;
                     let tc = (avail_w - base_w) / char_count;
                     if tc >= -1.0 {
                         (desired, tc) // keep original font size
                     } else {
-                        (
-                            fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95),
-                            0.0,
-                        )
+                        (fit_font_size(text, face, desired, avail_w, min_fs), 0.0)
                     }
                 } else {
-                    (
-                        fit_font_size(text, face, desired, avail_w, min_fs).max(desired * 0.95),
-                        0.0,
-                    )
+                    (desired, 0.0)
                 };
 
                 // Apply overflow strategy: truncate if still too wide.

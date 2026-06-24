@@ -1,6 +1,6 @@
 // inplace.rs — content-stream direct-replacement translation mode
 
-use harumi::{Document, FontHandle};
+use harumi::{Document, FontHandle, ReplaceOptions};
 use ttf_parser::Face;
 
 use crate::{
@@ -89,7 +89,34 @@ pub(crate) async fn translate_pdf_inplace_inner(
 
             stats.total_lines += 1;
 
-            let count = doc.page(page_num)?.replace_text(&line.text, text, primary_font)?;
+            // Compute normalized desired size and Tc using the same Tc-before-shrink
+            // logic as the overlay path, then pass both to replace_text_opts so that
+            // in-place stream replacements also benefit from size normalization and
+            // character spacing compression.
+            let min_fs = options.overflow.min_font_size();
+            let max_fs_cap = line.line_height * 0.85;
+            let base_fs = if line.normalized_font_size > 0.0 { line.normalized_font_size } else { global_body_fs };
+            let desired_fs = if line.is_heading { (base_fs * 1.4).min(max_fs_cap) } else { base_fs.min(max_fs_cap) };
+            let avail_w = (line.region_usable_right - line.x).max(50.0);
+            let text_w = overlay::measure_text_width(text, &face, desired_fs);
+
+            let (font_size_override, char_spacing_override) = if text_w > avail_w {
+                let char_count = text.chars().count().max(1) as f32;
+                let tc = (avail_w - text_w) / char_count;
+                if tc >= -1.0 {
+                    (Some(desired_fs), Some(tc))
+                } else {
+                    (Some(overlay::fit_font_size(text, &face, desired_fs, avail_w, min_fs)), None)
+                }
+            } else {
+                (Some(desired_fs), None)
+            };
+
+            let mut replace_opts = ReplaceOptions::default();
+            replace_opts.font_size_override = font_size_override;
+            replace_opts.char_spacing_override = char_spacing_override;
+
+            let count = doc.page(page_num)?.replace_text_opts(&line.text, text, primary_font, replace_opts.clone())?;
             if count > 0 {
                 stats.replaced += count;
                 continue;
@@ -99,7 +126,7 @@ pub(crate) async fn translate_pdf_inplace_inner(
             let retry = if let Some(stripped_orig) = strip_colon_prefix(&line.text) {
                 if !stripped_orig.is_empty() {
                     let stripped_trans = strip_colon_prefix(text).unwrap_or(text);
-                    doc.page(page_num)?.replace_text(stripped_orig, stripped_trans, primary_font)?
+                    doc.page(page_num)?.replace_text_opts(stripped_orig, stripped_trans, primary_font, replace_opts)?
                 } else { 0 }
             } else { 0 };
 
@@ -107,14 +134,10 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 continue;
             }
 
-            // Overlay fallback
+            // Overlay fallback: reuse the desired_fs / avail_w already computed above.
             stats.fallback += 1;
             let page_num_u = page_num;
-            let min_fs = options.overflow.min_font_size();
-            let max_fs_cap = line.line_height * 0.85;
-            let fs = if line.font_size > 0.0 { line.font_size } else { global_body_fs };
-            let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
-            let avail_w = (line.region_usable_right - line.x).max(50.0);
+            let desired = desired_fs;
 
             let below = line.font_size.max(global_body_fs) * descender_ratio;
             let y = line.y - below;
@@ -123,7 +146,19 @@ pub(crate) async fn translate_pdf_inplace_inner(
             let h = line.line_height + below;
             doc.page(page_num_u)?.add_rect([x, y, w, h], cover_color, 1.0)?;
 
-            let scaled = overlay::fit_font_size(text, &face, desired, avail_w, min_fs).max(desired * 0.95);
+            // Tc-before-shrink: try character spacing compression first, then shrink.
+            let base_w = overlay::measure_text_width(text, &face, desired);
+            let (scaled, char_spacing) = if base_w > avail_w {
+                let char_count = text.chars().count().max(1) as f32;
+                let tc = (avail_w - base_w) / char_count;
+                if tc >= -1.0 {
+                    (desired, tc)
+                } else {
+                    (overlay::fit_font_size(text, &face, desired, avail_w, min_fs), 0.0)
+                }
+            } else {
+                (desired, 0.0)
+            };
             let display_text: std::borrow::Cow<str> = match &options.overflow {
                 crate::OverflowStrategy::Truncate { .. }
                     if overlay::measure_text_width(text, &face, scaled) > avail_w * 1.05 =>
@@ -142,10 +177,12 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 }
                 let fh = font_handles[fidx].unwrap();
                 let run_face = all_faces[fidx];
-                doc.page(page_num_u)?.add_text_styled(
-                    &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false,
+                doc.page(page_num_u)?.add_text_styled_with_char_spacing(
+                    &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false, char_spacing,
                 )?;
-                run_x += overlay::measure_text_width(&run_text, run_face, scaled);
+                let char_count_run = run_text.chars().count() as f32;
+                run_x += overlay::measure_text_width(&run_text, run_face, scaled)
+                    + char_spacing * char_count_run;
             }
         }
     }

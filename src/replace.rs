@@ -11,6 +11,13 @@ pub(crate) struct TextReplaceOp {
     pub font: FontHandle,
     pub old_text: String,
     pub new_text: String,
+    /// Override the font size used for the replacement text.
+    /// When `Some(fs)`, the new `Tf` operator uses `fs`; the original font is
+    /// restored at the stream's original size.  `None` preserves the stream size.
+    pub font_size_override: Option<f32>,
+    /// Character spacing (PDF `Tc` operator, text-space points) applied to the
+    /// replacement text.  `0 Tc` is restored immediately after.  `None` = no-op.
+    pub char_spacing: Option<f32>,
 }
 
 pub(crate) struct ResolvedReplacement {
@@ -20,6 +27,10 @@ pub(crate) struct ResolvedReplacement {
     pub char_to_gid: BTreeMap<char, u16>,
     pub gid_to_advance: BTreeMap<u16, u16>,
     pub units_per_em: u16,
+    /// See [`TextReplaceOp::font_size_override`].
+    pub font_size_override: Option<f32>,
+    /// See [`TextReplaceOp::char_spacing`].
+    pub char_spacing: Option<f32>,
 }
 
 pub(crate) struct TextReplacePreserveOp {
@@ -805,10 +816,14 @@ pub(crate) fn rewrite_content_stream(
     // Tz compresses/expands the replacement text so it occupies the same horizontal
     // space as the original.  Only applied when 70% ≤ scale ≤ 130% to avoid
     // illegible compression; outside that range we fall back to Td compensation.
+    // Skipped when font_size_override is set (we want the natural width of the override size).
     let co_tz_scale: Vec<Option<f32>> = cross_op
         .iter()
         .map(|co| {
             let r = &replacements[co.replacement_idx];
+            if r.font_size_override.is_some() || r.char_spacing.is_some() {
+                return None;
+            }
             let orig_w = co.orig_width * co.font_size;
             let new_w = new_width(r, co.font_size);
             if new_w > 0.0 {
@@ -858,8 +873,9 @@ pub(crate) fn rewrite_content_stream(
                 out.extend_from_slice(b" Tj\n");
             }
             // Emit replacement: font switch + text + restore font + width comp.
+            let display_fs = r.font_size_override.unwrap_or(cbt.font_size);
             let orig_w = cbt.orig_width * cbt.font_size;
-            let new_w = new_width(r, cbt.font_size);
+            let new_w = effective_new_width(r, display_fs);
             let delta = orig_w - new_w;
             out.extend_from_slice(&emit_replacement(r, &cbt.font_name, cbt.font_size, delta));
             // Emit suffix chars (if the last Tj has chars after the match).
@@ -945,8 +961,9 @@ pub(crate) fn rewrite_content_stream(
                                 out.extend_from_slice(b" Tj\n");
                             }
                             if tz.is_none() {
+                                let display_fs = r.font_size_override.unwrap_or(co.font_size);
                                 let orig_w = co.orig_width * co.font_size;
-                                let new_w = new_width(r, co.font_size);
+                                let new_w = effective_new_width(r, display_fs);
                                 let delta = orig_w - new_w;
                                 if delta.abs() > 0.01 {
                                     push_number(&mut out, delta);
@@ -965,8 +982,9 @@ pub(crate) fn rewrite_content_stream(
                 };
                 let decoded = decode_str(str_bytes, &cur_font, existing_fonts);
                 if let Some(r) = find_replacement(&decoded, replacements) {
+                    let display_fs = r.font_size_override.unwrap_or(cur_size);
                     let orig_w = orig_width(str_bytes, &cur_font, cur_size, existing_fonts);
-                    let new_w = new_width(r, cur_size);
+                    let new_w = effective_new_width(r, display_fs);
                     let delta = orig_w - new_w;
                     let fragment = emit_replacement(r, &cur_font, cur_size, delta);
                     out.extend_from_slice(&bytes[last_copied..op.start]);
@@ -997,8 +1015,9 @@ pub(crate) fn rewrite_content_stream(
                                 out.extend_from_slice(b" Tj\n");
                             }
                             if tz.is_none() {
+                                let display_fs = r.font_size_override.unwrap_or(co.font_size);
                                 let orig_w = co.orig_width * co.font_size;
-                                let new_w = new_width(r, co.font_size);
+                                let new_w = effective_new_width(r, display_fs);
                                 let delta = orig_w - new_w;
                                 if delta.abs() > 0.01 {
                                     push_number(&mut out, delta);
@@ -1057,6 +1076,12 @@ fn emit_cross_op_replacement(
     co: &CrossOpMatch,
     tz_scale: Option<f32>,
 ) {
+    let display_size = r.font_size_override.unwrap_or(co.font_size);
+    let tc = r.char_spacing.unwrap_or(0.0);
+    if tc.abs() > 0.0001 {
+        push_number(out, tc);
+        out.extend_from_slice(b" Tc\n");
+    }
     if let Some(scale) = tz_scale {
         push_number(out, scale);
         out.extend_from_slice(b" Tz\n");
@@ -1064,14 +1089,17 @@ fn emit_cross_op_replacement(
     out.push(b'/');
     out.extend_from_slice(&r.new_pdf_font_name);
     out.push(b' ');
-    push_number(out, co.font_size);
+    push_number(out, display_size);
     out.extend_from_slice(b" Tf\n");
     out.extend_from_slice(&gids_hex(r));
     out.extend_from_slice(b" Tj\n");
+    if tc.abs() > 0.0001 {
+        out.extend_from_slice(b"0 Tc\n");
+    }
     out.push(b'/');
     out.extend_from_slice(&co.font_name);
     out.push(b' ');
-    push_number(out, co.font_size);
+    push_number(out, co.font_size); // restore at stream size
     out.extend_from_slice(b" Tf\n");
     if tz_scale.is_some() {
         out.extend_from_slice(b"100 Tz\n");
@@ -1085,24 +1113,36 @@ fn emit_cross_op_replacement(
 fn emit_replacement(
     r: &ResolvedReplacement,
     orig_font_name: &[u8],
-    font_size: f32,
+    stream_font_size: f32,
     width_delta: f32,
 ) -> Vec<u8> {
+    // Use the override when set; otherwise keep the stream font size.
+    let display_size = r.font_size_override.unwrap_or(stream_font_size);
+    let tc = r.char_spacing.unwrap_or(0.0);
     let mut out = Vec::new();
+    // Set character spacing when requested.
+    if tc.abs() > 0.0001 {
+        push_number(&mut out, tc);
+        out.extend_from_slice(b" Tc\n");
+    }
     // Switch to replacement font
     out.push(b'/');
     out.extend_from_slice(&r.new_pdf_font_name);
     out.push(b' ');
-    push_number(&mut out, font_size);
+    push_number(&mut out, display_size);
     out.extend_from_slice(b" Tf\n");
     // Replacement text
     out.extend_from_slice(&gids_hex(r));
     out.extend_from_slice(b" Tj\n");
-    // Restore original font
+    // Restore character spacing to neutral.
+    if tc.abs() > 0.0001 {
+        out.extend_from_slice(b"0 Tc\n");
+    }
+    // Restore original font at the STREAM size (not the display size).
     out.push(b'/');
     out.extend_from_slice(orig_font_name);
     out.push(b' ');
-    push_number(&mut out, font_size);
+    push_number(&mut out, stream_font_size);
     out.extend_from_slice(b" Tf\n");
     // Width compensation
     if width_delta.abs() > 0.01 {
@@ -1143,24 +1183,37 @@ fn emit_tj_array(
                 }
 
                 if let Some(r) = find_replacement(&decoded, replacements) {
+                    let display_fs = r.font_size_override.unwrap_or(font_size);
+                    let tc = r.char_spacing.unwrap_or(0.0);
                     let orig_w = orig_width(bytes, orig_font_name, font_size, existing_fonts);
-                    let new_w = new_width(r, font_size);
+                    let new_natural_w = new_width(r, display_fs);
+                    let char_count = r.new_text.chars().count() as f32;
+                    let effective_new_w = new_natural_w + tc * char_count;
+                    // Set character spacing
+                    if tc.abs() > 0.0001 {
+                        push_number(&mut out, tc);
+                        out.extend_from_slice(b" Tc\n");
+                    }
                     // Font switch + replacement
                     out.push(b'/');
                     out.extend_from_slice(&r.new_pdf_font_name);
                     out.push(b' ');
-                    push_number(&mut out, font_size);
+                    push_number(&mut out, display_fs);
                     out.extend_from_slice(b" Tf\n");
                     out.extend_from_slice(&gids_hex(r));
                     out.extend_from_slice(b" Tj\n");
-                    // Restore original font
+                    // Restore character spacing
+                    if tc.abs() > 0.0001 {
+                        out.extend_from_slice(b"0 Tc\n");
+                    }
+                    // Restore original font at stream size
                     out.push(b'/');
                     out.extend_from_slice(orig_font_name);
                     out.push(b' ');
                     push_number(&mut out, font_size);
                     out.extend_from_slice(b" Tf\n");
-                    // Accumulate width delta for next Td
-                    pending_kern = orig_w - new_w;
+                    // Accumulate effective width delta for next Td
+                    pending_kern = orig_w - effective_new_w;
                     fonts_used.insert(r.new_pdf_font_name.clone());
                 } else {
                     // Re-encode original bytes as hex Tj
@@ -1216,6 +1269,17 @@ fn new_width(r: &ResolvedReplacement, font_size: f32) -> f32 {
             *r.gid_to_advance.get(&gid).unwrap_or(&1000) as f32 * font_size / upm
         })
         .sum()
+}
+
+/// Effective advance width of the replacement text at `font_size`, including Tc spacing.
+fn effective_new_width(r: &ResolvedReplacement, font_size: f32) -> f32 {
+    let natural = new_width(r, font_size);
+    let tc = r.char_spacing.unwrap_or(0.0);
+    if tc.abs() < 0.0001 {
+        natural
+    } else {
+        natural + tc * r.new_text.chars().count() as f32
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2446,6 +2510,8 @@ mod tests {
             char_to_gid: [('A', 0x0041u16)].into_iter().collect(),
             gid_to_advance: [(0x0041u16, 500u16)].into_iter().collect(),
             units_per_em: 1000,
+            font_size_override: None,
+            char_spacing: None,
         };
         let hex = gids_hex(&r);
         assert_eq!(hex, b"<0041>");
@@ -2463,6 +2529,8 @@ mod tests {
             char_to_gid: BTreeMap::new(),
             gid_to_advance: BTreeMap::new(),
             units_per_em: 1000,
+            font_size_override: None,
+            char_spacing: None,
         }];
         let (result, fonts_used) = rewrite_content_stream(stream, &replacements, &fonts);
         assert_eq!(result, stream);
@@ -2548,6 +2616,8 @@ mod tests {
             char_to_gid: [('A', 0x0041u16), ('B', 0x0042u16)].into_iter().collect(),
             gid_to_advance: [(0x0041u16, 500u16), (0x0042u16, 500u16)].into_iter().collect(),
             units_per_em: 1000,
+            font_size_override: None,
+            char_spacing: None,
         };
 
         let (out, _) = rewrite_content_stream(stream, &[r], &fonts);

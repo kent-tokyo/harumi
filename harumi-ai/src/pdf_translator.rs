@@ -172,6 +172,14 @@ pub struct TranslateOptions {
     /// fail to compile are silently skipped.  Use
     /// [`TranslateOptions::with_sds_patterns`] to add built-in SDS defaults.
     pub skip_patterns: Vec<String>,
+    /// Font size normalization policy (default: [`FontSizePolicy::Quantized`]).
+    ///
+    /// Controls how the desired font size is computed for each translated line.
+    /// The default `Quantized` policy groups lines by semantic role, computes the
+    /// median size per role, and snaps it to a standard PDF point size.  This
+    /// produces visually consistent output when the source PDF has small per-line
+    /// font size jitter (e.g. 8.8 / 9.0 / 9.2 pt body text → all rendered at 9 pt).
+    pub font_size_policy: crate::font_sizing::FontSizePolicy,
 }
 
 impl Clone for TranslateOptions {
@@ -211,6 +219,7 @@ impl Clone for TranslateOptions {
             auto_skip_math: self.auto_skip_math,
             cache: self.cache.as_ref().map(Arc::clone),
             skip_patterns: self.skip_patterns.clone(),
+            font_size_policy: self.font_size_policy.clone(),
         }
     }
 }
@@ -245,6 +254,7 @@ impl TranslateOptions {
             auto_skip_math: false,
             cache: None,
             skip_patterns: vec![],
+            font_size_policy: crate::font_sizing::FontSizePolicy::default(),
         }
     }
 
@@ -305,6 +315,7 @@ pub struct TranslateOptionsBuilder {
     skip_patterns: Vec<String>,
     skip_header_footer: bool,
     auto_skip_math: bool,
+    font_size_policy: Option<crate::font_sizing::FontSizePolicy>,
 }
 
 impl TranslateOptionsBuilder {
@@ -445,6 +456,12 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Font size normalization policy (default: [`FontSizePolicy::Quantized`]).
+    pub fn font_size_policy(mut self, policy: crate::font_sizing::FontSizePolicy) -> Self {
+        self.font_size_policy = Some(policy);
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -476,6 +493,7 @@ impl TranslateOptionsBuilder {
             auto_skip_math: self.auto_skip_math,
             cache: self.cache,
             skip_patterns: self.skip_patterns,
+            font_size_policy: self.font_size_policy.unwrap_or_default(),
         }
     }
 }

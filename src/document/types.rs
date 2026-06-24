@@ -196,6 +196,18 @@ pub struct ReplaceOptions {
     /// Chrome/Skia-generated PDFs with Type3 fonts.  In that case `"T h e F r e e"` is
     /// normalised to `"TheFree"` before the match, allowing cross-BT replacement to succeed.
     pub normalize_whitespace: bool,
+    /// Override the font size used for the replacement text.
+    ///
+    /// When `Some(fs)`, the new `Tf` operator uses `fs` pt; the original font is
+    /// restored at the size found in the content stream.  Use this to apply a
+    /// normalised or quantised size (e.g. from `FontSizePolicy`) to in-place
+    /// replacements.  `None` (the default) preserves the stream font size.
+    pub font_size_override: Option<f32>,
+    /// Character spacing (PDF `Tc` operator, text-space points) applied around the
+    /// replacement text.  A negative value compresses character spacing; positive
+    /// expands it.  `0 Tc` is automatically restored after the replacement.
+    /// `None` (the default) emits no `Tc` operator.
+    pub char_spacing_override: Option<f32>,
 }
 
 /// Placement options for [`PageHandle::replace_text_fragments_opts`].

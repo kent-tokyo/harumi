@@ -2621,9 +2621,16 @@ impl Document {
         // Replace pass: rewrite existing content streams for pages with Replace ops.
         {
             // Collect work items (cloned) to avoid borrow conflicts with self.inner.
+            struct ReplaceOp {
+                old_text: String,
+                new_text: String,
+                font_idx: u32,
+                font_size_override: Option<f32>,
+                char_spacing: Option<f32>,
+            }
             struct ReplaceWork {
                 page_id: ObjectId,
-                ops: Vec<(String, String, u32)>, // (old_text, new_text, font_idx)
+                ops: Vec<ReplaceOp>,
             }
             let work: Vec<ReplaceWork> = self
                 .pending
@@ -2634,7 +2641,13 @@ impl Document {
                         .iter()
                         .filter_map(|op| {
                             if let PendingOp::Replace(r) = op {
-                                Some((r.old_text.clone(), r.new_text.clone(), r.font.0))
+                                Some(ReplaceOp {
+                                    old_text: r.old_text.clone(),
+                                    new_text: r.new_text.clone(),
+                                    font_idx: r.font.0,
+                                    font_size_override: r.font_size_override,
+                                    char_spacing: r.char_spacing,
+                                })
                             } else {
                                 None
                             }
@@ -2654,17 +2667,19 @@ impl Document {
             for item in work {
                 // Build resolved replacements from embedded font info.
                 let mut resolved: Vec<crate::replace::ResolvedReplacement> = Vec::new();
-                for (old_text, new_text, font_idx) in &item.ops {
+                for op in &item.ops {
                     let state = embedded
-                        .get(font_idx)
-                        .ok_or(Error::InvalidFont(*font_idx))?;
+                        .get(&op.font_idx)
+                        .ok_or(Error::InvalidFont(op.font_idx))?;
                     resolved.push(crate::replace::ResolvedReplacement {
-                        old_text: old_text.clone(),
-                        new_text: new_text.clone(),
+                        old_text: op.old_text.clone(),
+                        new_text: op.new_text.clone(),
                         new_pdf_font_name: state.ef.pdf_name.clone(),
                         char_to_gid: state.char_to_gid.clone(),
                         gid_to_advance: state.gid_to_advance.clone(),
                         units_per_em: state.units_per_em,
+                        font_size_override: op.font_size_override,
+                        char_spacing: op.char_spacing,
                     });
                 }
 
@@ -2683,10 +2698,10 @@ impl Document {
                 // This avoids overwriting existing font entries when no replacement matched.
                 let mut registered: std::collections::HashSet<Vec<u8>> =
                     std::collections::HashSet::new();
-                for (_, _, font_idx) in &item.ops {
+                for op in &item.ops {
                     let state = embedded
-                        .get(font_idx)
-                        .ok_or(Error::InvalidFont(*font_idx))?;
+                        .get(&op.font_idx)
+                        .ok_or(Error::InvalidFont(op.font_idx))?;
                     if fonts_used.contains(&state.ef.pdf_name)
                         && registered.insert(state.ef.pdf_name.clone())
                     {
@@ -2722,10 +2737,11 @@ impl Document {
                     // Register new fonts in the XObject's own /Resources/Font.
                     let mut xobj_registered: std::collections::HashSet<Vec<u8>> =
                         std::collections::HashSet::new();
-                    for (_, _, font_idx) in &item.ops {
+                    for op in &item.ops {
+                        let font_idx = op.font_idx;
                         let state = embedded
-                            .get(font_idx)
-                            .ok_or(Error::InvalidFont(*font_idx))?;
+                            .get(&font_idx)
+                            .ok_or(Error::InvalidFont(font_idx))?;
                         if xobj_fonts_used.contains(&state.ef.pdf_name)
                             && xobj_registered.insert(state.ef.pdf_name.clone())
                         {

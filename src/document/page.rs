@@ -362,6 +362,8 @@ impl<'doc> PageHandle<'doc> {
                 font,
                 old_text: old_text.to_owned(),
                 new_text: new_text.to_owned(),
+                font_size_override: None,
+                char_spacing: None,
             }));
         }
         Ok(count)
@@ -406,6 +408,8 @@ impl<'doc> PageHandle<'doc> {
                 font,
                 old_text: effective_old,
                 new_text: new_text.to_owned(),
+                font_size_override: opts.font_size_override,
+                char_spacing: opts.char_spacing_override,
             }));
         }
         Ok(count)

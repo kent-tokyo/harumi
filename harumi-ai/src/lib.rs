@@ -31,6 +31,7 @@ mod builder;
 pub mod cache;
 mod error;
 mod extractor;
+pub(crate) mod font_sizing;
 mod inplace;
 mod layout;
 mod layout_repair;
@@ -53,6 +54,7 @@ pub use output::{
     CorrectionRound, DebugArtifacts, DebugOptions, PageQualityReport, TranslateOutput,
     TranslateQuality,
 };
+pub use font_sizing::FontSizePolicy;
 pub use pdf_translator::{
     OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf,
 };
