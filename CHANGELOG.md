@@ -11,6 +11,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.18.0] — 2026-06-26
+
+### Added
+
+- **`ReplaceOptions::font_size_override: Option<f32>`** (`src/replace.rs`) — overrides the
+  font size used when writing the replacement glyph sequence. When `None` (default),
+  the original `Tf` size is preserved.
+
+- **`ReplaceOptions::char_spacing: f32`** (`src/replace.rs`) — inserts a `Tc` character-spacing
+  operator before the replacement text. Default `0.0` (no effect).
+
+- **`TextReplaceOp::font_size_override`** and **`TextReplaceOp::char_spacing`**
+  (`src/replace.rs`) — per-operation overrides, passed through `resolve_replacements`
+  into `ResolvedReplacement`.
+
+- **`ResolvedReplacement::font_size_override`** and **`ResolvedReplacement::char_spacing`**
+  (`src/replace.rs`) — carry the per-replacement sizing and spacing values into the
+  content-stream rewrite stage.
+
+---
+
+## [1.17.0] — 2026-06-23
+
+### Added
+
+- **`VectorRule`** struct (`src/extract.rs`) — represents a stroked line or thin filled
+  rectangle (≤3 pt) extracted from a PDF content stream.  Methods: `new()`,
+  `is_horizontal()`, `is_vertical()`, `bbox()`.
+
+- **`extract_vector_rules(content, page_height) -> Vec<VectorRule>`** (`src/extract.rs`) —
+  parses stroked lines and thin filled rectangles from a decompressed content stream,
+  tracking the full CTM stack (`q`/`Q`/`cm`).  Rotated or sheared rules are omitted.
+
+- **`Document::extract_vector_rules(page_number) -> Result<Vec<VectorRule>>`**
+  (`src/document/mod.rs`) — convenience wrapper over `extract_vector_rules`.
+
+- **`Document::assess_page_layout_quality_with_rules(page_number, plans, rules)`**
+  (`src/document/mod.rs`) — like `assess_page_layout_quality` but additionally detects
+  text-vs-table-border collisions using the supplied `VectorRule` slice.
+
+- **`LayoutIssueKind`** extended (`src/extract.rs`) with: `TextVsTableBorder`,
+  `TableCellSpillover`, `ClippedText`, `BaselineMismatch`, `FontSizeOutlier`.
+
+- **`detect_text_vs_rule_collisions(text_rects, rules) -> Vec<Collision>`** (`src/extract.rs`) —
+  standalone function for callers who work with raw bounding boxes.
+
+- **`SimplePlacement`** struct (`src/extract.rs`) — lightweight alternative to
+  `RegionFitPlan` for callers that cannot depend on `#[non_exhaustive]` internals.
+  Fields: `source_rect`, `placed_rect`.
+
+- **`PageLayoutQuality::from_simple_placements(placements, page_width, page_height)`**
+  (`src/extract.rs`) — constructs a quality report from `SimplePlacement` slices;
+  does not require `LayoutRegion` or `RegionFitPlan`.
+
+- **`PageLayoutQuality::from_plans_with_rules(plans, image_bboxes, rules, page_width, page_height)`**
+  (`src/extract.rs`) — rule-aware variant of `from_plans`.
+
+---
+
 ## [1.16.0] — 2026-06-21
 
 ### Added

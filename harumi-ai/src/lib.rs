@@ -21,8 +21,10 @@
 //! ```
 //!
 //! # Known limitations
-//! - **Layout**: flow-based reconstruction only. Tables, multi-column layouts, images,
-//!   and font colours are not reproduced.
+//! - **Layout**: overlay mode places translated text at the original baseline with
+//!   font-accurate descender coverage; in-place mode rewrites Tj/TJ operators directly.
+//!   Tables, multi-column layouts, and font colours require `TranslationMode::Overlay`
+//!   with `detect_text_columns` for best results; images are preserved as-is.
 //! - **Font**: all output text uses the single font provided in `TranslateOptions::font`.
 //! - **Paragraph classification**: `extract_text_chunks` uses font-size heuristics;
 //!   complex PDFs may have imperfect heading/paragraph classification.

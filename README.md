@@ -224,7 +224,7 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 
 ```toml
 [dependencies]
-harumi = "1.9"
+harumi = "1"
 ```
 
 ### Getting Fonts for CJK Support
