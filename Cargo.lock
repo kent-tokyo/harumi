@@ -618,6 +618,8 @@ dependencies = [
  "rand 0.8.6",
  "rcgen",
  "rsa",
+ "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "ttf-parser",

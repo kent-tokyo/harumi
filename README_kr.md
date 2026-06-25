@@ -46,6 +46,41 @@ doc.save("searchable.pdf")?;
 
 ---
 
+## OCR 엔진 또는 LLM과 함께 사용하기
+
+**ocrs-cjk가 읽는다. LLM이 번역한다. harumi가 PDF에 되돌려 쓴다.**
+
+harumi는 「PDF 쓰기 레이어」입니다. OCR 엔진, 번역 모델, AI 에이전트 등
+문서를 읽고 내용을 변환하는 어떤 처리와도 연결할 수 있습니다.
+마지막 단계인 Unicode/CJK 텍스트를 페이지를 래스터화하지 않고 PDF에 되써넣는 작업을 담당합니다.
+
+```
+scanned.pdf
+  └─ ocrs-cjk (--json)
+       ├─ 인식된 텍스트
+       ├─ 바운딩 박스
+       └─ 신뢰도 점수
+  └─ harumi (이 라이브러리)
+       ├─ CJK 폰트 서브셋 + ToUnicode CMap
+       ├─ 보이지 않는 텍스트 레이어 (렌더링 모드 3)
+       └─ 추가 전용 저장 → 원본 이미지 완전 보존
+
+=> searchable.pdf (모든 PDF 뷰어에서 텍스트 선택 및 검색 가능)
+```
+
+포함된 fixture로 바로 실행:
+```bash
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable.pdf
+```
+
+harumi는 OCR 엔진이 아닙니다. 번역 경로에는 임의의 LLM 위에 구축된 `harumi-ai`를 사용하세요.
+
+---
+
 ## 얻을 수 있는 것
 
 | 과제 | harumi의 답 |

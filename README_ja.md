@@ -46,6 +46,56 @@ doc.save("searchable.pdf")?;
 
 ---
 
+## OCRエンジンやLLMと組み合わせる
+
+**ocrs-cjkで読む。LLMで訳す。harumiでPDFに戻す。**
+
+harumi は「PDF書き戻しレイヤー」です。OCRエンジン、翻訳モデル、AIエージェントなど
+文書を読んで内容を変換するどんな処理とも組み合わせられます。
+最後の工程—Unicode/CJKテキストをラスタライズせずPDFに埋め込む—を担当します。
+
+```
+scanned.pdf
+  └─ ocrs-cjk (--json)
+       ├─ 認識テキスト
+       ├─ バウンディングボックス
+       └─ 信頼度スコア
+  └─ harumi（このライブラリ）
+       ├─ CJKフォントサブセット + ToUnicode CMap
+       ├─ 不可視テキストレイヤー（描画モード 3）
+       └─ 追記のみの保存 → 元の画像は一切変更なし
+
+=> searchable.pdf（どのPDFビューアでも文字を選択・検索可能）
+```
+
+```rust
+// 最小スケッチ — フルパイプラインは examples/ocrs_cjk_to_searchable_pdf.rs を参照
+let mut doc = Document::from_file("scanned.pdf")?;
+let font = doc.embed_font(&std::fs::read("NotoSansCJKjp-Regular.ttf")?)?;
+
+for word in ocr_words {                       // ocrs-cjk の JSON から
+    if word.confidence >= 0.5 {
+        doc.page(1)?.add_invisible_text(
+            &word.text, font, [word.pdf_x, word.pdf_y], word.font_size,
+        )?;
+    }
+}
+doc.save("searchable.pdf")?;
+```
+
+付属フィクスチャでサンプル実行：
+```bash
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable.pdf
+```
+
+harumi は OCR エンジンではありません。翻訳パスには、LLM の上に構築された `harumi-ai` を使います。
+
+---
+
 ## 得られるもの
 
 | 課題 | harumi の答え |

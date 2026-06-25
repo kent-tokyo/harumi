@@ -46,6 +46,41 @@ doc.save("searchable.pdf")?;
 
 ---
 
+## 与 OCR 引擎或 LLM 配合使用
+
+**ocrs-cjk 负责读取。LLM 负责翻译。harumi 负责写回。**
+
+harumi 是「PDF 回写层」——无论是 OCR 引擎、翻译模型还是 AI 智能体，
+harumi 承担最后一步：在不对页面重新光栅化的前提下，
+将 Unicode/CJK 文本写回 PDF。
+
+```
+scanned.pdf
+  └─ ocrs-cjk (--json)
+       ├─ 识别文本
+       ├─ 边界框
+       └─ 置信度分数
+  └─ harumi（本库）
+       ├─ CJK 字体子集 + ToUnicode CMap
+       ├─ 不可见文本层（渲染模式 3）
+       └─ 仅追加保存 → 原始图像完整保留
+
+=> searchable.pdf（在任意 PDF 阅读器中均可选取和搜索文字）
+```
+
+随附 fixture 快速体验：
+```bash
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable.pdf
+```
+
+harumi 不是 OCR 引擎。翻译路径请使用构建在任意 LLM 之上的 `harumi-ai`。
+
+---
+
 ## 你能得到什么
 
 | 挑战 | harumi 的答案 |

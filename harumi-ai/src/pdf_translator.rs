@@ -635,7 +635,7 @@ async fn translate_pdf_auto_cascade(
             .quality
             .pages
             .iter()
-            .all(|r| gate.evaluate(&r.summary).is_pass());
+            .all(|r| gate.evaluate(&r.summary).is_ok());
         if !overlay_passes && let Some(nd_opts) = nd_opts {
             let reason2 =
                 format!("{reason1}; Overlay quality gate still failed; retried as NewDocument");
@@ -704,7 +704,14 @@ fn finalize_output(
         if all_violations.is_empty() {
             QualityResult::Pass
         } else {
-            QualityResult::Fail(all_violations)
+            let hard_fail = all_violations.iter().any(|v| {
+                !matches!(v, crate::quality::QualityViolation::TooManyShrunk { .. })
+            });
+            if hard_fail {
+                QualityResult::Fail(all_violations)
+            } else {
+                QualityResult::Warn(all_violations)
+            }
         }
     };
 

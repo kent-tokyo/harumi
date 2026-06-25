@@ -46,6 +46,56 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 
 ---
 
+## Pair with an OCR engine or LLM
+
+**ocrs-cjk reads. LLMs translate. harumi writes back.**
+
+harumi is the PDF write-back layer. Whatever reads or rewrites the document —
+an OCR engine, a translation model, or an AI agent — harumi handles the final step:
+putting Unicode/CJK text back into the PDF without rasterizing the page.
+
+```
+scanned.pdf
+  └─ ocrs-cjk (--json)
+       ├─ recognized text
+       ├─ bounding boxes
+       └─ confidence scores
+  └─ harumi (this library)
+       ├─ CJK font subsetting + ToUnicode CMap
+       ├─ invisible text layer (render mode 3)
+       └─ append-only save → original image untouched
+
+=> searchable.pdf  (text is selectable and indexable in any PDF viewer)
+```
+
+```rust
+// Minimal sketch — see examples/ocrs_cjk_to_searchable_pdf.rs for the full pipeline.
+let mut doc = Document::from_file("scanned.pdf")?;
+let font = doc.embed_font(&std::fs::read("NotoSansCJKjp-Regular.ttf")?)?;
+
+for word in ocr_words {                         // from ocrs-cjk JSON
+    if word.confidence >= 0.5 {
+        doc.page(1)?.add_invisible_text(
+            &word.text, font, [word.pdf_x, word.pdf_y], word.font_size,
+        )?;
+    }
+}
+doc.save("searchable.pdf")?;
+```
+
+Run the full example with the bundled fixture:
+```bash
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable.pdf
+```
+
+harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of any LLM.
+
+---
+
 ## What you get
 
 | Challenge | harumi's answer |

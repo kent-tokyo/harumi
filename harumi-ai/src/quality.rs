@@ -132,7 +132,16 @@ impl QualityGate {
         if violations.is_empty() {
             QualityResult::Pass
         } else {
-            QualityResult::Fail(violations)
+            // Only font-shrink violations → Warn (layout is preserved, text just smaller).
+            // Any overflow, collision, or overlap violation → Fail.
+            let hard_fail = violations.iter().any(|v| {
+                !matches!(v, QualityViolation::TooManyShrunk { .. })
+            });
+            if hard_fail {
+                QualityResult::Fail(violations)
+            } else {
+                QualityResult::Warn(violations)
+            }
         }
     }
 
@@ -147,24 +156,38 @@ impl QualityGate {
 
 /// Outcome of [`QualityGate::evaluate`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum QualityResult {
-    /// All gate checks passed.
+    /// All gate checks passed with no violations.
     Pass,
-    /// One or more gate checks failed.
+    /// Gate passed but with minor violations (e.g. font shrinking only).
+    ///
+    /// The PDF is usable; callers may log the violations or expose them
+    /// in a quality report without treating the output as failed.
+    Warn(Vec<QualityViolation>),
+    /// One or more hard gate checks failed (overflow, collision, large overlap).
     Fail(Vec<QualityViolation>),
 }
 
 impl QualityResult {
-    /// Returns `true` when the result is [`QualityResult::Pass`].
+    /// Returns `true` only when the result is [`QualityResult::Pass`] (no violations at all).
     pub fn is_pass(&self) -> bool {
         matches!(self, Self::Pass)
     }
 
-    /// Returns the violation list, or an empty slice when passing.
+    /// Returns `true` when the result is [`Pass`](Self::Pass) or [`Warn`](Self::Warn).
+    ///
+    /// Use this to check whether the output PDF is acceptable for downstream use,
+    /// while still allowing minor font-shrink warnings through.
+    pub fn is_ok(&self) -> bool {
+        !matches!(self, Self::Fail(_))
+    }
+
+    /// Returns the violation list, or an empty slice for [`Pass`](Self::Pass).
     pub fn violations(&self) -> &[QualityViolation] {
         match self {
             Self::Pass => &[],
-            Self::Fail(v) => v,
+            Self::Warn(v) | Self::Fail(v) => v,
         }
     }
 }
