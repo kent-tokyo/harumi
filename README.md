@@ -1,9 +1,11 @@
 # harumi
 
-> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+**Layout-preserving CJK PDF editing in pure Rust.**
 
-**Overlay text, extract content, merge/split pages, draw shapes — all in pure Rust.**  
-Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-ready.
+harumi extracts positioned text from existing PDFs, lets you translate or replace it,
+and writes the result back while preserving the original page layout.
+CID fonts, CMaps, Unicode mapping, font subsetting, text fitting, and layout
+collision checks are all handled automatically.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
@@ -14,30 +16,15 @@ Full CJK (Japanese / Chinese / Korean) font support. Zero C dependencies. WASM-r
 
 **[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)** — annotation editor (text · rect · line · freehand pen) running entirely in your browser via WASM
 
-### 🔌 Available as MCP Server
+**Use harumi for:**
+- PDF translation pipelines (extract → translate → write back with layout intact)
+- OCR searchable text layers on scanned PDFs
+- Japanese / Chinese / Korean text overlays and stamps
+- Page manipulation, annotation, form editing, and PDF merging
+- WASM, Lambda, Tauri, and MCP-based AI document workflows
 
-Use harumi directly from Claude Code, Cursor, or Continue via the **[harumi-mcp](harumi-mcp/)** Model Context Protocol server:
-
-```bash
-# Build the MCP server
-cargo build -p harumi-mcp
-
-# Use in Claude Code, Cursor, or Continue (configure in your IDE settings)
-# MCP tools available: pdf_extract_text, pdf_extract_all_pages, pdf_replace_text,
-# pdf_add_invisible_text, pdf_html_to_pdf, pdf_merge, pdf_page_info
-```
-
-For layout-preserving PDF translation, extract all pages with `pdf_extract_all_pages`,
-translate the fragments, then apply replacements with `pdf_replace_text`. If a PDF
-cannot be resubset because it uses a non-Identity `CIDToGIDMap`, use
-`mode: "new_font"` with a Unicode TTF font.
-The `harumi-ai` CLI defaults to `overlay` mode when you want to keep the original
-page layout intact; pass `new` only when you want a regenerated document.
-Overlay mode uses `detect_text_columns` for multi-column layout detection and
-places translated text at the precise original baseline with font-accurate
-descender coverage.
-
-Register on [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) for one-click installation.
+> Not an OCR engine. Not a PDF viewer.  
+> harumi is the PDF write-back layer for document automation.
 
 ---
 
@@ -217,6 +204,33 @@ JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap
 - **`pdfium-render`** — C++ bindings that break WASM, cross-compilation, and Lambda deploys
 
 `harumi` fills the gap.
+
+---
+
+## MCP Server (harumi-mcp)
+
+Use harumi directly from Claude Code, Cursor, or Continue via the **[harumi-mcp](harumi-mcp/)** Model Context Protocol server:
+
+```bash
+# Build the MCP server
+cargo build -p harumi-mcp
+
+# Use in Claude Code, Cursor, or Continue (configure in your IDE settings)
+# MCP tools available: pdf_extract_text, pdf_extract_all_pages, pdf_replace_text,
+# pdf_add_invisible_text, pdf_html_to_pdf, pdf_merge, pdf_page_info
+```
+
+For layout-preserving PDF translation, extract all pages with `pdf_extract_all_pages`,
+translate the fragments, then apply replacements with `pdf_replace_text`. If a PDF
+cannot be resubset because it uses a non-Identity `CIDToGIDMap`, use
+`mode: "new_font"` with a Unicode TTF font.
+The `harumi-ai` CLI defaults to `overlay` mode when you want to keep the original
+page layout intact; pass `new` only when you want a regenerated document.
+Overlay mode uses `detect_text_columns` for multi-column layout detection and
+places translated text at the precise original baseline with font-accurate
+descender coverage.
+
+Register on [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) for one-click installation.
 
 ---
 

@@ -1,9 +1,11 @@
 # harumi
 
-> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+**纯 Rust 实现的 CJK PDF 编辑引擎，在保留原版面的前提下提取、替换、回写文本。**
 
-**纯 Rust 实现的 PDF 操作库 — 文本叠加、内容提取、页面操作、图形绘制一站搞定。**  
-完整支持中文/日文/韩文（CJK）字体。零 C 依赖。原生 WASM 支持。
+harumi 从现有 PDF 中提取带位置的文本，让你翻译或替换后，
+在不破坏原页面布局的情况下将结果写回。
+CID 字体、CMap、Unicode 映射、字体子集化、文本适配和版面碰撞检测
+全部自动完成，对调用者透明。
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
@@ -14,32 +16,15 @@
 
 **[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)** — 注释编辑器（文字・矩形・直线・自由笔）完全通过 WASM 在浏览器中运行
 
-### 🔌 作为 MCP 服务器可用
+**主要用途：**
+- PDF 翻译流水线（提取 → 翻译 → 保持版面回写）
+- 在扫描 PDF 上叠加 OCR 可搜索文本层
+- 中文/日文/韩文文本叠加与盖章
+- 页面操作、注释、表单编辑、PDF 合并
+- 基于 WASM、Lambda、Tauri 或 MCP 的 AI 文档工作流
 
-从 Claude Code、Cursor 或 Continue IDE 直接使用 harumi 的 PDF 工具：
-
-```bash
-# 构建 MCP 服务器（纯 Rust，无运行时依赖）
-cargo build -p harumi-mcp
-
-# IDE 配置中可用的工具：
-# - pdf_extract_text: 带位置的文本提取
-# - pdf_extract_all_pages: 提取所有页面的带位置文本
-# - pdf_replace_text: 保持版面进行文本替换/翻译
-# - pdf_add_invisible_text: OCR 可搜索层
-# - pdf_html_to_pdf: HTML→PDF 转换
-# - pdf_merge: PDF 合并
-# - pdf_page_info: 获取页面信息
-```
-
-PDF 翻译流程：先用 `pdf_extract_all_pages` 提取所有页面的文本片段，翻译后再用
-`pdf_replace_text` 在保留原版面的前提下替换文本。如果 PDF 因非 Identity
-`CIDToGIDMap` 无法重新子集化，请指定 Unicode TTF 并使用 `mode: "new_font"`。
-`harumi-ai` CLI 在保留原版面时默认使用 `overlay` mode；只有需要重新生成文档时才指定 `new`。
-Overlay mode 使用 `detect_text_columns` 检测多栏布局，将译文精确放置在原文基线 Y 处
-（白色矩形已按字体实际 descender 量补偿）。
-
-在 [smithery.ai](https://smithery.ai) 或 [mcp.so](https://mcp.so) 上注册中。
+> 不是 OCR 引擎，不是 PDF 查看器。  
+> harumi 是文档自动化的「PDF 回写层」。
 
 ---
 
@@ -170,6 +155,35 @@ JavaScript 有 [`pdf-lib`](https://pdf-lib.js.org/)，它可以透明地处理�
 | 内联粗体/斜体/颜色 | Yes (synthetic) | No | No | No | Yes |
 | 加密（读取） | Yes | Yes | No | Partial | Yes |
 | 加密（写入） | Yes (RC4-128) | Yes | No | No | Yes |
+
+---
+
+## MCP 服务器（harumi-mcp）
+
+从 Claude Code、Cursor 或 Continue IDE 直接使用 harumi 的 PDF 工具：
+
+```bash
+# 构建 MCP 服务器（纯 Rust，无运行时依赖）
+cargo build -p harumi-mcp
+
+# IDE 配置中可用的工具：
+# - pdf_extract_text: 带位置的文本提取
+# - pdf_extract_all_pages: 提取所有页面的带位置文本
+# - pdf_replace_text: 保持版面进行文本替换/翻译
+# - pdf_add_invisible_text: OCR 可搜索层
+# - pdf_html_to_pdf: HTML→PDF 转换
+# - pdf_merge: PDF 合并
+# - pdf_page_info: 获取页面信息
+```
+
+PDF 翻译流程：先用 `pdf_extract_all_pages` 提取所有页面的文本片段，翻译后再用
+`pdf_replace_text` 在保留原版面的前提下替换文本。如果 PDF 因非 Identity
+`CIDToGIDMap` 无法重新子集化，请指定 Unicode TTF 并使用 `mode: "new_font"`。
+`harumi-ai` CLI 在保留原版面时默认使用 `overlay` mode；只有需要重新生成文档时才指定 `new`。
+Overlay mode 使用 `detect_text_columns` 检测多栏布局，将译文精确放置在原文基线 Y 处
+（白色矩形已按字体实际 descender 量补偿）。
+
+在 [smithery.ai](https://smithery.ai) 或 [mcp.so](https://mcp.so) 上注册中。
 
 ---
 

@@ -2,7 +2,9 @@
 
 > **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
 
-**Pure-Rust PDF — CJK font embedding, OCR text overlay, text extraction, HTML→PDF, page merge/split.**
+**Layout-preserving CJK PDF editing in pure Rust.**  
+Extract positioned text from existing PDFs, translate or replace it, and write it
+back with layout intact — CID fonts, CMaps, and font subsetting handled automatically.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://img.shields.io/badge/docs.rs-passing-brightgreen)](https://docs.rs/harumi)

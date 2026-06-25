@@ -1,9 +1,11 @@
 # harumi
 
-> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
+**既存PDFのレイアウトを保ったまま、CJK/多言語テキストを抽出・置換・再配置する Pure Rust PDFエンジン。**
 
-**テキスト注入・抽出、ページ操作、図形描画まで — 純Rust製PDF操作ライブラリ。**  
-日本語・中国語・韓国語（CJK）フォント完全対応。C依存ゼロ。WASM対応。
+harumi は既存PDFからテキスト位置を抽出し、翻訳・置換した結果を
+元のページレイアウトを壊さずに書き戻します。
+CIDフォント、ToUnicode CMap、フォントサブセット、テキストフィット、
+レイアウト衝突検出はすべて自動処理されます。
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
@@ -14,34 +16,15 @@
 
 **[ブラウザでデモを試す →](https://kent-tokyo.github.io/harumi/)** — テキスト・矩形・直線・フリーハンドペンのアノテーションエディタ（WASMでブラウザ完結）
 
-### 🔌 MCP サーバーとして利用可能
+**主な用途：**
+- PDF翻訳パイプライン（抽出 → 翻訳 → レイアウト保持で書き戻し）
+- スキャンPDFへのOCR検索テキストレイヤー追加
+- 日本語・中国語・韓国語テキストのオーバーレイ・スタンプ
+- ページ操作・注釈・フォーム編集・PDF結合
+- WASM・Lambda・Tauri・MCPを使ったAI文書ワークフロー
 
-Claude Code・Cursor・Continue IDE から harumi のPDF操作ツールを直接利用できます：
-
-```bash
-# MCPサーバーをビルド（純Rust、ランタイム依存なし）
-cargo build -p harumi-mcp
-
-# IDE設定で以下のツールを利用可能に：
-# - pdf_extract_text: テキスト位置付き抽出
-# - pdf_extract_all_pages: 全ページのテキスト位置付き抽出
-# - pdf_replace_text: レイアウトを保ったテキスト置換・翻訳
-# - pdf_add_invisible_text: OCR検索レイヤー追加
-# - pdf_html_to_pdf: HTML→PDF変換
-# - pdf_merge: PDF結合
-# - pdf_page_info: ページ情報取得
-```
-
-PDF翻訳では `pdf_extract_all_pages` で全ページの断片を抽出し、翻訳後に
-`pdf_replace_text` で既存レイアウトを保ったまま置換します。非Identity
-`CIDToGIDMap` のため再サブセット化できないPDFでは、Unicode TTFを指定して
-`mode: "new_font"` を使います。
-`harumi-ai` の CLI は、既存レイアウトを保ちたい場合の既定が `overlay` mode です。
-新規レイアウトで作り直したい場合だけ `new` を指定してください。
-Overlay mode は `detect_text_columns` で複数段組を検出し、訳文を原文の正確な
-ベースライン Y に配置します（フォントの実ディセンダー量で白矩形を補正済み）。
-
-[smithery.ai](https://smithery.ai) または [mcp.so](https://mcp.so) に登録予定。
+> OCRエンジンでも、PDFビューワーでもありません。  
+> harumi は文書自動化のための「PDF書き戻しレイヤー」です。
 
 ---
 
@@ -225,6 +208,37 @@ JavaScriptには [`pdf-lib`](https://pdf-lib.js.org/) があり、フォント�
 - **`pdfium-render`** — C++バインディングを必要とし、WASM・クロスコンパイル・AWS Lambda環境でビルドが通らない
 
 `harumi` はその空白を埋めます。
+
+---
+
+## MCPサーバー（harumi-mcp）
+
+Claude Code・Cursor・Continue IDE から harumi のPDF操作ツールを直接利用できます：
+
+```bash
+# MCPサーバーをビルド（純Rust、ランタイム依存なし）
+cargo build -p harumi-mcp
+
+# IDE設定で以下のツールを利用可能に：
+# - pdf_extract_text: テキスト位置付き抽出
+# - pdf_extract_all_pages: 全ページのテキスト位置付き抽出
+# - pdf_replace_text: レイアウトを保ったテキスト置換・翻訳
+# - pdf_add_invisible_text: OCR検索レイヤー追加
+# - pdf_html_to_pdf: HTML→PDF変換
+# - pdf_merge: PDF結合
+# - pdf_page_info: ページ情報取得
+```
+
+PDF翻訳では `pdf_extract_all_pages` で全ページの断片を抽出し、翻訳後に
+`pdf_replace_text` で既存レイアウトを保ったまま置換します。非Identity
+`CIDToGIDMap` のため再サブセット化できないPDFでは、Unicode TTFを指定して
+`mode: "new_font"` を使います。
+`harumi-ai` の CLI は、既存レイアウトを保ちたい場合の既定が `overlay` mode です。
+新規レイアウトで作り直したい場合だけ `new` を指定してください。
+Overlay mode は `detect_text_columns` で複数段組を検出し、訳文を原文の正確な
+ベースライン Y に配置します（フォントの実ディセンダー量で白矩形を補正済み）。
+
+[smithery.ai](https://smithery.ai) または [mcp.so](https://mcp.so) に登録予定。
 
 ---
 
