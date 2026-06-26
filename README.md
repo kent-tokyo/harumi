@@ -7,7 +7,8 @@ and writes the result back while preserving the original page layout.
 CID fonts, CMaps, Unicode mapping, font subsetting, text fitting, and layout
 collision checks are all handled automatically.
 
-[![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
+[![harumi on crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
+[![harumi-ai on crates.io](https://img.shields.io/crates/v/harumi-ai.svg?label=harumi-ai)](https://crates.io/crates/harumi-ai)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://kent-tokyo.github.io/harumi/)
