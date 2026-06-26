@@ -92,6 +92,42 @@ cargo run --example ocrs_cjk_to_searchable_pdf -- \
   searchable.pdf
 ```
 
+### AI による OCR 補正
+
+OCR エンジンは字形が似たCJK文字を誤認識することがあります。
+LLM で誤りを補正しつつ、元のバウンディングボックスを保持できます。
+
+**このモードの核心：AI は text だけ補正する。バウンディングボックスは動かさない。**
+harumi は補正後のテキストを、生 OCR と同じ座標に書き戻します。
+
+> **OCR補正 ≠ 翻訳。** 翻訳は単語数・行数・言語が変わるため、word bbox の固定では対応できません。
+> 翻訳 write-back は `extract_layout_regions` → AI → `plan_text_for_regions` → `quality gate` という
+> region レベルの設計が必要です。翻訳パスには `harumi-ai` を使ってください。
+
+```text
+scanned.pdf
+  └─ ocrs-cjk → ocrs_sample_raw.json       (生: 請求害, 株式会杜, 品各)
+  └─ LLM 補正 → ocrs_sample_corrected.json  (補正後: 請求書, 株式会社, 品名)
+                  ai_correction_report.json  (何をなぜ変えたか)
+  └─ harumi（同じ example、補正済み JSON を入力 — bboxes は変化なし）
+       └─ searchable_corrected.pdf
+```
+
+```bash
+# 補正済み JSON を使って実行（example は同じ、入力だけ異なる）
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample_corrected.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable_corrected.pdf
+```
+
+詳細は `examples/fixtures/` 内の `ocrs_sample_raw.json`、`ocrs_sample_corrected.json`、
+`ai_correction_report.json` を参照してください。
+
+> 法務・医療・財務・監査文書では：生 OCR JSON と補正レポートを出力 PDF とともに保持してください。
+> スキャンに存在しないテキストを AI が作らないようにすることが重要です。
+
 harumi は OCR エンジンではありません。翻訳パスには、LLM の上に構築された `harumi-ai` を使います。
 
 ---

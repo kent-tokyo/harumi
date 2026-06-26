@@ -1,0 +1,43 @@
+{
+  "note": "Example only. Replace the AI correction step with your own LLM call — OpenAI, Claude, a local model, or a domain-specific corrector. The contract: AI corrects text, harumi preserves bboxes.",
+  "source": "ocrs_sample_raw.json",
+  "output": "ocrs_sample_corrected.json",
+  "corrections": [
+    {
+      "from": "請求害",
+      "to": "請求書",
+      "reason": "帳票タイトルとして「請求書」が自然。「害」は「書」の典型的なCJK OCR誤認識パターン（右旁の形状類似）。",
+      "raw_confidence": 0.71,
+      "corrected_confidence": 0.93,
+      "bbox_preserved": true
+    },
+    {
+      "from": "株式会杜サンプル",
+      "to": "株式会社サンプル",
+      "reason": "会社名として「株式会社」が自然。「杜」は「社」の誤認識（木へんの有無のみ異なる）。",
+      "raw_confidence": 0.75,
+      "corrected_confidence": 0.91,
+      "bbox_preserved": true
+    },
+    {
+      "from": "品各",
+      "to": "品名",
+      "reason": "帳票フィールドラベルとして「品名」が自然。「各」は「名」の誤認識（ク冠部分が類似）。",
+      "raw_confidence": 0.68,
+      "corrected_confidence": 0.88,
+      "bbox_preserved": true
+    }
+  ],
+  "unchanged": [
+    {
+      "text": "金額",
+      "reason": "信頼度 0.91。補正不要。",
+      "bbox_preserved": true
+    },
+    {
+      "text": "低品質のサンプル",
+      "reason": "信頼度 0.35 — フィルタ閾値以下。不確かな単語は埋め込まない。",
+      "bbox_preserved": true
+    }
+  ]
+}

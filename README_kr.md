@@ -77,6 +77,33 @@ cargo run --example ocrs_cjk_to_searchable_pdf -- \
   searchable.pdf
 ```
 
+### AI 보조 OCR 교정
+
+OCR 엔진은 자형이 비슷한 CJK 문자를 오인식하는 경우가 있습니다.
+LLM을 사용해 원본 바운딩 박스를 유지하면서 오류를 교정할 수 있습니다.
+
+**이 모드의 핵심 제약: AI는 텍스트만 교정합니다. 바운딩 박스는 이동하지 않습니다.**
+harumi는 교정된 텍스트를 원시 OCR과 동일한 위치에 다시 씁니다.
+
+> **OCR 교정 ≠ 번역.** 번역은 단어 수·행 수·언어가 바뀌므로 고정 word bbox로는 불가능합니다.
+> 번역 write-back은 `extract_layout_regions` → AI → `plan_text_for_regions`
+> → `quality gate` → apply라는 영역 단위 설계가 필요합니다. 번역 경로에는 `harumi-ai`를 사용하세요.
+
+```bash
+# AI 교정 JSON 사용 — 같은 예제, 다른 입력
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample_corrected.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable_corrected.pdf
+```
+
+`examples/fixtures/` 내의 `ocrs_sample_raw.json`, `ocrs_sample_corrected.json`,
+`ai_correction_report.json`에서 완성된 예제를 확인하세요.
+
+> 법률·의료·금융·감사 문서의 경우: 원시 OCR JSON과 교정 보고서를 출력 PDF와 함께 보관하세요.
+> 스캔 이미지에 없는 텍스트를 AI가 만들어내지 않도록 주의하세요.
+
 harumi는 OCR 엔진이 아닙니다. 번역 경로에는 임의의 LLM 위에 구축된 `harumi-ai`를 사용하세요.
 
 ---

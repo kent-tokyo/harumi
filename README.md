@@ -92,6 +92,43 @@ cargo run --example ocrs_cjk_to_searchable_pdf -- \
   searchable.pdf
 ```
 
+### AI-assisted OCR correction
+
+OCR engines sometimes misread characters with similar shapes — especially in CJK scripts.
+An LLM can correct these errors while preserving the original bounding boxes.
+
+**The key constraint for this mode: AI corrects text only. Bounding boxes must not move.**
+harumi writes the corrected text at the exact same position as the raw OCR output.
+
+> **OCR correction ≠ translation.** Translation changes word count, line count, and language,
+> so it cannot use fixed word bboxes. Translation write-back uses region-level layout with
+> `extract_layout_regions` → AI → `plan_text_for_regions` → `quality gate` → apply.
+> See `harumi-ai` for the translation path.
+
+```text
+scanned.pdf
+  └─ ocrs-cjk → ocrs_sample_raw.json       (raw: 請求害, 株式会杜, 品各)
+  └─ LLM call → ocrs_sample_corrected.json  (corrected: 請求書, 株式会社, 品名)
+                  ai_correction_report.json  (what changed and why)
+  └─ harumi (same example, corrected JSON as input — bboxes unchanged)
+       └─ searchable_corrected.pdf
+```
+
+```bash
+# Run with the AI-corrected JSON — same example, different input
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample_corrected.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable_corrected.pdf
+```
+
+See `examples/fixtures/ocrs_sample_raw.json`, `ocrs_sample_corrected.json`, and
+`ai_correction_report.json` for a worked example of the raw → corrected → report pattern.
+
+> For legal, medical, financial, or audit documents: retain the raw OCR JSON and the
+> correction report alongside the output PDF. Do not let AI invent text not visible in the scan.
+
 harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of any LLM.
 
 ---

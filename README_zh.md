@@ -77,6 +77,33 @@ cargo run --example ocrs_cjk_to_searchable_pdf -- \
   searchable.pdf
 ```
 
+### AI 辅助 OCR 纠错
+
+OCR 引擎有时会误识字形相近的 CJK 字符。
+LLM 可以在保留原始边界框的前提下纠正这些错误。
+
+**此模式的关键约束：AI 只纠正文字，边界框不得移动。**
+harumi 将纠正后的文字写回到与原始 OCR 完全相同的位置。
+
+> **OCR 纠错 ≠ 翻译。** 翻译会改变词数、行数和语言，因此无法使用固定的 word bbox。
+> 翻译回写需要区域级布局设计：`extract_layout_regions` → AI → `plan_text_for_regions`
+> → `quality gate` → apply。翻译路径请使用 `harumi-ai`。
+
+```bash
+# 使用 AI 纠正后的 JSON — 与之前相同的示例，不同的输入
+cargo run --example ocrs_cjk_to_searchable_pdf -- \
+  examples/fixtures/scanned_sample.pdf \
+  examples/fixtures/ocrs_sample_corrected.json \
+  /path/to/NotoSansCJKjp-Regular.ttf \
+  searchable_corrected.pdf
+```
+
+请参阅 `examples/fixtures/ocrs_sample_raw.json`、`ocrs_sample_corrected.json`
+和 `ai_correction_report.json` 查看完整示例。
+
+> 对于法律、医疗、财务或审计文档：请同时保留原始 OCR JSON 和纠错报告，以备溯源。
+> 不要让 AI 捏造扫描件中不存在的文字。
+
 harumi 不是 OCR 引擎。翻译路径请使用构建在任意 LLM 之上的 `harumi-ai`。
 
 ---
