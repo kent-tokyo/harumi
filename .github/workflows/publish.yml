@@ -9,6 +9,8 @@ jobs:
   publish:
     name: Publish crates
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # crates.io Trusted Publishing (OIDC)
     steps:
       - uses: actions/checkout@v7
 
@@ -16,8 +18,6 @@ jobs:
 
       - name: Publish harumi
         run: cargo publish -p harumi --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       # harumi-ai depends on harumi; give crates.io a moment to index the new version.
       - name: Wait for harumi to be indexed
@@ -25,5 +25,3 @@ jobs:
 
       - name: Publish harumi-ai
         run: cargo publish -p harumi-ai --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
