@@ -9,10 +9,7 @@ use harumi::Document;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("examples/fixtures")?;
 
-    let mut doc = Document::new((595.28, 841.89))?; // A4 in points
-
-    // Add a second page so the fixture exercises multi-page awareness.
-    doc.insert_blank_page(2, (595.28, 841.89))?;
+    let mut doc = Document::new((595.28, 841.89))?; // A4 in points (1 page)
 
     doc.save("examples/fixtures/scanned_sample.pdf")?;
     println!("Written: examples/fixtures/scanned_sample.pdf");
