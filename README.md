@@ -146,9 +146,10 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 | Flow document / auto-pagination | Yes | No | No | No | No |
 | HTML → PDF | Yes | No | No | No | No |
 | Encryption (read/write) | Yes | Yes | No | Partial | Yes |
-| Digital signature creation | Yes (v1.2.2+) | No | No | No | No |
+| Digital signature creation | Yes† (v1.2.2+) | No | No | No | No |
 
 > Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature  
+> † API complete; third-party PDF validator (Adobe Reader/qpdf/veraPDF) verification pending.  
 > Comparison based on crate documentation and README as of June 2026.
 
 ---
@@ -277,7 +278,7 @@ Current: **v1.19.0** (harumi) / **v0.9.0** (harumi-ai)
 | Text extraction, replace, FlowDocument, HTML→PDF | v0.4–v0.8 ✓ |
 | Layout regions, collision detection, quality gate | v1.9–v1.16 ✓ |
 | harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.9 ✓ |
-| Trusted Publishing CI | v1.19 ✓ |
+| Automated publish CI | v1.19 ✓ |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
 | Multi-page OcrJson translation | planned |
 

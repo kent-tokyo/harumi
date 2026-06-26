@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ocrs-cjk` optional dependency** (`harumi-ai`): `features = ["ocr-backend"]` links to
   the now-published `ocrs-cjk` crate. `InputTextSource::RunOcr` API is a follow-on.
 
-- **Publish CI** (`.github/workflows/publish.yml`): automated `cargo publish` on `v*` tags
-  using crates.io Trusted Publishing (OIDC).
+- **Publish CI** (`.github/workflows/publish.yml`): automated `cargo publish` triggered on
+  `v*` tags using `CARGO_REGISTRY_TOKEN`.
 
 - **ocrs-cjk integration examples and fixtures**: `examples/ocrs_cjk_to_searchable_pdf.rs`,
   `examples/fixtures/scanned_sample.pdf`, `ocrs_sample.json`, `ocrs_sample_raw.json`,
