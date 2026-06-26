@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.19.0] — 2026-06-26
+
+### Added
+
+- **`harumi-ai` v0.9.0**: `InputTextSource` enum — unified translation API for digital and
+  scanned PDFs. Pass `InputTextSource::OcrJson(json_bytes)` to translate scanned PDFs using
+  pre-produced OCR JSON (ocrs-cjk, PaddleOCR, or any HierText-format tool). Default is
+  `InputTextSource::DigitalPdf` (existing behaviour).
+
+- **`QualityResult::Warn`** (`harumi-ai`): intermediate quality state for font-shrink-only
+  violations. `is_ok()` returns `true` for both `Pass` and `Warn`. `is_pass()` returns
+  `true` for `Pass` only.
+
+- **`ocrs-cjk` optional dependency** (`harumi-ai`): `features = ["ocr-backend"]` links to
+  the now-published `ocrs-cjk` crate. `InputTextSource::RunOcr` API is a follow-on.
+
+- **Publish CI** (`.github/workflows/publish.yml`): automated `cargo publish` on `v*` tags
+  using crates.io Trusted Publishing (OIDC).
+
+- **ocrs-cjk integration examples and fixtures**: `examples/ocrs_cjk_to_searchable_pdf.rs`,
+  `examples/fixtures/scanned_sample.pdf`, `ocrs_sample.json`, `ocrs_sample_raw.json`,
+  `ocrs_sample_corrected.json`, `ai_correction_report.json`.
+
+---
+
 ## [1.18.0] — 2026-06-26
 
 ### Added
