@@ -1,0 +1,2 @@
+[credential.crates-io]
+provider = "cargo:paseto"
