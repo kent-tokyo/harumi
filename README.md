@@ -148,7 +148,8 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 | Encryption (read/write) | Yes | Yes | No | Partial | Yes |
 | Digital signature creation | Yes (v1.2.2+) | No | No | No | No |
 
-> Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature
+> Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature  
+> Comparison based on crate documentation and README as of June 2026.
 
 ---
 
@@ -169,6 +170,8 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 - **unpdf** — Specialized for *reading* PDFs; superior CJK extraction (XY-Cut, RTL, Form XObject)
 - **pdf_oxide** — General-purpose; 5× faster extraction; multi-language bindings (Python/JS/Go/C#/Java)
 - **justpdf-core** — Full PDF engine; region-specific CID orderings for legacy PDF compatibility
+
+> Comparison based on crate documentation and README as of June 2026.
 
 ---
 
