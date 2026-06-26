@@ -37,6 +37,7 @@ pub(crate) mod font_sizing;
 mod inplace;
 mod layout;
 mod layout_repair;
+pub mod ocr_input;
 mod output;
 mod overlay;
 mod pdf_translator;
@@ -57,8 +58,10 @@ pub use output::{
     TranslateQuality,
 };
 pub use font_sizing::FontSizePolicy;
+pub use ocr_input::OcrRegion;
 pub use pdf_translator::{
-    OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode, translate_pdf,
+    InputTextSource, OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode,
+    translate_pdf,
 };
 pub use quality::{QualityGate, QualityProfile, QualityResult, QualityViolation};
 pub use translator::Translator;

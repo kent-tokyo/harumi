@@ -44,6 +44,30 @@ impl OverflowStrategy {
 }
 
 /// Controls how the translated PDF is produced.
+/// Source of text for PDF translation.
+///
+/// For digital PDFs (with embedded text), use [`DigitalPdf`](Self::DigitalPdf).
+/// For scanned PDFs, run an OCR tool first (e.g. `ocrs --json`), then pass the
+/// raw JSON bytes as [`OcrJson`](Self::OcrJson).
+#[non_exhaustive]
+#[derive(Default, Debug, Clone)]
+pub enum InputTextSource {
+    /// Extract text from the PDF using harumi's built-in text extraction.
+    ///
+    /// This is the default and works for any PDF that contains embedded text.
+    #[default]
+    DigitalPdf,
+    /// Pre-produced OCR JSON in ocrs-cjk / HierText format.
+    ///
+    /// Pass the raw bytes from `ocrs scanned.pdf --json` (or any compatible
+    /// OCR tool that produces the same schema).  The page image is not
+    /// rasterized by harumi; original pixel content is preserved.
+    ///
+    /// For each OCR line region: harumi covers the source area with a white
+    /// rectangle, then overlays the translated text inside that region.
+    OcrJson(Vec<u8>),
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum TranslationMode {
     /// Keep the original PDF intact and overlay translated text on top,
@@ -180,6 +204,11 @@ pub struct TranslateOptions {
     /// produces visually consistent output when the source PDF has small per-line
     /// font size jitter (e.g. 8.8 / 9.0 / 9.2 pt body text → all rendered at 9 pt).
     pub font_size_policy: crate::font_sizing::FontSizePolicy,
+    /// Source of text for translation (default: [`InputTextSource::DigitalPdf`]).
+    ///
+    /// Use [`InputTextSource::OcrJson`] to translate scanned PDFs by passing
+    /// pre-produced OCR JSON output (e.g. from `ocrs --json` via ocrs-cjk).
+    pub input_source: InputTextSource,
 }
 
 impl Clone for TranslateOptions {
@@ -220,6 +249,7 @@ impl Clone for TranslateOptions {
             cache: self.cache.as_ref().map(Arc::clone),
             skip_patterns: self.skip_patterns.clone(),
             font_size_policy: self.font_size_policy.clone(),
+            input_source: self.input_source.clone(),
         }
     }
 }
@@ -255,6 +285,7 @@ impl TranslateOptions {
             cache: None,
             skip_patterns: vec![],
             font_size_policy: crate::font_sizing::FontSizePolicy::default(),
+            input_source: InputTextSource::default(),
         }
     }
 
@@ -316,6 +347,7 @@ pub struct TranslateOptionsBuilder {
     skip_header_footer: bool,
     auto_skip_math: bool,
     font_size_policy: Option<crate::font_sizing::FontSizePolicy>,
+    input_source: Option<InputTextSource>,
 }
 
 impl TranslateOptionsBuilder {
@@ -462,6 +494,12 @@ impl TranslateOptionsBuilder {
         self
     }
 
+    /// Source of text for translation (default: [`InputTextSource::DigitalPdf`]).
+    pub fn input_source(mut self, source: InputTextSource) -> Self {
+        self.input_source = Some(source);
+        self
+    }
+
     /// Build the options. Panics if `target_lang`, `translator`, or `font` are missing.
     pub fn build(self) -> TranslateOptions {
         TranslateOptions {
@@ -494,6 +532,7 @@ impl TranslateOptionsBuilder {
             cache: self.cache,
             skip_patterns: self.skip_patterns,
             font_size_policy: self.font_size_policy.unwrap_or_default(),
+            input_source: self.input_source.unwrap_or_default(),
         }
     }
 }
@@ -518,6 +557,12 @@ impl TranslateOptionsBuilder {
 ///    [`TranslateOptions::profile`].  Only [`QualityProfile::Strict`] causes an
 ///    error on failure; all other profiles return the PDF regardless.
 pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
+    // OCR JSON path: skip the digital-PDF pipeline entirely.
+    if let InputTextSource::OcrJson(ref json) = options.input_source {
+        let json = json.clone();
+        return translate_pdf_from_ocr(pdf_bytes, &json, options).await;
+    }
+
     // Auto mode with quality-aware profiles uses a multi-stage cascade.
     if matches!(options.mode, TranslationMode::Auto)
         && !matches!(options.profile, QualityProfile::BestEffort)
@@ -932,6 +977,103 @@ async fn translate_pdf_new_document_full(
             overall: crate::quality::QualityResult::Pass,
             correction_rounds: 0,
             mode_used: TranslationMode::NewDocument,
+            fallback_reason: None,
+        },
+        debug: None,
+    })
+}
+
+// ── OCR JSON path ─────────────────────────────────────────────────────────────
+
+/// Translate a scanned PDF using pre-produced OCR JSON.
+///
+/// For each OCR line region:
+/// 1. Translate the text via the AI provider.
+/// 2. Cover the source area with a white rectangle.
+/// 3. Overlay the translated text inside the region.
+///
+/// The original page image is not modified — only text and rectangles are appended
+/// (harumi's append-only PDF editing model).
+///
+/// Currently operates on **page 1 only**; multi-page support is a future addition.
+async fn translate_pdf_from_ocr(
+    pdf_bytes: &[u8],
+    ocr_json: &[u8],
+    opts: TranslateOptions,
+) -> Result<TranslateOutput> {
+    use harumi::Color;
+
+    let mut doc = Document::from_bytes(pdf_bytes)?;
+    let (page_w, page_h) = doc.page(1)?.size()?;
+
+    // Parse OCR JSON → PDF-coordinate regions.
+    let regions = crate::ocr_input::ocr_json_to_regions(ocr_json, page_w, page_h)?;
+
+    if regions.is_empty() {
+        let out = doc.save_to_bytes()?;
+        return Ok(TranslateOutput {
+            pdf_bytes: out,
+            quality: TranslateQuality {
+                pages: vec![],
+                overall: QualityResult::Pass,
+                correction_rounds: 0,
+                mode_used: TranslationMode::Overlay,
+                fallback_reason: Some("No OCR regions above confidence threshold".into()),
+            },
+            debug: None,
+        });
+    }
+
+    // Batch-translate all region texts.
+    let source_texts: Vec<String> = regions.iter().map(|r| r.text.clone()).collect();
+    let translated: Vec<String> = opts
+        .translator
+        .translate(&source_texts, &opts.target_lang, opts.source_lang.as_deref())
+        .await
+        .map_err(|e| Error::Translator(e.to_string()))?;
+
+    // Embed font.
+    let font = if opts.font.is_empty() {
+        return Err(Error::Translator(
+            "TranslateOptions::font must be set for OcrJson translation".into(),
+        ));
+    } else {
+        doc.embed_font(&opts.font)?
+    };
+
+    let cover_color: [f32; 3] = opts.cover_color.unwrap_or([1.0, 1.0, 1.0]);
+
+    // Apply cover + overlay for each region.
+    for (region, translated_text) in regions.iter().zip(translated.iter()) {
+        let [rx, ry, rw, rh] = region.bbox;
+
+        // Cover original OCR text area with a filled rectangle.
+        doc.page(1)?
+            .add_rect([rx, ry, rw, rh], Color::Rgb(cover_color), 1.0)?;
+
+        // Derive a font size from the region height; use a 90% scale to leave margins.
+        let font_size = (rh * 0.85).clamp(4.0, 72.0);
+
+        // Overlay translated text.
+        doc.page(1)?.add_text_box(
+            translated_text,
+            font,
+            [rx, ry, rw, rh],
+            font_size,
+            Color::Rgb([0.0, 0.0, 0.0]),
+            font_size * 1.2,
+        )?;
+    }
+
+    let pdf_out = doc.save_to_bytes()?;
+
+    Ok(TranslateOutput {
+        pdf_bytes: pdf_out,
+        quality: TranslateQuality {
+            pages: vec![],
+            overall: QualityResult::Pass,
+            correction_rounds: 0,
+            mode_used: TranslationMode::Overlay,
             fallback_reason: None,
         },
         debug: None,
