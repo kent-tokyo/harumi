@@ -1,9 +1,15 @@
-//! AI-powered PDF translation orchestration built on [harumi].
+//! AI-powered PDF translation for digital and scanned PDFs, built on [harumi].
 //!
-//! This crate sits on top of harumi's text extraction and font-embedding APIs.
-//! It extracts structured paragraphs from a source PDF, translates them via an
-//! LLM, and assembles a new PDF using harumi's direct `add_text` API —
-//! producing CIDFontType2 output that is compatible with PSPDFKit.
+//! ## Digital PDFs
+//! Extracts positioned text, translates via an LLM, and writes back using
+//! layout-aware overlay or in-place replacement — producing CIDFontType2 output
+//! compatible with PSPDFKit.
+//!
+//! ## Scanned PDFs
+//! Accepts OCR JSON in HierText format ([`InputTextSource::OcrJson`]) from
+//! ocrs-cjk, PaddleOCR, or any compatible tool. Translates recognized regions,
+//! covers original image text with a white mask, and overlays translated text —
+//! without rasterizing the page.
 //!
 //! # Quick start
 //! ```no_run

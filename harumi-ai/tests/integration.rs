@@ -613,4 +613,13 @@ async fn translate_pdf_from_ocr_json_e2e() {
     // 5. Quality gate passed or warned (not failed).
     assert!(output.quality.overall.is_ok(), "unexpected quality failure: {:?}",
         output.quality.overall.violations());
+
+    // 6. No rasterization: output has no Image XObjects.
+    //    scanned_sample.pdf has no images; OcrJson path is append-only (add_rect + add_text_box).
+    //    Any image bbox here would indicate accidental page rasterization.
+    let image_bboxes = doc.page_image_bboxes(1).unwrap();
+    assert!(
+        image_bboxes.is_empty(),
+        "unexpected Image XObjects in output — possible rasterization: {image_bboxes:?}"
+    );
 }

@@ -47,44 +47,37 @@ Font subsetting, CID encoding, and ToUnicode CMap generation are all automatic. 
 
 ---
 
-## Pair with an OCR engine or LLM
+## Translate PDFs — digital and scanned
 
-**ocrs-cjk reads. LLMs translate. harumi writes back.**
+**harumi-ai** translates both digital and scanned PDFs via a single entry point:
 
-harumi is the PDF write-back layer. Whatever reads or rewrites the document —
-an OCR engine, a translation model, or an AI agent — harumi handles the final step:
-putting Unicode/CJK text back into the PDF without rasterizing the page.
-
-```
-scanned.pdf
-  └─ ocrs-cjk (--json)
-       ├─ recognized text
-       ├─ bounding boxes
-       └─ confidence scores
-  └─ harumi (this library)
-       ├─ CJK font subsetting + ToUnicode CMap
-       ├─ invisible text layer (render mode 3)
-       └─ append-only save → original image untouched
-
-=> searchable.pdf  (text is selectable and indexable in any PDF viewer)
-```
+- **Digital PDFs** — extract existing text, translate with any LLM, and write back
+  with layout-aware overlay or in-place replacement.
+- **Scanned PDFs** — pass OCR JSON, translate recognized regions, mask the original
+  image text, and overlay translated Unicode/CJK text without rasterizing the page.
 
 ```rust
-// Minimal sketch — see examples/ocrs_cjk_to_searchable_pdf.rs for the full pipeline.
-let mut doc = Document::from_file("scanned.pdf")?;
-let font = doc.embed_font(&std::fs::read("NotoSansCJKjp-Regular.ttf")?)?;
+use harumi_ai::{InputTextSource, TranslateOptions, translate_pdf};
 
-for word in ocr_words {                         // from ocrs-cjk JSON
-    if word.confidence >= 0.5 {
-        doc.page(1)?.add_invisible_text(
-            &word.text, font, [word.pdf_x, word.pdf_y], word.font_size,
-        )?;
-    }
-}
-doc.save("searchable.pdf")?;
+// Digital PDF (default)
+let opts = TranslateOptions::new("en", my_llm, font_bytes);
+let output = translate_pdf(&digital_pdf, opts).await?;
+
+// Scanned PDF — pass OCR JSON from ocrs-cjk, PaddleOCR, or any compatible tool
+let ocr_json = std::fs::read("ocr.json")?;
+let mut opts = TranslateOptions::new("en", my_llm, font_bytes);
+opts.input_source = InputTextSource::OcrJson(ocr_json);
+let output = translate_pdf(&scanned_pdf, opts).await?;
 ```
 
-Run the full example with the bundled fixture:
+OCR can come from ocrs-cjk (`ocrs scanned.pdf --json`), PaddleOCR, hOCR, ALTO,
+or any tool that produces text + bounding box + confidence output in HierText format.
+
+### Searchable text layer (no translation)
+
+To add an invisible searchable text layer without translating — useful for RAG
+indexing and PDF search — use `add_invisible_text` directly with the OCR output:
+
 ```bash
 cargo run --example ocrs_cjk_to_searchable_pdf -- \
   examples/fixtures/scanned_sample.pdf \
