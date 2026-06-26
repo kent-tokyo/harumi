@@ -1,0 +1,29 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Publish crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish harumi
+        run: cargo publish -p harumi --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # harumi-ai depends on harumi; give crates.io a moment to index the new version.
+      - name: Wait for harumi to be indexed
+        run: sleep 20
+
+      - name: Publish harumi-ai
+        run: cargo publish -p harumi-ai --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -70,8 +70,21 @@ opts.input_source = InputTextSource::OcrJson(ocr_json);
 let output = translate_pdf(&scanned_pdf, opts).await?;
 ```
 
-OCR can come from ocrs-cjk (`ocrs scanned.pdf --json`), PaddleOCR, hOCR, ALTO,
-or any tool that produces text + bounding box + confidence output in HierText format.
+OCR can come from ocrs-cjk, PaddleOCR, hOCR, ALTO, or any tool that produces
+text + bounding box + confidence in HierText format.
+
+**Getting started with scanned PDFs:**
+
+```bash
+# 1. Install the CJK OCR CLI
+cargo install ocrs-cjk-cli
+
+# 2. Run OCR — produces text + bounding boxes + confidence scores
+ocrs scanned.pdf --json -o ocr.json
+
+# 3. Translate and write back via harumi-ai
+# (set InputTextSource::OcrJson in your TranslateOptions)
+```
 
 ### Searchable text layer (no translation)
 

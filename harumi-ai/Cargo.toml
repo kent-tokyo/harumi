@@ -24,10 +24,14 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 base64 = { version = "0.22", optional = true }
 
+# optional CJK OCR backend
+ocrs-cjk = { version = "0.1", optional = true }
+
 [features]
 default = []
-openai    = ["dep:reqwest"]
-anthropic = ["dep:reqwest", "dep:base64"]
+openai      = ["dep:reqwest"]
+anthropic   = ["dep:reqwest", "dep:base64"]
+ocr-backend = ["dep:ocrs-cjk"]
 
 [[example]]
 name = "translate_pdf"
