@@ -17,7 +17,8 @@ collision checks are all handled automatically.
 **[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)** — annotation editor (text · rect · line · freehand pen) running entirely in your browser via WASM
 
 **Use harumi for:**
-- PDF translation pipelines (extract → translate → write back with layout intact)
+- Digital PDF translation (extract text → translate with an LLM → write back with layout intact)
+- Scanned PDF translation (pass OCR JSON → translate → mask original → overlay translated text)
 - OCR searchable text layers on scanned PDFs
 - Japanese / Chinese / Korean text overlays and stamps
 - Page manipulation, annotation, form editing, and PDF merging

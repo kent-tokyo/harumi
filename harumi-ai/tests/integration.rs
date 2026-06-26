@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use harumi::Document;
-use harumi_ai::{LayoutOptions, QualityGate, QualityProfile, TranslateOptions, TranslationMode,
-                TranslationCache, providers::EchoTranslator, translate_pdf, Translator};
+use harumi_ai::{LayoutOptions, InputTextSource, QualityGate, QualityProfile, TranslateOptions,
+                TranslationMode, TranslationCache, providers::EchoTranslator, translate_pdf,
+                Translator};
 
 /// Test translator that returns every input text with a "TRANSLATED: " prefix,
 /// making the output ~30% longer than the input.  Used to exercise width
@@ -565,4 +566,51 @@ async fn new_fields_have_correct_defaults() {
     let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
     assert!(!opts.skip_header_footer);
     assert!(!opts.auto_skip_math);
+}
+
+// ── OcrJson path ─────────────────────────────────────────────────────────────
+
+/// Prove the scanned-PDF translation pipeline end-to-end:
+///
+/// 1. High-confidence OCR words appear in the output (written by add_text_box).
+/// 2. Low-confidence word (conf 0.35 < 0.50) is NOT embedded.
+/// 3. Page count unchanged.
+/// 4. MediaBox unchanged.
+/// 5. QualityResult is Pass or Warn (not Fail).
+#[tokio::test]
+async fn translate_pdf_from_ocr_json_e2e() {
+    let pdf = include_bytes!("../../examples/fixtures/scanned_sample.pdf");
+    let ocr = include_bytes!("../../examples/fixtures/ocrs_sample.json");
+
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.input_source = InputTextSource::OcrJson(ocr.to_vec());
+
+    let output = translate_pdf(pdf, opts).await.unwrap();
+    assert!(output.pdf_bytes.starts_with(b"%PDF"), "output is not a PDF");
+
+    // Reload and verify.
+    let mut doc = Document::from_bytes(&output.pdf_bytes).unwrap();
+
+    // 3. Page count unchanged.
+    assert_eq!(doc.page_count(), 1, "page count changed");
+
+    // 4. MediaBox unchanged (within 2pt rounding).
+    let (w, h) = doc.page(1).unwrap().size().unwrap();
+    assert!((w - 595.28).abs() < 2.0 && (h - 841.89).abs() < 2.0,
+        "MediaBox changed: {w:.2} x {h:.2}");
+
+    // 1. High-confidence words are in the output.
+    let runs = doc.extract_text_runs(1).unwrap();
+    let text: String = runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("");
+    assert!(text.contains("請求書"),         "high-confidence word '請求書' missing from output");
+    assert!(text.contains("品名"),           "high-confidence word '品名' missing from output");
+    assert!(text.contains("金額"),           "high-confidence word '金額' missing from output");
+
+    // 2. Low-confidence word (conf 0.35) is absent.
+    assert!(!text.contains("低品質"),
+        "low-confidence word '低品質' should not be in output");
+
+    // 5. Quality gate passed or warned (not failed).
+    assert!(output.quality.overall.is_ok(), "unexpected quality failure: {:?}",
+        output.quality.overall.violations());
 }
