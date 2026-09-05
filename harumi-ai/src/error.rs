@@ -35,7 +35,9 @@ impl fmt::Display for Error {
             Error::QualityGateFailed(violations) => {
                 write!(f, "quality gate failed: ")?;
                 for (i, v) in violations.iter().enumerate() {
-                    if i > 0 { write!(f, "; ")?; }
+                    if i > 0 {
+                        write!(f, "; ")?;
+                    }
                     write!(f, "{v}")?;
                 }
                 Ok(())

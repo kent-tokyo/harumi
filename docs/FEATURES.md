@@ -42,22 +42,23 @@
 | Need to read PDF form field values | `doc.form_fields()` — returns `Vec<FormField>` with name, type, and current value |
 | Need to fill in a PDF form programmatically | `doc.fill_form(&[("FieldName", "value")])` — sets values and triggers NeedAppearances |
 | Need to set/read page crop or print boxes | `page.crop_box()` / `set_crop_box(rect)` / `trim_box()` / `bleed_box()` — all box types in `[x,y,w,h]` format |
-| Need to scale page content (e.g. A4 → A3) | `page.scale_page_content(sx, sy)` inserts a `cm` matrix before existing content; `resize_page_with_content(w, h)` scales + resizes MediaBox in one call (v1.4+) |
-| Need to overlay one PDF on top of another | `doc.overlay_from(other)` stamps each page of `other` onto the matching page of `self` as a Form XObject; fonts, images, and opacity are preserved (v1.4+) |
-| Need to remove all bookmarks / TOC | `doc.clear_outline()` removes both pending bookmarks and any existing `/Outlines` tree in a loaded PDF (v1.4+) |
-| Need to attach files to a PDF | `doc.attach_file(name, data, mime)` embeds any file as a PDF attachment (EmbeddedFiles, FlateDecode-compressed, sorted name tree); `doc.list_attachments()` → `Vec<AttachmentInfo>` (v1.4+) |
-| Need bold/italic/font-family from extracted text | `TextFragment::is_bold`, `is_italic`, `font_family`, `base_font` — parsed from the PostScript `/BaseFont` name (v1.4.1+) |
-| Need to detect column layout from extracted text | `detect_text_columns(&frags, page_width)` — X-density histogram splits text into `Vec<ColumnZone>` by gap detection (v1.4.1+) |
-| Need to group extracted fragments into lines or paragraphs | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` — merges adjacent `TextFragment`s into `TextGroup`s (v1.5+) |
-| Need to check whether a font file covers a given character | `font_covers_char(font_bytes, ch) -> bool` — queries the font cmap via ttf-parser (v1.5+) |
-| Need to extract text from a PDF table cell by cell | `extract_table_cells(&frags, page_width, page_height)` — returns `Vec<TableCell>` with row/col/text/bbox; heuristic only (v1.5+) |
-| Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` — unified `Color` enum (v1.0+) |
-| Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` — RSA PKCS#1 v1.5 verification; returns `SignatureInfo` with `is_valid: bool` (`digital-signature` feature, v1.2.2+) |
-| Need to create and sign a PDF digitally | `doc.add_signature_field(...)` + `SigningContext::from_cert_and_key(...)` + `doc.sign_document(...)` — PKCS#7 DER, SHA-256 + RSA (`digital-signature` feature, v1.2.2+) |
-| Need to plan text layout in a fixed rectangle | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> FitResult` — returns wrapped lines, effective font size, overflow flags (v1.9.0+) |
-| Need to detect overlaps between planned text boxes | `detect_collisions(boxes) -> Vec<Collision>` — AABB overlap check with `overlap_area` (v1.9.0+) |
-| Need layout regions for translation | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` — source_bbox + usable_rect per region (v1.10.0+) |
-| Need to batch-plan translated text into layout cells | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Vec<RegionFitPlan>` (v1.10.0+) |
-| Need a page-level layout quality gate | `doc.assess_page_layout_quality(page, &plans) -> PageLayoutQuality` — overflow/collision/image-overlap/severity (v1.16.0+) |
-| Need to extract PDF table borders (vector rules) | `doc.extract_vector_rules(page) -> Vec<VectorRule>` — stroked lines and thin filled rects (v1.17.0+) |
-| Need font size normalization for translation | `ReplaceOptions::font_size_override` / `char_spacing` — per-replacement font size and Tc control (v1.18.0+) |
+| Need to scale page content (e.g. A4 → A3) | `page.scale_page_content(sx, sy)` inserts a `cm` matrix before existing content; `resize_page_with_content(w, h)` scales + resizes MediaBox in one call |
+| Need to overlay one PDF on top of another | `doc.overlay_from(other)` stamps each page of `other` onto the matching page of `self` as a Form XObject; fonts, images, and opacity are preserved |
+| Need to remove all bookmarks / TOC | `doc.clear_outline()` removes both pending bookmarks and any existing `/Outlines` tree in a loaded PDF |
+| Need to attach files to a PDF | `doc.attach_file(name, data, mime)` embeds any file as a PDF attachment; `doc.list_attachments()` returns `Vec<AttachmentInfo>` |
+| Need bold/italic/font-family from extracted text | `TextFragment::is_bold`, `is_italic`, `font_family`, `base_font` are parsed from `/BaseFont` |
+| Need to detect column layout from extracted text | `detect_text_columns(&frags, page_width)` returns `Vec<ColumnZone>` by gap detection |
+| Need to group extracted fragments into lines or paragraphs | `group_text_fragments(&frags, GroupingStrategy::Paragraph)` returns `TextGroup`s |
+| Need to check whether a font file covers a given character | `font_covers_char(font_bytes, ch) -> bool` queries the font cmap |
+| Need to extract text from a PDF table cell by cell | `extract_table_cells(&frags, page_width, page_height)` returns heuristic row/column/text/bbox cells |
+| Need to use CMYK colors (print workflow) | `Color::Cmyk([c, m, y, k])` |
+| Need to verify digital signatures on a PDF | `doc.verify_signatures(&pdf_bytes)` (`digital-signature` feature) |
+| Need to create and sign a PDF digitally | `add_signature_field` + `SigningContext` + `sign_document` (`digital-signature` feature) |
+| Need to plan text layout in a fixed rectangle | `doc.fit_text_to_box(text, font, rect, font_size, opts) -> FitResult` |
+| Need to detect overlaps between planned text boxes | `detect_collisions(boxes) -> Vec<Collision>` |
+| Need layout regions for translation | `extract_layout_regions(&frags, page_w, page_h, opts) -> Vec<LayoutRegion>` |
+| Need to batch-plan translated text into layout cells | `doc.plan_text_for_regions(regions, replacements, font, opts) -> Vec<RegionFitPlan>` |
+| Need a page-level layout quality gate | `doc.assess_page_layout_quality(page, &plans) -> PageLayoutQuality` |
+| Need to extract PDF table borders (vector rules) | `doc.extract_vector_rules(page) -> Vec<VectorRule>` |
+| Need font-size normalization for translation | `ReplaceOptions::font_size_override` / `char_spacing` |
+| Need to preserve 90°/270° text direction during overlay | `TextFragment::rotation_degrees` is propagated by `harumi-ai` for common vertical lines |

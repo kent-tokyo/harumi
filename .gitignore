@@ -5,6 +5,9 @@ AGENTS.md
 # Added by cargo
 
 /target
+tools/*/target/
+tools/*/Cargo.lock
+tools/pdfium-render-check/target/
 
 # wasm-pack output (generated build artifact)
 wasm-demo/www/pkg/

@@ -62,10 +62,7 @@ fn scale_page_content_rejects_negative_scale() {
 fn scale_page_content_rejects_nan() {
     let bytes = helpers::minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&bytes).unwrap();
-    let err = doc
-        .page(1)
-        .unwrap()
-        .scale_page_content(f32::NAN, 1.0);
+    let err = doc.page(1).unwrap().scale_page_content(f32::NAN, 1.0);
     assert!(err.is_err());
 }
 
@@ -116,7 +113,11 @@ fn overlay_from_produces_valid_pdf() {
 
     // Verify structure with lopdf directly.
     let inner = lopdf::Document::load_mem(&out).unwrap();
-    assert_eq!(inner.get_pages().len(), 2, "base doc must still have 2 pages");
+    assert_eq!(
+        inner.get_pages().len(),
+        2,
+        "base doc must still have 2 pages"
+    );
 
     // Page 1 must have OVRL0 in /Resources/XObject and 'Do' in its content.
     let page1_id = *inner.get_pages().get(&1).unwrap();
@@ -125,12 +126,7 @@ fn overlay_from_produces_valid_pdf() {
     let res = page1_dict.get(b"Resources").unwrap();
     let res_dict = match res {
         lopdf::Object::Dictionary(d) => d.clone(),
-        lopdf::Object::Reference(r) => inner
-            .get_object(*r)
-            .unwrap()
-            .as_dict()
-            .unwrap()
-            .clone(),
+        lopdf::Object::Reference(r) => inner.get_object(*r).unwrap().as_dict().unwrap().clone(),
         _ => panic!("unexpected Resources type"),
     };
     let xobj = res_dict.get(b"XObject").unwrap().as_dict().unwrap();
@@ -279,10 +275,7 @@ fn attach_and_list_single_file() {
     assert_eq!(attachments.len(), 1);
     assert_eq!(attachments[0].filename, "hello.txt");
     assert_eq!(attachments[0].size, 13);
-    assert_eq!(
-        attachments[0].mime_type.as_deref(),
-        Some("text/plain")
-    );
+    assert_eq!(attachments[0].mime_type.as_deref(), Some("text/plain"));
 }
 
 #[test]
@@ -290,8 +283,12 @@ fn attach_multiple_files() {
     let bytes = helpers::minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&bytes).unwrap();
     doc.attach_file("a.txt", b"aaa", "text/plain").unwrap();
-    doc.attach_file("b.bin", &[0xDE, 0xAD, 0xBE, 0xEF], "application/octet-stream")
-        .unwrap();
+    doc.attach_file(
+        "b.bin",
+        &[0xDE, 0xAD, 0xBE, 0xEF],
+        "application/octet-stream",
+    )
+    .unwrap();
     let out = doc.save_to_bytes().unwrap();
 
     let reloaded = Document::from_bytes(&out).unwrap();
@@ -324,7 +321,8 @@ fn attach_files_sorted_in_names_array() {
     let bytes = helpers::minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&bytes).unwrap();
     doc.attach_file("z_last.txt", b"zzz", "text/plain").unwrap();
-    doc.attach_file("a_first.txt", b"aaa", "text/plain").unwrap();
+    doc.attach_file("a_first.txt", b"aaa", "text/plain")
+        .unwrap();
     let out = doc.save_to_bytes().unwrap();
 
     // Verify raw /Names array ordering via lopdf.
@@ -345,7 +343,10 @@ fn attach_files_sorted_in_names_array() {
         lopdf::Object::String(b, _) => String::from_utf8_lossy(b).into_owned(),
         _ => panic!("expected string key"),
     };
-    assert_eq!(first_key, "a_first.txt", "/Names array must be sorted alphabetically");
+    assert_eq!(
+        first_key, "a_first.txt",
+        "/Names array must be sorted alphabetically"
+    );
 }
 
 #[test]

@@ -138,12 +138,17 @@ pub(super) fn subset(
         .enumerate()
         .map(|(new_idx, &orig_gid)| (orig_gid, new_idx as u16))
         .collect();
-    let (new_glyf, new_glyph_offsets) = build_glyf(&glyph_offsets, glyf, &gids_to_keep, &gid_remap)?;
+    let (new_glyf, new_glyph_offsets) =
+        build_glyf(&glyph_offsets, glyf, &gids_to_keep, &gid_remap)?;
 
     // Determine loca format. After 4-byte glyph alignment the total glyf size
     // might (rarely) exceed the short-format limit of 0xFFFF * 2 = 131070 bytes.
     let max_glyph_offset = new_glyph_offsets.last().copied().unwrap_or(0);
-    let loca_format: u8 = if max_glyph_offset > 131070 { 1 } else { index_to_loc_format as u8 };
+    let loca_format: u8 = if max_glyph_offset > 131070 {
+        1
+    } else {
+        index_to_loc_format as u8
+    };
     let new_loca = build_loca(&new_glyph_offsets, loca_format)?;
 
     // Build new hmtx table.
@@ -180,12 +185,14 @@ pub(super) fn subset(
 
     // Update hhea.advanceWidthMax and hhea.minLeftSideBearing from rebuilt hmtx.
     if new_hhea.len() >= 14 && !new_hmtx.is_empty() {
-        let adv_max = new_hmtx.chunks(4)
+        let adv_max = new_hmtx
+            .chunks(4)
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .max()
             .unwrap_or(0);
         new_hhea[10..12].copy_from_slice(&adv_max.to_be_bytes());
-        let lsb_min = new_hmtx.chunks(4)
+        let lsb_min = new_hmtx
+            .chunks(4)
             .map(|c| i16::from_be_bytes([c[2], c[3]]))
             .min()
             .unwrap_or(0);
@@ -206,7 +213,9 @@ pub(super) fn subset(
         for new_idx in 0..gids_to_keep.len() {
             let start = new_glyph_offsets[new_idx] as usize;
             let end = new_glyph_offsets[new_idx + 1] as usize;
-            if end < start + 10 || end > new_glyf.len() { continue; }
+            if end < start + 10 || end > new_glyf.len() {
+                continue;
+            }
 
             let hdr = &new_glyf[start..end];
             let x_min = i16::from_be_bytes([hdr[2], hdr[3]]);
@@ -215,10 +224,14 @@ pub(super) fn subset(
             let y_max = i16::from_be_bytes([hdr[8], hdr[9]]);
             let adv = if new_idx * 4 + 2 <= new_hmtx.len() {
                 u16::from_be_bytes([new_hmtx[new_idx * 4], new_hmtx[new_idx * 4 + 1]]) as i16
-            } else { 0 };
+            } else {
+                0
+            };
             let lsb = if new_idx * 4 + 4 <= new_hmtx.len() {
                 i16::from_be_bytes([new_hmtx[new_idx * 4 + 2], new_hmtx[new_idx * 4 + 3]])
-            } else { 0 };
+            } else {
+                0
+            };
 
             g_x_min = g_x_min.min(x_min);
             g_y_min = g_y_min.min(y_min);
@@ -265,7 +278,10 @@ pub(super) fn subset(
     // the embedded font and render all glyphs as replacement characters (●).
     for (tag, data_slice) in table_records.iter() {
         // Skip tables already rebuilt above.
-        if matches!(tag.as_str(), "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx") {
+        if matches!(
+            tag.as_str(),
+            "head" | "hhea" | "maxp" | "glyf" | "loca" | "hmtx"
+        ) {
             continue;
         }
         // Include only hinting tables: safe (no GID references).
@@ -466,7 +482,8 @@ fn build_glyf(
             let num_contours = i16::from_be_bytes([glyph_data[0], glyph_data[1]]);
             if num_contours < 0 {
                 // Composite glyph: copy with component GIDs rewritten to new positions.
-                new_glyf.extend_from_slice(rewrite_composite_gids(glyph_data, gid_remap).as_slice());
+                new_glyf
+                    .extend_from_slice(rewrite_composite_gids(glyph_data, gid_remap).as_slice());
             } else {
                 new_glyf.extend_from_slice(glyph_data);
             }
@@ -592,7 +609,12 @@ fn calc_checksum(data: &[u8]) -> u32 {
     let mut sum = 0u32;
     let mut i = 0;
     while i + 4 <= data.len() {
-        sum = sum.wrapping_add(u32::from_be_bytes([data[i], data[i+1], data[i+2], data[i+3]]));
+        sum = sum.wrapping_add(u32::from_be_bytes([
+            data[i],
+            data[i + 1],
+            data[i + 2],
+            data[i + 3],
+        ]));
         i += 4;
     }
     if i < data.len() {
@@ -647,7 +669,7 @@ fn assemble_font(
 
     // Table data.
     let mut current_offset = font.len();
-    for (_tag, data) in tables.iter() {
+    for data in tables.values() {
         // Align to 4-byte boundary.
         current_offset = (current_offset + 3) & !3;
         while font.len() < current_offset {

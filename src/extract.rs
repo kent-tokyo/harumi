@@ -31,9 +31,9 @@ use crate::error::Result;
 pub struct TextFragment {
     /// Decoded Unicode text.
     pub text: String,
-    /// X coordinate of the text baseline in PDF points (origin: bottom-left of page).
+    /// X coordinate of the text baseline in PDF points (origin: bottom-left of visible page area).
     pub x: f32,
-    /// Y coordinate of the text baseline in PDF points (origin: bottom-left of page).
+    /// Y coordinate of the text baseline in PDF points (origin: bottom-left of visible page area).
     pub y: f32,
     /// Estimated text width in PDF points, computed from the font's advance widths.
     pub width: f32,
@@ -42,6 +42,12 @@ pub struct TextFragment {
     /// The baseline is at `y`; the em square extends from approximately
     /// `y - descender_fraction * font_size` to `y + ascender_fraction * font_size`.
     pub height: f32,
+    /// Counter-clockwise text-line orientation in degrees after page rotation normalization.
+    ///
+    /// `0.0` is ordinary horizontal text; `90.0` and `270.0` identify the common
+    /// vertical-writing orientations.  This describes the text baseline direction,
+    /// not the axis-aligned bounding-box orientation.
+    pub rotation_degrees: f32,
     /// Font size in PDF points.
     pub font_size: f32,
     /// PDF resource name of the font at this position (e.g. `"HR0"`, `"F1"`).
@@ -182,6 +188,9 @@ pub enum WarningKind {
     StreamDecompressFailed,
     /// A Form XObject could not be decoded (decompression failed and content was empty).
     XObjectSkipped,
+    /// A Type0/CIDFont had no usable `/ToUnicode` CMap. Text may have been
+    /// decoded with the Identity-H/V best-effort fallback instead.
+    MissingToUnicodeCMap,
 }
 
 /// A non-fatal issue encountered while extracting text from a page.
@@ -202,6 +211,9 @@ pub struct ExtractionWarning {
 
 pub(crate) struct FontInfo {
     pub(crate) to_unicode: BTreeMap<u16, char>,
+    /// Full ToUnicode output, including mappings containing multiple UTF-16
+    /// code units. `to_unicode` is retained for legacy single-char consumers.
+    pub(crate) to_unicode_text: BTreeMap<u16, String>,
     pub(crate) dw: u32,
     pub(crate) w_runs: Vec<WidthRun>,
     /// 1 for simple fonts (Type1, TrueType), 2 for CID fonts (Type0).
@@ -400,7 +412,13 @@ pub struct VectorRule {
 impl VectorRule {
     /// Construct a [`VectorRule`] from endpoint coordinates and a line width.
     pub fn new(x1: f32, y1: f32, x2: f32, y2: f32, line_width: f32) -> Self {
-        Self { x1, y1, x2, y2, line_width }
+        Self {
+            x1,
+            y1,
+            x2,
+            y2,
+            line_width,
+        }
     }
 
     /// Returns `true` when the rule spans more in X than Y (approximately horizontal).
@@ -460,13 +478,23 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
 
     let mut stack: Vec<Token> = Vec::new();
 
-    let emit_stroked = |pts: &[(f32, f32)], rects: &[[f32; 4]], lw: f32, ctm: [f32; 6], rules: &mut Vec<VectorRule>| {
+    let emit_stroked = |pts: &[(f32, f32)],
+                        rects: &[[f32; 4]],
+                        lw: f32,
+                        ctm: [f32; 6],
+                        rules: &mut Vec<VectorRule>| {
         // Emit line-segment pairs as rules
         for chunk in pts.windows(2) {
             let (ax, ay) = apply_ctm(ctm, chunk[0].0, chunk[0].1);
             let (bx, by) = apply_ctm(ctm, chunk[1].0, chunk[1].1);
             let effective_w = lw * ctm_scale(ctm);
-            rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+            rules.push(VectorRule {
+                x1: ax,
+                y1: ay,
+                x2: bx,
+                y2: by,
+                line_width: effective_w,
+            });
         }
         // Stroked rectangles: emit all four edges if the rectangle is thin
         for &[rx, ry, rw, rh] in rects {
@@ -477,15 +505,45 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
             let h = (by - ay).abs();
             if rw.min(rh).abs() <= 3.0 || w.min(h) <= 3.0 {
                 // Thin rectangle — treat as a single rule
-                rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+                rules.push(VectorRule {
+                    x1: ax,
+                    y1: ay,
+                    x2: bx,
+                    y2: by,
+                    line_width: effective_w,
+                });
             } else {
                 // Thick rectangle — emit four border lines
                 let (c1x, c1y) = apply_ctm(ctm, rx + rw, ry);
                 let (c2x, c2y) = apply_ctm(ctm, rx, ry + rh);
-                rules.push(VectorRule { x1: ax, y1: ay, x2: c1x, y2: c1y, line_width: effective_w });
-                rules.push(VectorRule { x1: c1x, y1: c1y, x2: bx, y2: by, line_width: effective_w });
-                rules.push(VectorRule { x1: bx, y1: by, x2: c2x, y2: c2y, line_width: effective_w });
-                rules.push(VectorRule { x1: c2x, y1: c2y, x2: ax, y2: ay, line_width: effective_w });
+                rules.push(VectorRule {
+                    x1: ax,
+                    y1: ay,
+                    x2: c1x,
+                    y2: c1y,
+                    line_width: effective_w,
+                });
+                rules.push(VectorRule {
+                    x1: c1x,
+                    y1: c1y,
+                    x2: bx,
+                    y2: by,
+                    line_width: effective_w,
+                });
+                rules.push(VectorRule {
+                    x1: bx,
+                    y1: by,
+                    x2: c2x,
+                    y2: c2y,
+                    line_width: effective_w,
+                });
+                rules.push(VectorRule {
+                    x1: c2x,
+                    y1: c2y,
+                    x2: ax,
+                    y2: ay,
+                    line_width: effective_w,
+                });
             }
         }
     };
@@ -499,7 +557,13 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
             let h = (by - ay).abs();
             // Only emit filled rects when they are thin (≤ 3 pt in the narrow dimension)
             if rw.min(rh).abs() <= 3.0 || w.min(h) <= 3.0 {
-                rules.push(VectorRule { x1: ax, y1: ay, x2: bx, y2: by, line_width: effective_w });
+                rules.push(VectorRule {
+                    x1: ax,
+                    y1: ay,
+                    x2: bx,
+                    y2: by,
+                    line_width: effective_w,
+                });
             }
         }
     };
@@ -513,8 +577,12 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                         gs_stack.push(line_width);
                     }
                     b"Q" => {
-                        if let Some(saved) = ctm_stack.pop() { ctm = saved; }
-                        if let Some(saved) = gs_stack.pop() { line_width = saved; }
+                        if let Some(saved) = ctm_stack.pop() {
+                            ctm = saved;
+                        }
+                        if let Some(saved) = gs_stack.pop() {
+                            line_width = saved;
+                        }
                         stack.clear();
                         continue;
                     }
@@ -524,7 +592,9 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                             let mut ns = [0.0f32; 6];
                             let len = stack.len();
                             for (i, slot) in ns.iter_mut().enumerate() {
-                                if let Token::Number(v) = stack[len - 6 + i] { *slot = v; }
+                                if let Token::Number(v) = stack[len - 6 + i] {
+                                    *slot = v;
+                                }
                             }
                             ctm = multiply_ctm(ctm, ns);
                         }
@@ -532,7 +602,9 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                         continue;
                     }
                     b"w" => {
-                        if let Some(Token::Number(v)) = stack.last() { line_width = *v; }
+                        if let Some(Token::Number(v)) = stack.last() {
+                            line_width = *v;
+                        }
                         stack.clear();
                         continue;
                     }
@@ -540,7 +612,9 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                     b"m" => {
                         if stack.len() >= 2 {
                             let len = stack.len();
-                            if let (Token::Number(y), Token::Number(x)) = (&stack[len-1], &stack[len-2]) {
+                            if let (Token::Number(y), Token::Number(x)) =
+                                (&stack[len - 1], &stack[len - 2])
+                            {
                                 path_points.push((*x, *y));
                             }
                         }
@@ -550,7 +624,9 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                     b"l" => {
                         if stack.len() >= 2 {
                             let len = stack.len();
-                            if let (Token::Number(y), Token::Number(x)) = (&stack[len-1], &stack[len-2]) {
+                            if let (Token::Number(y), Token::Number(x)) =
+                                (&stack[len - 1], &stack[len - 2])
+                            {
                                 path_points.push((*x, *y));
                             }
                         }
@@ -560,9 +636,17 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                     b"re" => {
                         if stack.len() >= 4 {
                             let len = stack.len();
-                            if let (Token::Number(h), Token::Number(w), Token::Number(y), Token::Number(x)) =
-                                (&stack[len-1], &stack[len-2], &stack[len-3], &stack[len-4])
-                            {
+                            if let (
+                                Token::Number(h),
+                                Token::Number(w),
+                                Token::Number(y),
+                                Token::Number(x),
+                            ) = (
+                                &stack[len - 1],
+                                &stack[len - 2],
+                                &stack[len - 3],
+                                &stack[len - 4],
+                            ) {
                                 path_rects.push([*x, *y, *w, *h]);
                             }
                         }
@@ -579,14 +663,18 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                         let pts = path_points.clone();
                         let rects = path_rects.clone();
                         emit_stroked(&pts, &rects, line_width, ctm, &mut rules);
-                        path_points.clear(); path_rects.clear(); stack.clear();
+                        path_points.clear();
+                        path_rects.clear();
+                        stack.clear();
                         continue;
                     }
                     // Path painting operators — fill only
                     b"f" | b"F" | b"f*" => {
                         let rects = path_rects.clone();
                         emit_filled(&rects, line_width, ctm, &mut rules);
-                        path_points.clear(); path_rects.clear(); stack.clear();
+                        path_points.clear();
+                        path_rects.clear();
+                        stack.clear();
                         continue;
                     }
                     // Path painting operators — fill + stroke
@@ -595,12 +683,16 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                         let rects = path_rects.clone();
                         emit_stroked(&pts, &rects, line_width, ctm, &mut rules);
                         emit_filled(&rects, line_width, ctm, &mut rules);
-                        path_points.clear(); path_rects.clear(); stack.clear();
+                        path_points.clear();
+                        path_rects.clear();
+                        stack.clear();
                         continue;
                     }
                     // No-op path operators
                     b"n" => {
-                        path_points.clear(); path_rects.clear(); stack.clear();
+                        path_points.clear();
+                        path_rects.clear();
+                        stack.clear();
                         continue;
                     }
                     // Text block markers: skip everything inside BT..ET
@@ -608,7 +700,10 @@ pub fn extract_vector_rules(content: &[u8], page_height: f32) -> Vec<VectorRule>
                         stack.clear();
                         continue;
                     }
-                    _ => { stack.clear(); continue; }
+                    _ => {
+                        stack.clear();
+                        continue;
+                    }
                 }
             }
             other => stack.push(other),
@@ -629,13 +724,16 @@ pub fn detect_text_vs_rule_collisions(
     let mut out = Vec::new();
     for (ti, &text_rect) in text_rects.iter().enumerate() {
         let text_area = rect_area(text_rect);
-        if text_area <= 0.0 { continue; }
+        if text_area <= 0.0 {
+            continue;
+        }
         for (ri, rule) in rules.iter().enumerate() {
             let rule_bbox = rule.bbox();
             if let Some(overlap) = rect_intersection(text_rect, rule_bbox) {
                 let overlap_area = rect_area(overlap);
                 if overlap_area > 0.0 {
-                    let severity = collision_severity(overlap_area, text_area, rect_area(rule_bbox));
+                    let severity =
+                        collision_severity(overlap_area, text_area, rect_area(rule_bbox));
                     out.push((ti, ri, severity));
                 }
             }
@@ -674,7 +772,13 @@ impl SimplePlacement {
         font_size: f32,
         overflow: bool,
     ) -> Self {
-        Self { id, source_rect, placed_rect, font_size, overflow }
+        Self {
+            id,
+            source_rect,
+            placed_rect,
+            font_size,
+            overflow,
+        }
     }
 }
 
@@ -1649,7 +1753,163 @@ pub(crate) fn extract_text_runs_from_page(
     }
     // Also extract text from Form XObjects (headers, footers, watermarks).
     extract_text_from_xobjects(doc, page_id, &mut carry, &mut fragments, 0);
+    normalize_page_coordinates(doc, page_id, &mut fragments);
     Ok(fragments)
+}
+
+#[derive(Clone, Copy)]
+struct PageGeometry {
+    crop_box: [f32; 4],
+    user_unit: f32,
+    rotate: i32,
+}
+
+/// Resolve the page-space geometry that viewers use for layout. Content streams
+/// are authored in default user space; extraction exposes page-local points so
+/// CropBox origins, physical UserUnit scaling, and page rotation do not leak
+/// into layout-region inference.
+fn page_geometry(doc: &lopdf::Document, page_id: ObjectId) -> PageGeometry {
+    let mut current_id = page_id;
+    let mut media_box = None;
+    let mut crop_box = None;
+    let mut user_unit = None;
+    let mut rotate = None;
+
+    for _ in 0..32 {
+        let Ok(dict) = doc
+            .get_object(current_id)
+            .and_then(|object| object.as_dict())
+        else {
+            break;
+        };
+        if media_box.is_none() {
+            media_box = dict
+                .get(b"MediaBox")
+                .ok()
+                .and_then(|object| page_box_values(doc, object));
+        }
+        if crop_box.is_none() {
+            crop_box = dict
+                .get(b"CropBox")
+                .ok()
+                .and_then(|object| page_box_values(doc, object));
+        }
+        if user_unit.is_none() {
+            user_unit = dict
+                .get(b"UserUnit")
+                .ok()
+                .and_then(|object| resolve_object(doc, object))
+                .and_then(object_number);
+        }
+        if rotate.is_none() {
+            rotate = dict
+                .get(b"Rotate")
+                .ok()
+                .and_then(|object| resolve_object(doc, object))
+                .and_then(object_number)
+                .map(|value| value.round() as i32);
+        }
+        let Some(Object::Reference(parent_id)) = dict.get(b"Parent").ok() else {
+            break;
+        };
+        current_id = *parent_id;
+    }
+
+    let media = media_box.unwrap_or([0.0, 0.0, 595.0, 842.0]);
+    PageGeometry {
+        crop_box: crop_box.unwrap_or(media),
+        user_unit: user_unit
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(1.0),
+        rotate: rotate.unwrap_or(0),
+    }
+}
+
+fn page_box_values(doc: &lopdf::Document, object: &Object) -> Option<[f32; 4]> {
+    let object = resolve_object(doc, object)?;
+    let array = object.as_array().ok()?;
+    if array.len() < 4 {
+        return None;
+    }
+    let mut values = [0.0; 4];
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = object_number(&array[index])?;
+    }
+    values
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(values)
+}
+
+fn object_number(object: &Object) -> Option<f32> {
+    match object {
+        Object::Integer(value) => Some(*value as f32),
+        Object::Real(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn normalize_page_coordinates(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    fragments: &mut [TextFragment],
+) {
+    let geometry = page_geometry(doc, page_id);
+    for fragment in fragments {
+        let (x, y) = transform_page_point(geometry, fragment.x, fragment.y);
+        let (width, height) = transform_page_extent(geometry, fragment.width, fragment.height);
+        fragment.x = x;
+        fragment.y = y;
+        fragment.width = width;
+        fragment.height = height;
+        fragment.rotation_degrees =
+            normalize_rotation(fragment.rotation_degrees + geometry.rotate as f32);
+        fragment.font_size *= geometry.user_unit;
+        fragment.space_advance *= geometry.user_unit;
+        fragment.tf_font_size *= geometry.user_unit;
+        if let (Some(x), Some(y)) = (fragment.tm_origin_x, fragment.tm_origin_y) {
+            let (x, y) = transform_page_point(geometry, x, y);
+            fragment.tm_origin_x = Some(x);
+            fragment.tm_origin_y = Some(y);
+        }
+        if let (Some(x), Some(y)) = (fragment.tm_lm_x, fragment.tm_lm_y) {
+            let (x, y) = transform_page_point(geometry, x, y);
+            fragment.tm_lm_x = Some(x);
+            fragment.tm_lm_y = Some(y);
+        }
+    }
+}
+
+fn normalize_rotation(degrees: f32) -> f32 {
+    let mut normalized = degrees.rem_euclid(360.0);
+    if normalized >= 360.0 - 0.0001 {
+        normalized = 0.0;
+    }
+    normalized
+}
+
+fn transform_page_point(geometry: PageGeometry, x: f32, y: f32) -> (f32, f32) {
+    let [x0, y0, x1, y1] = geometry.crop_box;
+    let local_x = (x - x0) * geometry.user_unit;
+    let local_y = (y - y0) * geometry.user_unit;
+    let width = (x1 - x0) * geometry.user_unit;
+    let height = (y1 - y0) * geometry.user_unit;
+    match geometry.rotate.rem_euclid(360) {
+        90 => (local_y, width - local_x),
+        180 => (width - local_x, height - local_y),
+        270 => (height - local_y, local_x),
+        _ => (local_x, local_y),
+    }
+}
+
+fn transform_page_extent(geometry: PageGeometry, width: f32, height: f32) -> (f32, f32) {
+    let width = width.abs() * geometry.user_unit;
+    let height = height.abs() * geometry.user_unit;
+    if geometry.rotate.rem_euclid(360) % 180 == 90 {
+        (height, width)
+    } else {
+        (width, height)
+    }
 }
 
 /// Extract text from Form XObjects referenced in the page content.
@@ -1765,6 +2025,31 @@ fn xobject_fonts(
         page_fonts
     } else {
         // XObject-specific fonts take priority over page fonts on name collision.
+        let mut merged = page_fonts;
+        merged.extend(xobj_specific);
+        merged
+    }
+}
+
+fn xobject_fonts_verbose(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    xobj_id: ObjectId,
+    warnings: &mut Vec<ExtractionWarning>,
+) -> HashMap<Vec<u8>, crate::extract::FontInfo> {
+    let page_fonts = collect_fonts(doc, page_id);
+    let xobj_specific = doc
+        .get_object(xobj_id)
+        .ok()
+        .and_then(|o| o.as_stream().ok())
+        .and_then(|s| s.dict.get(b"Resources").ok())
+        .and_then(|res_ref| resolve_dict(doc, res_ref))
+        .map(|res_dict| collect_fonts_from_resources_verbose(doc, res_dict, warnings))
+        .unwrap_or_default();
+
+    if xobj_specific.is_empty() {
+        page_fonts
+    } else {
         let mut merged = page_fonts;
         merged.extend(xobj_specific);
         merged
@@ -1931,7 +2216,7 @@ pub(crate) fn extract_text_runs_from_page_verbose(
     page_id: ObjectId,
 ) -> Result<(Vec<TextFragment>, Vec<ExtractionWarning>)> {
     let (streams, mut warnings) = page_content_streams_verbose(doc, page_id);
-    let fonts = collect_fonts(doc, page_id);
+    let fonts = collect_fonts_verbose(doc, page_id, &mut warnings);
 
     let mut fragments = Vec::new();
     let mut carry = ParseCarryState::default();
@@ -1946,6 +2231,7 @@ pub(crate) fn extract_text_runs_from_page_verbose(
         );
     }
     extract_text_from_xobjects_verbose(doc, page_id, &mut carry, &mut fragments, 0, &mut warnings);
+    normalize_page_coordinates(doc, page_id, &mut fragments);
     Ok((fragments, warnings))
 }
 
@@ -1972,7 +2258,7 @@ fn extract_text_from_xobjects_verbose(
             };
             match decode_form_xobject_verbose(doc, xobj_id) {
                 Ok(content) => {
-                    let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                    let xobj_fonts = xobject_fonts_verbose(doc, page_id, xobj_id, warnings);
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
@@ -1989,7 +2275,7 @@ fn extract_text_from_xobjects_verbose(
         for xobj_id in xobj_ids {
             match decode_form_xobject_verbose(doc, xobj_id) {
                 Ok(content) => {
-                    let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                    let xobj_fonts = xobject_fonts_verbose(doc, page_id, xobj_id, warnings);
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
@@ -2068,6 +2354,35 @@ pub(crate) fn collect_fonts(
     collect_fonts_inner(doc, page_id).unwrap_or_default()
 }
 
+fn collect_fonts_verbose(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    warnings: &mut Vec<ExtractionWarning>,
+) -> HashMap<Vec<u8>, FontInfo> {
+    let mut current_id = page_id;
+    loop {
+        let Ok(obj) = doc.get_object(current_id) else {
+            return HashMap::new();
+        };
+        let Ok(dict) = obj.as_dict() else {
+            return HashMap::new();
+        };
+        if let Ok(resources_obj) = dict.get(b"Resources") {
+            let Some(resources_dict) = resolve_dict(doc, resources_obj) else {
+                return HashMap::new();
+            };
+            return collect_fonts_from_resources_verbose(doc, resources_dict, warnings);
+        }
+        let Ok(parent_ref) = dict.get(b"Parent") else {
+            return HashMap::new();
+        };
+        let Object::Reference(parent_id) = parent_ref else {
+            return HashMap::new();
+        };
+        current_id = *parent_id;
+    }
+}
+
 /// Collect fonts from a resources dictionary directly.
 /// Used by both page-level and Form-XObject font collection.
 pub(crate) fn collect_fonts_from_resources(
@@ -2082,6 +2397,22 @@ pub(crate) fn collect_fonts_from_resources(
         return fonts;
     };
     collect_font_dict_entries(doc, font_dict, &mut fonts);
+    fonts
+}
+
+fn collect_fonts_from_resources_verbose(
+    doc: &lopdf::Document,
+    resources_dict: &Dictionary,
+    warnings: &mut Vec<ExtractionWarning>,
+) -> HashMap<Vec<u8>, FontInfo> {
+    let mut fonts = HashMap::new();
+    let Ok(font_obj) = resources_dict.get(b"Font") else {
+        return fonts;
+    };
+    let Some(font_dict) = resolve_dict(doc, font_obj) else {
+        return fonts;
+    };
+    collect_font_dict_entries_verbose(doc, font_dict, &mut fonts, warnings);
     fonts
 }
 
@@ -2251,6 +2582,27 @@ fn collect_font_dict_entries(
     }
 }
 
+fn collect_font_dict_entries_verbose(
+    doc: &lopdf::Document,
+    font_dict: &Dictionary,
+    fonts: &mut HashMap<Vec<u8>, FontInfo>,
+    warnings: &mut Vec<ExtractionWarning>,
+) {
+    collect_font_dict_entries(doc, font_dict, fonts);
+    for (name, font_info) in fonts.iter() {
+        if font_info.identity_fallback {
+            warnings.push(ExtractionWarning {
+                kind: WarningKind::MissingToUnicodeCMap,
+                stream_id: None,
+                message: format!(
+                    "font /{} has no usable /ToUnicode CMap; Identity fallback was used",
+                    String::from_utf8_lossy(name)
+                ),
+            });
+        }
+    }
+}
+
 fn collect_type0_font(
     fd: &Dictionary,
     doc: &lopdf::Document,
@@ -2260,20 +2612,21 @@ fn collect_type0_font(
     font_family: String,
 ) -> Option<FontInfo> {
     let to_unicode = try_parse_to_unicode(fd, doc).unwrap_or_default();
+    let to_unicode_text = try_parse_to_unicode_text(fd, doc).unwrap_or_else(|| {
+        to_unicode
+            .iter()
+            .map(|(&gid, &ch)| (gid, ch.to_string()))
+            .collect()
+    });
     // When ToUnicode is absent and the encoding is Identity-H/V, fall back to treating
     // the 2-byte character code directly as a Unicode scalar (best-effort).
     let identity_fallback = to_unicode.is_empty() && is_identity_cmap(fd);
 
-    let desc_obj = fd.get(b"DescendantFonts").ok()?;
+    let desc_obj = resolve_object(doc, fd.get(b"DescendantFonts").ok()?)?;
     let Object::Array(desc_arr) = desc_obj else {
         return None;
     };
-    let Some(Object::Reference(cid_id)) = desc_arr.first() else {
-        return None;
-    };
-    let Ok(cid_obj) = doc.get_object(*cid_id) else {
-        return None;
-    };
+    let cid_obj = resolve_object(doc, desc_arr.first()?)?;
     let Ok(cid_dict) = cid_obj.as_dict() else {
         return None;
     };
@@ -2300,6 +2653,7 @@ fn collect_type0_font(
 
     Some(FontInfo {
         to_unicode,
+        to_unicode_text,
         dw,
         w_runs,
         bytes_per_char: 2,
@@ -2309,6 +2663,16 @@ fn collect_type0_font(
         is_italic,
         font_family,
     })
+}
+
+/// Resolves the indirect-object form accepted for PDF dictionary values while
+/// preserving direct values. Several producers serialize Type0 font arrays as
+/// an indirect object even though direct arrays are also valid.
+fn resolve_object<'a>(doc: &'a lopdf::Document, object: &'a Object) -> Option<&'a Object> {
+    match object {
+        Object::Reference(id) => doc.get_object(*id).ok(),
+        _ => Some(object),
+    }
 }
 
 /// Returns true when the Type0 font's /Encoding is Identity-H or Identity-V (character code =
@@ -2334,10 +2698,17 @@ fn collect_simple_font(
     } else {
         build_encoding_map(fd, doc)
     };
+    let to_unicode_text = try_parse_to_unicode_text(fd, doc).unwrap_or_else(|| {
+        to_unicode
+            .iter()
+            .map(|(&gid, &ch)| (gid, ch.to_string()))
+            .collect()
+    });
 
     let (w_runs, dw) = collect_simple_font_widths(fd, doc);
     FontInfo {
         to_unicode,
+        to_unicode_text,
         dw,
         w_runs,
         bytes_per_char: 1,
@@ -2347,6 +2718,31 @@ fn collect_simple_font(
         is_italic,
         font_family,
     }
+}
+
+fn try_parse_to_unicode_text(
+    fd: &Dictionary,
+    doc: &lopdf::Document,
+) -> Option<BTreeMap<u16, String>> {
+    let to_uni_ref = fd.get(b"ToUnicode").ok()?;
+    let Object::Reference(to_uni_id) = to_uni_ref else {
+        return None;
+    };
+    let Ok(to_uni_obj) = doc.get_object(*to_uni_id) else {
+        return None;
+    };
+    let Ok(stream) = to_uni_obj.as_stream() else {
+        return None;
+    };
+    let cmap_bytes = if stream.dict.get(b"Filter").is_ok() {
+        let mut owned = stream.clone();
+        owned.decompress().ok()?;
+        owned.content
+    } else {
+        stream.content.clone()
+    };
+    let map = parse_to_unicode_cmap_text(&cmap_bytes);
+    if map.is_empty() { None } else { Some(map) }
 }
 
 fn try_parse_to_unicode(fd: &Dictionary, doc: &lopdf::Document) -> Option<BTreeMap<u16, char>> {
@@ -3145,6 +3541,87 @@ fn parse_to_unicode_cmap(bytes: &[u8]) -> BTreeMap<u16, char> {
     map
 }
 
+fn parse_to_unicode_cmap_text(bytes: &[u8]) -> BTreeMap<u16, String> {
+    let mut map = BTreeMap::new();
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return map;
+    };
+    let mut section = None;
+    for line in text.lines().map(str::trim) {
+        if line.ends_with("beginbfchar") {
+            section = Some("char");
+        } else if line == "endbfchar" {
+            section = None;
+        } else if line.ends_with("beginbfrange") {
+            section = Some("range");
+        } else if line == "endbfrange" {
+            section = None;
+        } else if section == Some("char") {
+            let mut parts = line.split_ascii_whitespace();
+            let Some(gid_hex) = parts.next() else {
+                continue;
+            };
+            let Some(dst_hex) = parts.next() else {
+                continue;
+            };
+            let gid_hex = gid_hex.trim_matches(['<', '>']);
+            let dst_hex = dst_hex.trim_matches(['<', '>']);
+            let Ok(gid) = u16::from_str_radix(gid_hex, 16) else {
+                continue;
+            };
+            if let Some(value) = hex_to_unicode_string(dst_hex) {
+                map.insert(gid, value);
+            }
+        } else if section == Some("range") {
+            let mut parts = line.split_ascii_whitespace();
+            let (Some(lo_hex), Some(hi_hex), Some(dst)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let Ok(lo) = u16::from_str_radix(lo_hex.trim_matches(['<', '>']), 16) else {
+                continue;
+            };
+            let Ok(hi) = u16::from_str_radix(hi_hex.trim_matches(['<', '>']), 16) else {
+                continue;
+            };
+            if dst == "[" {
+                let values = line
+                    .split(['<', '>', '[', ']', ' ', '\t'])
+                    .filter(|part| !part.is_empty())
+                    .skip(2);
+                for (offset, value) in values.enumerate() {
+                    let Some(decoded) = hex_to_unicode_string(value) else {
+                        continue;
+                    };
+                    let Some(code) = lo.checked_add(offset as u16) else {
+                        break;
+                    };
+                    if code > hi {
+                        break;
+                    }
+                    map.insert(code, decoded);
+                }
+            } else {
+                let dst_hex = dst.trim_matches(['<', '>']);
+                let Ok(start) = u32::from_str_radix(dst_hex, 16) else {
+                    continue;
+                };
+                for offset in 0..=u32::from(hi.saturating_sub(lo)) {
+                    let Some(value) = start.checked_add(offset) else {
+                        break;
+                    };
+                    let Some(decoded) = char::from_u32(value).map(|ch| ch.to_string()) else {
+                        continue;
+                    };
+                    map.insert(lo + offset as u16, decoded);
+                }
+            }
+        }
+    }
+    map
+}
+
 fn parse_bfchar_line(line: &str, map: &mut BTreeMap<u16, char>) {
     let mut parts = line.split_ascii_whitespace();
     let gid_tok = match parts.next() {
@@ -3267,6 +3744,18 @@ fn hex_to_char(hex: &str) -> Option<char> {
         }
         _ => None,
     }
+}
+
+fn hex_to_unicode_string(hex: &str) -> Option<String> {
+    if hex.is_empty() || !hex.len().is_multiple_of(4) {
+        return hex_to_char(hex).map(|ch| ch.to_string());
+    }
+    let units = hex
+        .as_bytes()
+        .chunks_exact(4)
+        .map(|chunk| u16::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf16(&units).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -3445,6 +3934,53 @@ fn tokenize(input: &[u8]) -> Vec<(Token, usize)> {
     }
 
     tokens
+}
+
+/// Expand PDF shorthand text-showing operators into the existing text path.
+/// `\'` is `T*` + `Tj`; `\"` sets `Tw`/`Tc`, then performs `T*` + `Tj`.
+fn expand_quote_operators(tokens: Vec<(Token, usize)>) -> Vec<(Token, usize)> {
+    let mut expanded = Vec::with_capacity(tokens.len());
+    for (token, position) in tokens {
+        let Token::Keyword(keyword) = &token else {
+            expanded.push((token, position));
+            continue;
+        };
+        if keyword == b"'" {
+            if let Some((string, string_position)) = expanded.pop() {
+                expanded.push((Token::Keyword(b"T*".to_vec()), position));
+                expanded.push((string, string_position));
+                expanded.push((Token::Keyword(b"Tj".to_vec()), position));
+            } else {
+                expanded.push((token, position));
+            }
+        } else if keyword == b"\"" {
+            let Some((string, string_position)) = expanded.pop() else {
+                expanded.push((token, position));
+                continue;
+            };
+            let Some((character_spacing, character_position)) = expanded.pop() else {
+                expanded.push((string, string_position));
+                expanded.push((token, position));
+                continue;
+            };
+            let Some((word_spacing, word_position)) = expanded.pop() else {
+                expanded.push((character_spacing, character_position));
+                expanded.push((string, string_position));
+                expanded.push((token, position));
+                continue;
+            };
+            expanded.push((word_spacing, word_position));
+            expanded.push((Token::Keyword(b"Tw".to_vec()), position));
+            expanded.push((character_spacing, character_position));
+            expanded.push((Token::Keyword(b"Tc".to_vec()), position));
+            expanded.push((Token::Keyword(b"T*".to_vec()), position));
+            expanded.push((string, string_position));
+            expanded.push((Token::Keyword(b"Tj".to_vec()), position));
+        } else {
+            expanded.push((token, position));
+        }
+    }
+    expanded
 }
 
 fn parse_array_tokens(input: &[u8]) -> (Vec<Token>, usize) {
@@ -3709,6 +4245,8 @@ struct ParseCarryState {
     font_size: f32,
     /// Y-axis scale from the last `Tm` matrix.
     tm_y_scale: f32,
+    /// Linear part of the most recent text matrix: `[a, b, c, d]`.
+    tm_matrix: [f32; 4],
     /// Current text X position.
     text_x: f32,
     /// Current text Y position.
@@ -3738,6 +4276,10 @@ struct ParseCarryState {
     char_spacing: f32,
     /// Word spacing added after each space glyph (set by `Tw`, default 0).
     word_spacing: f32,
+    /// Horizontal text scaling as a multiplier (set by `Tz`, default 1.0).
+    horizontal_scale: f32,
+    /// Text rise in text space points (set by `Ts`, default 0).
+    text_rise: f32,
 }
 
 impl Default for ParseCarryState {
@@ -3753,6 +4295,7 @@ impl Default for ParseCarryState {
             tf_font_size: 12.0,
             font_size: 12.0,
             tm_y_scale: 1.0,
+            tm_matrix: [1.0, 0.0, 0.0, 1.0],
             text_x: 0.0,
             text_y: 0.0,
             tm_origin_x: 0.0,
@@ -3764,6 +4307,8 @@ impl Default for ParseCarryState {
             text_leading: 0.0,
             char_spacing: 0.0,
             word_spacing: 0.0,
+            horizontal_scale: 1.0,
+            text_rise: 0.0,
         }
     }
 }
@@ -3776,7 +4321,7 @@ fn parse_content_stream(
     stream_idx: Option<usize>,
     xobj_id: Option<(u32, u16)>,
 ) {
-    let tokens = tokenize(bytes);
+    let tokens = expand_quote_operators(tokenize(bytes));
     let mut stack: Vec<(Token, usize)> = Vec::new();
     // Read text state from carry so that BT blocks split across stream boundaries
     // (a Distiller/PScript5 pattern) are handled correctly.
@@ -3785,6 +4330,7 @@ fn parse_content_stream(
     let mut tf_font_size = state.tf_font_size;
     let mut font_size = state.font_size;
     let mut tm_y_scale = state.tm_y_scale;
+    let mut tm_matrix = state.tm_matrix;
     let mut tm_x_scale = state.tm_x_scale;
     let mut tm_lm_x = state.tm_lm_x;
     let mut tm_lm_y = state.tm_lm_y;
@@ -3794,6 +4340,8 @@ fn parse_content_stream(
     let mut text_leading = state.text_leading;
     let mut char_spacing = state.char_spacing;
     let mut word_spacing = state.word_spacing;
+    let mut horizontal_scale = state.horizontal_scale;
+    let mut text_rise = state.text_rise;
     // CTM stack lives in state.ctm_stack so it persists across multiple content
     // streams on the same page (PDF spec: Contents array streams share graphics state).
 
@@ -3807,6 +4355,7 @@ fn parse_content_stream(
                     tm_origin_set = false;
                     tm_x_scale = 1.0;
                     tm_y_scale = 1.0;
+                    tm_matrix = [1.0, 0.0, 0.0, 1.0];
                     tm_lm_x = 0.0;
                     tm_lm_y = 0.0;
                     stack.clear();
@@ -3830,6 +4379,23 @@ fn parse_content_stream(
                 b"Tw" => {
                     if let Some((Token::Number(v), _)) = stack.pop() {
                         word_spacing = v;
+                    }
+                    stack.clear();
+                }
+                b"Tz" => {
+                    if let Some((Token::Number(v), _)) = stack.pop()
+                        && v.is_finite()
+                        && v > 0.0
+                    {
+                        horizontal_scale = v / 100.0;
+                    }
+                    stack.clear();
+                }
+                b"Ts" => {
+                    if let Some((Token::Number(v), _)) = stack.pop()
+                        && v.is_finite()
+                    {
+                        text_rise = v;
                     }
                     stack.clear();
                 }
@@ -3903,6 +4469,19 @@ fn parse_content_stream(
                         // Also reset T_lm to the Tm translation (Td will update from here).
                         tm_lm_x = ex;
                         tm_lm_y = fy;
+                    }
+                    if let (
+                        Some((Token::Number(av), _)),
+                        Some((Token::Number(bv), _)),
+                        Some((Token::Number(cv), _)),
+                        Some((Token::Number(dv), _)),
+                    ) = (
+                        pop_a.as_ref(),
+                        pop_b.as_ref(),
+                        pop_c.as_ref(),
+                        pop_d.as_ref(),
+                    ) {
+                        tm_matrix = [*av, *bv, *cv, *dv];
                     }
                     // Compute effective font size from the Tm y-scale:
                     // y_scale = sqrt(c² + d²) handles both scaling and rotation.
@@ -4011,7 +4590,7 @@ fn parse_content_stream(
                     };
                     if let Some(char_bytes) = bytes_opt {
                         let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
-                        let (px, py) = apply_ctm(ctm, x, y);
+                        let (px, py) = apply_ctm(ctm, x, y + text_rise);
                         let scale = ctm_scale(ctm);
                         let (tm_ox, tm_oy) = if tm_origin_set {
                             let (ox, oy) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
@@ -4032,7 +4611,7 @@ fn parse_content_stream(
                         };
                         // x_font_size uses the Tm x-scale for width; font_size (y-scale)
                         // is kept for height.  For uniform Tm they are equal.
-                        let x_font_size = tf_font_size * tm_x_scale * scale;
+                        let x_font_size = tf_font_size * tm_x_scale * horizontal_scale * scale;
                         if let Some(frag) = decode_chars_to_fragment(
                             &char_bytes,
                             &font_name,
@@ -4040,6 +4619,9 @@ fn parse_content_stream(
                             x_font_size,
                             px,
                             py,
+                            ctm,
+                            tm_matrix,
+                            horizontal_scale,
                             fonts,
                             state.cur_color,
                             state.cur_render_mode,
@@ -4066,8 +4648,8 @@ fn parse_content_stream(
                             let n_chars = frag.text.chars().count() as f32;
                             let n_spaces = frag.text.chars().filter(|&c| c == ' ').count() as f32;
                             x += local_advance
-                                + char_spacing * tm_x_scale * n_chars
-                                + word_spacing * tm_x_scale * n_spaces;
+                                + char_spacing * tm_x_scale * horizontal_scale * n_chars
+                                + word_spacing * tm_x_scale * horizontal_scale * n_spaces;
                             out.push(frag);
                         }
                     }
@@ -4096,12 +4678,12 @@ fn parse_content_stream(
                         } else {
                             (None, None)
                         };
-                        let x_font_size = tf_font_size * tm_x_scale * scale;
+                        let x_font_size = tf_font_size * tm_x_scale * horizontal_scale * scale;
                         let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
                                 Token::HexStr(ref b) | Token::LitStr(ref b) => {
-                                    let (px, py) = apply_ctm(ctm, cur_x, y);
+                                    let (px, py) = apply_ctm(ctm, cur_x, y + text_rise);
                                     if let Some(frag) = decode_chars_to_fragment(
                                         b,
                                         &font_name,
@@ -4109,6 +4691,9 @@ fn parse_content_stream(
                                         x_font_size,
                                         px,
                                         py,
+                                        ctm,
+                                        tm_matrix,
+                                        horizontal_scale,
                                         fonts,
                                         state.cur_color,
                                         state.cur_render_mode,
@@ -4133,8 +4718,14 @@ fn parse_content_stream(
                                         let n_spaces =
                                             frag.text.chars().filter(|&c| c == ' ').count() as f32;
                                         cur_x += local_advance
-                                            + char_spacing * tm_x_scale * n_chars
-                                            + word_spacing * tm_x_scale * n_spaces;
+                                            + char_spacing
+                                                * tm_x_scale
+                                                * horizontal_scale
+                                                * n_chars
+                                            + word_spacing
+                                                * tm_x_scale
+                                                * horizontal_scale
+                                                * n_spaces;
                                         out.push(frag);
                                     }
                                 }
@@ -4142,7 +4733,10 @@ fn parse_content_stream(
                                     // Kern in TJ is in thousandths of a text-space unit;
                                     // multiply by tf_font_size × tm_x_scale to convert to
                                     // user space (horizontal axis).
-                                    cur_x -= kern / 1000.0 * tf_font_size * tm_x_scale;
+                                    cur_x -= kern / 1000.0
+                                        * tf_font_size
+                                        * tm_x_scale
+                                        * horizontal_scale;
                                 }
                                 _ => {}
                             }
@@ -4167,6 +4761,7 @@ fn parse_content_stream(
     state.tf_font_size = tf_font_size;
     state.font_size = font_size;
     state.tm_y_scale = tm_y_scale;
+    state.tm_matrix = tm_matrix;
     state.tm_x_scale = tm_x_scale;
     state.tm_lm_x = tm_lm_x;
     state.tm_lm_y = tm_lm_y;
@@ -4176,6 +4771,8 @@ fn parse_content_stream(
     state.text_leading = text_leading;
     state.char_spacing = char_spacing;
     state.word_spacing = word_spacing;
+    state.horizontal_scale = horizontal_scale;
+    state.text_rise = text_rise;
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
@@ -4186,6 +4783,9 @@ fn decode_chars_to_fragment(
     x_font_size: f32,
     x: f32,
     y: f32,
+    ctm: [f32; 6],
+    tm_matrix: [f32; 4],
+    horizontal_scale: f32,
     fonts: &HashMap<Vec<u8>, FontInfo>,
     color: [f32; 3],
     render_mode: u8,
@@ -4207,7 +4807,7 @@ fn decode_chars_to_fragment(
     let font_info = fonts.get(font_name)?;
 
     let mut text = String::new();
-    let mut total_width = 0.0f32;
+    let mut total_advance = 0.0f32;
 
     match font_info.bytes_per_char {
         2 => {
@@ -4216,29 +4816,40 @@ fn decode_chars_to_fragment(
             }
             for chunk in char_bytes.chunks(2) {
                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
-                let ch = font_info.to_unicode.get(&gid).copied().or_else(|| {
-                    if font_info.identity_fallback {
-                        char::from_u32(gid as u32)
-                            .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
-                    } else {
-                        None
-                    }
-                });
-                let Some(ch) = ch else { continue };
-                text.push(ch);
+                let mapped = font_info
+                    .to_unicode_text
+                    .get(&gid)
+                    .cloned()
+                    .or_else(|| font_info.to_unicode.get(&gid).map(|ch| ch.to_string()))
+                    .or_else(|| {
+                        if font_info.identity_fallback {
+                            char::from_u32(gid as u32)
+                                .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+                                .map(|c| c.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                let Some(mapped) = mapped else { continue };
+                text.push_str(&mapped);
                 let aw = font_info.advance_width(gid);
-                total_width += aw as f32 / 1000.0 * x_font_size;
+                total_advance += aw as f32 / 1000.0;
             }
         }
         _ => {
             for &b in char_bytes {
                 let code = b as u16;
-                let Some(&ch) = font_info.to_unicode.get(&code) else {
+                let mapped = font_info
+                    .to_unicode_text
+                    .get(&code)
+                    .cloned()
+                    .or_else(|| font_info.to_unicode.get(&code).map(|ch| ch.to_string()));
+                let Some(mapped) = mapped else {
                     continue;
                 };
-                text.push(ch);
+                text.push_str(&mapped);
                 let aw = font_info.advance_width(code);
-                total_width += aw as f32 / 1000.0 * x_font_size;
+                total_advance += aw as f32 / 1000.0;
             }
         }
     }
@@ -4248,21 +4859,32 @@ fn decode_chars_to_fragment(
     }
     // Fix 5: zero-width fallback — some fonts have missing /W entries and dw=0,
     // which would make every fragment 0-width and break column detection.
-    if total_width == 0.0 {
-        total_width = text.chars().count() as f32 * x_font_size * 0.5;
+    if total_advance == 0.0 {
+        total_advance = text.chars().count() as f32 * 0.5;
     }
+    let (bbox_x, bbox_y, bbox_width, bbox_height) = text_bbox(
+        x,
+        y,
+        total_advance,
+        tf_font_size,
+        horizontal_scale,
+        ctm,
+        tm_matrix,
+    );
+    let rotation_degrees = text_rotation_degrees(ctm, tm_matrix);
     let space_advance = font_info
-        .to_unicode
+        .to_unicode_text
         .iter()
-        .find(|&(_gid, &ch)| ch == ' ')
+        .find(|&(&gid, text)| text == " " || font_info.to_unicode.get(&gid) == Some(&' '))
         .map(|(&gid, _)| font_info.advance_width(gid) as f32 / 1000.0 * x_font_size)
         .unwrap_or(0.0);
     Some(TextFragment {
         text,
-        x,
-        y,
-        width: total_width,
-        height: font_size,
+        x: bbox_x,
+        y: bbox_y,
+        width: bbox_width,
+        height: bbox_height,
+        rotation_degrees,
         font_size,
         font_name: String::from_utf8_lossy(font_name).into_owned(),
         color,
@@ -4284,6 +4906,70 @@ fn decode_chars_to_fragment(
         tm_lm_x,
         tm_lm_y,
     })
+}
+
+fn text_rotation_degrees(ctm: [f32; 6], tm_matrix: [f32; 4]) -> f32 {
+    let [a, b, _, _] = tm_matrix;
+    let x = ctm[0] * a + ctm[2] * b;
+    let y = ctm[1] * a + ctm[3] * b;
+    if x.abs() < 0.0001 && y.abs() < 0.0001 {
+        0.0
+    } else {
+        normalize_rotation(y.atan2(x).to_degrees())
+    }
+}
+
+/// Convert the text-space rectangle into an axis-aligned page-space bbox.
+/// The four corners are transformed by the full CTM × Tm linear part, so
+/// rotated and sheared text is represented by its enclosing rectangle.
+fn text_bbox(
+    x: f32,
+    y: f32,
+    advance: f32,
+    tf_font_size: f32,
+    horizontal_scale: f32,
+    ctm: [f32; 6],
+    tm_matrix: [f32; 4],
+) -> (f32, f32, f32, f32) {
+    let [a, b, c, d] = tm_matrix;
+    let horizontal = (
+        (ctm[0] * a + ctm[2] * b) * tf_font_size * horizontal_scale * advance,
+        (ctm[1] * a + ctm[3] * b) * tf_font_size * horizontal_scale * advance,
+    );
+    let vertical = (
+        (ctm[0] * c + ctm[2] * d) * tf_font_size,
+        (ctm[1] * c + ctm[3] * d) * tf_font_size,
+    );
+    if horizontal.1.abs() < 0.0001 && vertical.0.abs() < 0.0001 {
+        return (x, y, horizontal.0.abs(), vertical.1.abs());
+    }
+    let origin = (x, y);
+    let corners = [
+        origin,
+        (origin.0 + horizontal.0, origin.1 + horizontal.1),
+        (origin.0 + vertical.0, origin.1 + vertical.1),
+        (
+            origin.0 + horizontal.0 + vertical.0,
+            origin.1 + horizontal.1 + vertical.1,
+        ),
+    ];
+    let min_x = corners
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    (min_x, min_y, max_x - min_x, max_y - min_y)
 }
 
 // ---------------------------------------------------------------------------
@@ -4738,7 +5424,12 @@ impl PageLayoutQuality {
                 message: "planned text overlaps a ruling line or table border".to_owned(),
             });
         }
-        if quality.worst_severity.as_ref().map(|s| s < &LayoutIssueSeverity::Major).unwrap_or(true) {
+        if quality
+            .worst_severity
+            .as_ref()
+            .map(|s| s < &LayoutIssueSeverity::Major)
+            .unwrap_or(true)
+        {
             quality.worst_severity = quality.issues.iter().map(|i| i.severity.clone()).max();
         }
         quality
@@ -4856,10 +5547,17 @@ impl PageLayoutQuality {
         let worst_severity = issues.iter().map(|i| i.severity.clone()).max();
 
         let summary = {
-            let worst_overlap_area = raw_collisions.iter().map(|c| c.overlap_area).fold(0.0_f32, f32::max);
+            let worst_overlap_area = raw_collisions
+                .iter()
+                .map(|c| c.overlap_area)
+                .fold(0.0_f32, f32::max);
             let worst_overlap_rect = raw_collisions
                 .iter()
-                .max_by(|a, b| a.overlap_area.partial_cmp(&b.overlap_area).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| {
+                    a.overlap_area
+                        .partial_cmp(&b.overlap_area)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|c| c.overlap_rect);
             PageFitSummary {
                 overflow_count,

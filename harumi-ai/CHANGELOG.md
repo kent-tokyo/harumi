@@ -2,6 +2,20 @@
 
 ---
 
+## [0.10.0] — 2026-09-05
+
+### Added
+
+- Rotation-aware overlay placement for common 90°/270° text lines.
+- Multi-page OCR JSON validation and page-specific coordinate conversion.
+- Safer blank-translation handling and expanded page-level layout diagnostics.
+- Synchronized dependency requirement with `harumi` 1.20.
+
+Complex vertical writing, mixed styles, and pixel-identical output remain best-effort
+and should be visually reviewed.
+
+---
+
 ## [0.6.0] — 2026-06-21
 
 ### Added

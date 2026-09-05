@@ -1,9 +1,10 @@
 # harumi
 
-**纯 Rust 实现的 CJK PDF 编辑引擎，在保留原版面的前提下提取、替换、回写文本。**
+**纯 Rust 实现的 CJK PDF 回写引擎，基于提取坐标和推定区域重新放置文本。**
 
 harumi 从现有 PDF 中提取带位置的文本，让你翻译或替换后，
-在不破坏原页面布局的情况下将结果写回。
+将结果写回推定的版面区域。Overlay 模式会保留原页面内容，但不保证像素级一致；
+复杂分栏、旋转或竖排文字以及图片背景仍需结合质量报告进行人工检查。
 CID 字体、CMap、Unicode 映射、字体子集化、文本适配和版面碰撞检测全部自动完成。
 
 [![harumi on crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
@@ -17,7 +18,7 @@ CID 字体、CMap、Unicode 映射、字体子集化、文本适配和版面碰�
 **[在浏览器中试用 Demo →](https://kent-tokyo.github.io/harumi/)** — 注释编辑器（文字・矩形・直线・自由笔）完全通过 WASM 在浏览器中运行
 
 **主要用途：**
-- 数字 PDF 翻译（提取文本 → LLM 翻译 → 保持版面回写）
+- 数字 PDF 翻译（提取文本 → LLM 翻译 → 基于版面推定进行回写）
 - 扫描 PDF 翻译（传入 OCR JSON → 翻译 → 遮盖原文 → 叠加译文）
 - 在扫描 PDF 上叠加 OCR 可搜索文本层
 - 中文/日文/韩文文本叠加与盖章

@@ -87,6 +87,70 @@ fn try_split_hex_tj(content: &str, split_at_char: usize) -> Option<String> {
     ))
 }
 
+fn quote_first_tj(pdf_bytes: &[u8]) -> Vec<u8> {
+    let mut ldoc = lopdf::Document::load_from(pdf_bytes).unwrap();
+    let page_id = *ldoc.get_pages().values().next().unwrap();
+    let contents = ldoc
+        .get_object(page_id)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = ldoc.get_object(contents).unwrap().as_stream().unwrap();
+    let mut content = stream.content.clone();
+    let marker = b"> Tj";
+    let index = content
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap();
+    content.splice(index + 2..index + marker.len(), b"'".iter().copied());
+    ldoc.objects.insert(
+        contents,
+        lopdf::Object::Stream(lopdf::Stream::new(lopdf::Dictionary::new(), content)),
+    );
+    let mut out = Vec::new();
+    ldoc.save_to(&mut out).unwrap();
+    out
+}
+
+fn double_quote_first_tj(pdf_bytes: &[u8]) -> Vec<u8> {
+    let mut ldoc = lopdf::Document::load_from(pdf_bytes).unwrap();
+    let page_id = *ldoc.get_pages().values().next().unwrap();
+    let contents = ldoc
+        .get_object(page_id)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = ldoc.get_object(contents).unwrap().as_stream().unwrap();
+    let mut content = stream.content.clone();
+    let marker = b"> Tj";
+    let index = content
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap();
+    let lt = content[..index]
+        .iter()
+        .rposition(|&byte| byte == b'<')
+        .unwrap();
+    content.splice(lt..lt, b"14 2 ".iter().copied());
+    let index = index + 5;
+    content.splice(index + 2..index + 4, b"\"".iter().copied());
+    ldoc.objects.insert(
+        contents,
+        lopdf::Object::Stream(lopdf::Stream::new(lopdf::Dictionary::new(), content)),
+    );
+    let mut out = Vec::new();
+    ldoc.save_to(&mut out).unwrap();
+    out
+}
+
 /// Helper: create a minimal PDF with a known text run, save to bytes.
 fn pdf_with_text(text: &str) -> Vec<u8> {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
@@ -186,6 +250,74 @@ fn replace_text_preserve_basic() {
         .collect::<Vec<_>>()
         .join("");
     assert!(all.contains("Helo"), "expected 'Helo' in output: {}", all);
+}
+
+#[test]
+fn replace_text_preserve_single_quote_operator() {
+    let initial = quote_first_tj(&pdf_with_text("Hello"));
+    let mut doc = Document::from_bytes(&initial).unwrap();
+    let count = doc
+        .page(1)
+        .unwrap()
+        .replace_text_preserve_font("Hello", "Helo")
+        .unwrap();
+    assert_eq!(count, 1);
+    let out = doc.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    assert_eq!(check.extract_text(1).unwrap(), "Helo");
+}
+
+#[test]
+fn replace_text_preserve_double_quote_operator_keeps_implicit_state() {
+    let initial = double_quote_first_tj(&pdf_with_text("Hello"));
+    let mut doc = Document::from_bytes(&initial).unwrap();
+    let count = doc
+        .page(1)
+        .unwrap()
+        .replace_text_preserve_font("Hello", "Helo")
+        .unwrap();
+    assert_eq!(count, 1);
+    let out = doc.save_to_bytes().unwrap();
+    let check = Document::from_bytes(&out).unwrap();
+    assert_eq!(check.extract_text(1).unwrap(), "Helo");
+
+    let loaded = lopdf::Document::load_mem(&out).unwrap();
+    let page_id = *loaded.get_pages().values().next().unwrap();
+    let contents = loaded
+        .get_object(page_id)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .clone();
+    let mut content = Vec::new();
+    let stream_ids: Vec<lopdf::ObjectId> = match contents {
+        lopdf::Object::Reference(id) => vec![id],
+        lopdf::Object::Array(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                lopdf::Object::Reference(id) => Some(id),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    for stream_id in stream_ids {
+        content.extend_from_slice(
+            &loaded
+                .get_object(stream_id)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .content,
+        );
+    }
+    assert!(
+        content
+            .windows(b"14 Tw\n2 Tc\nT*\n".len())
+            .any(|window| { window == b"14 Tw\n2 Tc\nT*\n" })
+    );
 }
 
 #[test]
@@ -552,7 +684,10 @@ fn replace_text_in_form_xobject_inherited_resources() {
 
     let mut ldoc = lopdf::Document::new();
 
-    let cmap_id = ldoc.add_object(Object::Stream(Stream::new(lopdf::Dictionary::new(), cmap_bytes)));
+    let cmap_id = ldoc.add_object(Object::Stream(Stream::new(
+        lopdf::Dictionary::new(),
+        cmap_bytes,
+    )));
 
     let mut cidfont_d = lopdf::Dictionary::new();
     cidfont_d.set("Type", Object::Name(b"Font".to_vec()));
@@ -560,8 +695,14 @@ fn replace_text_in_form_xobject_inherited_resources() {
     cidfont_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
     {
         let mut cidsys = lopdf::Dictionary::new();
-        cidsys.set("Registry", Object::String(b"Adobe".to_vec(), StringFormat::Literal));
-        cidsys.set("Ordering", Object::String(b"Identity".to_vec(), StringFormat::Literal));
+        cidsys.set(
+            "Registry",
+            Object::String(b"Adobe".to_vec(), StringFormat::Literal),
+        );
+        cidsys.set(
+            "Ordering",
+            Object::String(b"Identity".to_vec(), StringFormat::Literal),
+        );
         cidsys.set("Supplement", Object::Integer(0));
         cidfont_d.set("CIDSystemInfo", Object::Dictionary(cidsys));
     }
@@ -573,7 +714,10 @@ fn replace_text_in_form_xobject_inherited_resources() {
     font_d.set("Subtype", Object::Name(b"Type0".to_vec()));
     font_d.set("BaseFont", Object::Name(b"TestCIDFont".to_vec()));
     font_d.set("Encoding", Object::Name(b"Identity-H".to_vec()));
-    font_d.set("DescendantFonts", Object::Array(vec![Object::Reference(cidfont_id)]));
+    font_d.set(
+        "DescendantFonts",
+        Object::Array(vec![Object::Reference(cidfont_id)]),
+    );
     font_d.set("ToUnicode", Object::Reference(cmap_id));
     let existing_font_id = ldoc.add_object(Object::Dictionary(font_d));
 
@@ -587,8 +731,10 @@ fn replace_text_in_form_xobject_inherited_resources() {
     xobj_d.set(
         "BBox",
         Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Integer(595), Object::Integer(842),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
         ]),
     );
     xobj_d.set("Resources", Object::Dictionary(xobj_res));
@@ -608,8 +754,10 @@ fn replace_text_in_form_xobject_inherited_resources() {
     page_d.set(
         "MediaBox",
         Object::Array(vec![
-            Object::Integer(0), Object::Integer(0),
-            Object::Integer(595), Object::Integer(842),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
         ]),
     );
     page_d.set("Contents", Object::Reference(content_id));
@@ -652,12 +800,22 @@ fn replace_text_in_form_xobject_inherited_resources() {
         .map(|f| f.text.as_str())
         .collect::<Vec<_>>()
         .join("");
-    assert!(before.contains("Hi"), "P0 extraction failed, got: {before:?}");
+    assert!(
+        before.contains("Hi"),
+        "P0 extraction failed, got: {before:?}"
+    );
 
     // Replace "Hi" → "Bye" with a new embedded font.
     let font = doc.embed_font(noto).unwrap();
-    let count = doc.page(1).unwrap().replace_text("Hi", "Bye", font).unwrap();
-    assert!(count > 0, "replace_text returned 0 matches in XObject stream");
+    let count = doc
+        .page(1)
+        .unwrap()
+        .replace_text("Hi", "Bye", font)
+        .unwrap();
+    assert!(
+        count > 0,
+        "replace_text returned 0 matches in XObject stream"
+    );
 
     let out = doc.save_to_bytes().unwrap();
     let check = Document::from_bytes(&out).unwrap();
@@ -668,8 +826,14 @@ fn replace_text_in_form_xobject_inherited_resources() {
         .map(|f| f.text.as_str())
         .collect::<Vec<_>>()
         .join("");
-    assert!(!after.contains("Hi"), "old text still present after replace: {after:?}");
-    assert!(after.contains("Bye"), "new text not found after replace: {after:?}");
+    assert!(
+        !after.contains("Hi"),
+        "old text still present after replace: {after:?}"
+    );
+    assert!(
+        after.contains("Bye"),
+        "new text not found after replace: {after:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -698,8 +862,7 @@ fn make_per_char_pdf(text: &str) -> Vec<u8> {
     let mut doc = LDoc::new();
     let font_id = doc.add_object(Object::Dictionary(font_d));
 
-    let content_id =
-        doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
+    let content_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
 
     let mut font_dict = Dictionary::new();
     font_dict.set("F1", Object::Reference(font_id));
@@ -751,7 +914,11 @@ fn replace_text_fragments_suppresses_source_ops() {
 
     // Extract fragments — each letter is a separate fragment.
     let frags = doc.extract_text_runs(1).unwrap();
-    assert_eq!(frags.len(), 5, "expected 5 per-char fragments, got: {frags:?}");
+    assert_eq!(
+        frags.len(),
+        5,
+        "expected 5 per-char fragments, got: {frags:?}"
+    );
 
     // All fragments must have source tracking.
     for f in &frags {
@@ -819,10 +986,15 @@ fn replace_text_fragments_xobject() {
     let mut xobj_d = Dictionary::new();
     xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
     xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
-    xobj_d.set("BBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    xobj_d.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     xobj_d.set("Resources", Object::Dictionary(xobj_res));
     let xobj_id = ldoc.add_object(Object::Stream(Stream::new(xobj_d, xobj_content)));
 
@@ -840,10 +1012,15 @@ fn replace_text_fragments_xobject() {
 
     let mut page_d = Dictionary::new();
     page_d.set("Type", Object::Name(b"Page".to_vec()));
-    page_d.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    page_d.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     page_d.set("Resources", Object::Dictionary(page_res));
     page_d.set("Contents", Object::Reference(page_content_id));
     let page_id = ldoc.add_object(Object::Dictionary(page_d));
@@ -854,7 +1031,9 @@ fn replace_text_fragments_xobject() {
     pages_d.set("Count", Object::Integer(1));
     let pages_id = ldoc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = ldoc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = ldoc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
 
@@ -887,7 +1066,9 @@ fn replace_text_fragments_xobject() {
 
     // Replace all XObject fragments.
     let font = doc.embed_font(FONT).unwrap();
-    let suppressed = doc.page(1).unwrap()
+    let suppressed = doc
+        .page(1)
+        .unwrap()
         .replace_text_fragments(&frags, "World", font)
         .unwrap();
     assert!(suppressed > 0, "expected at least 1 op suppressed, got 0");
@@ -932,12 +1113,20 @@ fn make_two_line_per_char_pdf(line1: &str, line2: &str) -> Vec<u8> {
     let mut content = Vec::<u8>::new();
     for (i, ch) in line1.chars().enumerate() {
         content.extend_from_slice(
-            format!("BT /F1 12 Tf {} 700 Td ({ch}) Tj ET\n", 72.0 + i as f32 * 8.0).as_bytes(),
+            format!(
+                "BT /F1 12 Tf {} 700 Td ({ch}) Tj ET\n",
+                72.0 + i as f32 * 8.0
+            )
+            .as_bytes(),
         );
     }
     for (i, ch) in line2.chars().enumerate() {
         content.extend_from_slice(
-            format!("BT /F1 12 Tf {} 680 Td ({ch}) Tj ET\n", 72.0 + i as f32 * 8.0).as_bytes(),
+            format!(
+                "BT /F1 12 Tf {} 680 Td ({ch}) Tj ET\n",
+                72.0 + i as f32 * 8.0
+            )
+            .as_bytes(),
         );
     }
 
@@ -950,10 +1139,15 @@ fn make_two_line_per_char_pdf(line1: &str, line2: &str) -> Vec<u8> {
 
     let mut page_d = Dictionary::new();
     page_d.set("Type", Object::Name(b"Page".to_vec()));
-    page_d.set("MediaBox", Object::Array(vec![
-        Object::Integer(0), Object::Integer(0),
-        Object::Integer(595), Object::Integer(842),
-    ]));
+    page_d.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(595),
+            Object::Integer(842),
+        ]),
+    );
     page_d.set("Resources", Object::Dictionary(page_res));
     page_d.set("Contents", Object::Reference(content_id));
     let page_id = doc.add_object(Object::Dictionary(page_d));
@@ -964,7 +1158,9 @@ fn make_two_line_per_char_pdf(line1: &str, line2: &str) -> Vec<u8> {
     pages_d.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = doc.get_object_mut(page_id) && let Ok(d) = obj.as_dict_mut() {
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
         d.set("Parent", Object::Reference(pages_id));
     }
 
@@ -995,12 +1191,10 @@ fn replace_text_fragments_batch_two_lines() {
 
     let font = doc.embed_font(FONT).unwrap();
 
-    let entries: Vec<(&[harumi::TextFragment], &str)> = vec![
-        (&line1, "你好"),
-        (&line2, "世界"),
-    ];
+    let entries: Vec<(&[harumi::TextFragment], &str)> = vec![(&line1, "你好"), (&line2, "世界")];
     let suppressed = doc
-        .page(1).unwrap()
+        .page(1)
+        .unwrap()
         .replace_text_fragments_batch(&entries, font, harumi::FragmentReplaceOpts::default())
         .unwrap();
 
@@ -1009,16 +1203,29 @@ fn replace_text_fragments_batch_two_lines() {
     let out = doc.save_to_bytes().unwrap();
     let reloaded = Document::from_bytes(&out).unwrap();
     let after: String = reloaded
-        .extract_text_runs(1).unwrap()
+        .extract_text_runs(1)
+        .unwrap()
         .iter()
         .map(|f| f.text.as_str())
         .collect::<Vec<_>>()
         .join("");
 
-    assert!(!after.contains("Hello"), "original line 1 still present: {after:?}");
-    assert!(!after.contains("World"), "original line 2 still present: {after:?}");
-    assert!(after.contains("你好"), "translated line 1 missing: {after:?}");
-    assert!(after.contains("世界"), "translated line 2 missing: {after:?}");
+    assert!(
+        !after.contains("Hello"),
+        "original line 1 still present: {after:?}"
+    );
+    assert!(
+        !after.contains("World"),
+        "original line 2 still present: {after:?}"
+    );
+    assert!(
+        after.contains("你好"),
+        "translated line 1 missing: {after:?}"
+    );
+    assert!(
+        after.contains("世界"),
+        "translated line 2 missing: {after:?}"
+    );
 }
 
 #[test]
@@ -1038,7 +1245,10 @@ fn can_suppress_fragment_ok_and_not_found() {
 
     // After suppressing, the operator is gone → OperatorNotFound
     let font = doc.embed_font(FONT).unwrap();
-    doc.page(1).unwrap().replace_text_fragments(&frags, "", font).unwrap();
+    doc.page(1)
+        .unwrap()
+        .replace_text_fragments(&frags, "", font)
+        .unwrap();
 
     for f in &frags {
         let r = doc.page(1).unwrap().can_suppress_fragment(f);

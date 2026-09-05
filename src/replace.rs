@@ -99,7 +99,14 @@ pub(crate) fn count_matches_in_page(
 
     // Also scan Form XObject streams — Chrome/Skia PDFs place all text in XObjects
     // referenced from inherited /Resources rather than in the page content streams.
-    total += count_matches_in_inherited_xobjects(doc, page_id, old_text, new_text, &pattern_chars, plen)?;
+    total += count_matches_in_inherited_xobjects(
+        doc,
+        page_id,
+        old_text,
+        new_text,
+        &pattern_chars,
+        plen,
+    )?;
 
     Ok(total)
 }
@@ -117,14 +124,19 @@ fn count_matches_in_inherited_xobjects(
     let mut total = 0usize;
 
     for xobj_id in collect_inherited_xobject_ids(doc, page_id) {
-        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
-        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
-        let is_form = xobj_stream
-            .dict
-            .get(b"Subtype")
-            .ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
-            == Some(b"Form");
+        let Ok(xobj_obj) = doc.get_object(xobj_id) else {
+            continue;
+        };
+        let Ok(xobj_stream) = xobj_obj.as_stream() else {
+            continue;
+        };
+        let is_form = xobj_stream.dict.get(b"Subtype").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        }) == Some(b"Form");
         if !is_form {
             continue;
         }
@@ -231,14 +243,19 @@ fn count_matches_in_raw_streams(
         // Mirror diagnose_match_failure() Tier 3: track font without in_bt guard.
         // The `first_bt != last_bt` guard prevents double-counting intra-BT matches.
         if plen > 0 {
-            struct BtChar { ch: char, bt_op: usize }
+            struct BtChar {
+                ch: char,
+                bt_op: usize,
+            }
             let mut bt_chars: Vec<BtChar> = Vec::new();
             let mut cur_font_cb: Vec<u8> = Vec::new();
             let mut cur_bt_op_cb: usize = 0;
 
             for (op_idx, op) in ops.iter().enumerate() {
                 match op.keyword.as_slice() {
-                    b"BT" => { cur_bt_op_cb = op_idx; }
+                    b"BT" => {
+                        cur_bt_op_cb = op_idx;
+                    }
                     b"Tf" => {
                         if let Some(Operand::Name(name)) = op.operands.first() {
                             cur_font_cb = name.clone();
@@ -246,7 +263,9 @@ fn count_matches_in_raw_streams(
                     }
                     b"Tj" => {
                         if let Some(Operand::Str(str_bytes)) = op.operands.first() {
-                            let Some(fi) = fonts.get(&cur_font_cb) else { continue };
+                            let Some(fi) = fonts.get(&cur_font_cb) else {
+                                continue;
+                            };
                             let bt = cur_bt_op_cb;
                             if fi.bytes_per_char == 2 {
                                 if str_bytes.len().is_multiple_of(2) {
@@ -268,7 +287,9 @@ fn count_matches_in_raw_streams(
                     }
                     b"TJ" => {
                         if let Some(Operand::Array(arr)) = op.operands.first() {
-                            let Some(fi) = fonts.get(&cur_font_cb) else { continue };
+                            let Some(fi) = fonts.get(&cur_font_cb) else {
+                                continue;
+                            };
                             let bt = cur_bt_op_cb;
                             for elem in arr {
                                 if let ArrElem::Str(str_bytes) = elem {
@@ -391,15 +412,20 @@ pub(crate) fn rewrite_form_xobject_streams(
     let mut results = Vec::new();
 
     for xobj_id in xobj_ids {
-        let Ok(xobj_obj) = doc.get_object(xobj_id) else { continue };
-        let Ok(xobj_stream) = xobj_obj.as_stream() else { continue };
+        let Ok(xobj_obj) = doc.get_object(xobj_id) else {
+            continue;
+        };
+        let Ok(xobj_stream) = xobj_obj.as_stream() else {
+            continue;
+        };
 
-        let is_form = xobj_stream
-            .dict
-            .get(b"Subtype")
-            .ok()
-            .and_then(|o| if let Object::Name(n) = o { Some(n.as_slice()) } else { None })
-            == Some(b"Form");
+        let is_form = xobj_stream.dict.get(b"Subtype").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.as_slice())
+            } else {
+                None
+            }
+        }) == Some(b"Form");
         if !is_form {
             continue;
         }
@@ -547,6 +573,7 @@ fn rewrite_stream_preserve_font(
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             if !co.prefix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
@@ -556,8 +583,11 @@ fn rewrite_stream_preserve_font(
                             out.extend_from_slice(&encode_str_hex(&new_bytes));
                             out.extend_from_slice(b" Tj\n");
                         }
-                        1 => { /* middle: skip */ }
+                        1 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
+                        }
                         _ => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             if !co.suffix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
@@ -600,6 +630,7 @@ fn rewrite_stream_preserve_font(
                         }
                     }
                     out.extend_from_slice(&bytes[last_copied..op.start]);
+                    emit_quote_prefix(&mut out, op.quote_prefix);
 
                     // Check if wrapping is requested for this replacement.
                     if let Some(wp) = wrap_params_by_old_text.and_then(|m| m.get(&r.old_text)) {
@@ -828,7 +859,11 @@ pub(crate) fn rewrite_content_stream(
             let new_w = new_width(r, co.font_size);
             if new_w > 0.0 {
                 let s = orig_w / new_w * 100.0;
-                if (70.0..=130.0).contains(&s) { Some(s) } else { None }
+                if (70.0..=130.0).contains(&s) {
+                    Some(s)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -945,6 +980,7 @@ pub(crate) fn rewrite_content_stream(
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             // First op: emit prefix + replacement (no suffix/comp yet).
                             if !co.prefix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
@@ -953,8 +989,11 @@ pub(crate) fn rewrite_content_stream(
                             emit_cross_op_replacement(&mut out, r, co, tz);
                             fonts_used.insert(r.new_pdf_font_name.clone());
                         }
-                        1 => { /* middle: skip */ }
+                        1 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
+                        }
                         _ => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             // Last op: emit suffix + width compensation (Td only if no Tz).
                             if !co.suffix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
@@ -988,6 +1027,7 @@ pub(crate) fn rewrite_content_stream(
                     let delta = orig_w - new_w;
                     let fragment = emit_replacement(r, &cur_font, cur_size, delta);
                     out.extend_from_slice(&bytes[last_copied..op.start]);
+                    emit_quote_prefix(&mut out, op.quote_prefix);
                     out.extend_from_slice(&fragment);
                     last_copied = op.end;
                     fonts_used.insert(r.new_pdf_font_name.clone());
@@ -1001,6 +1041,7 @@ pub(crate) fn rewrite_content_stream(
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             if !co.prefix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.prefix_raw));
                                 out.extend_from_slice(b" Tj\n");
@@ -1008,8 +1049,11 @@ pub(crate) fn rewrite_content_stream(
                             emit_cross_op_replacement(&mut out, r, co, tz);
                             fonts_used.insert(r.new_pdf_font_name.clone());
                         }
-                        1 => { /* middle: skip */ }
+                        1 => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
+                        }
                         _ => {
+                            emit_quote_prefix(&mut out, op.quote_prefix);
                             if !co.suffix_raw.is_empty() {
                                 out.extend_from_slice(&encode_str_hex(&co.suffix_raw));
                                 out.extend_from_slice(b" Tj\n");
@@ -1051,6 +1095,7 @@ pub(crate) fn rewrite_content_stream(
                         existing_fonts,
                     );
                     out.extend_from_slice(&bytes[last_copied..op.start]);
+                    emit_quote_prefix(&mut out, op.quote_prefix);
                     out.extend_from_slice(&fragment);
                     last_copied = op.end;
                     fonts_used.extend(used);
@@ -1546,7 +1591,9 @@ fn find_cross_bt_matches(
             }
             b"Tj" if in_bt => {
                 if let Some(Operand::Str(str_bytes)) = op.operands.first() {
-                    let Some(fi) = existing_fonts.get(&cur_font) else { continue };
+                    let Some(fi) = existing_fonts.get(&cur_font) else {
+                        continue;
+                    };
                     let bt = cur_bt_op;
                     let fs = cur_size;
                     let fn_ = cur_font.clone();
@@ -1555,14 +1602,28 @@ fn find_cross_bt_matches(
                             for chunk in str_bytes.chunks(2) {
                                 let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                                 if let Some(&ch) = fi.to_unicode.get(&gid) {
-                                    all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: chunk.to_vec(), font_name: fn_.clone(), font_size: fs });
+                                    all_chars.push(BtChar {
+                                        ch,
+                                        op_idx,
+                                        bt_op: bt,
+                                        raw_bytes: chunk.to_vec(),
+                                        font_name: fn_.clone(),
+                                        font_size: fs,
+                                    });
                                 }
                             }
                         }
                     } else {
                         for &b in str_bytes.iter() {
                             if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
-                                all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: vec![b], font_name: fn_.clone(), font_size: fs });
+                                all_chars.push(BtChar {
+                                    ch,
+                                    op_idx,
+                                    bt_op: bt,
+                                    raw_bytes: vec![b],
+                                    font_name: fn_.clone(),
+                                    font_size: fs,
+                                });
                             }
                         }
                     }
@@ -1570,7 +1631,9 @@ fn find_cross_bt_matches(
             }
             b"TJ" if in_bt => {
                 if let Some(Operand::Array(arr)) = op.operands.first() {
-                    let Some(fi) = existing_fonts.get(&cur_font) else { continue };
+                    let Some(fi) = existing_fonts.get(&cur_font) else {
+                        continue;
+                    };
                     let bt = cur_bt_op;
                     let fs = cur_size;
                     let fn_ = cur_font.clone();
@@ -1581,14 +1644,28 @@ fn find_cross_bt_matches(
                                     for chunk in str_bytes.chunks(2) {
                                         let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
                                         if let Some(&ch) = fi.to_unicode.get(&gid) {
-                                            all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: chunk.to_vec(), font_name: fn_.clone(), font_size: fs });
+                                            all_chars.push(BtChar {
+                                                ch,
+                                                op_idx,
+                                                bt_op: bt,
+                                                raw_bytes: chunk.to_vec(),
+                                                font_name: fn_.clone(),
+                                                font_size: fs,
+                                            });
                                         }
                                     }
                                 }
                             } else {
                                 for &b in str_bytes.iter() {
                                     if let Some(&ch) = fi.to_unicode.get(&(b as u16)) {
-                                        all_chars.push(BtChar { ch, op_idx, bt_op: bt, raw_bytes: vec![b], font_name: fn_.clone(), font_size: fs });
+                                        all_chars.push(BtChar {
+                                            ch,
+                                            op_idx,
+                                            bt_op: bt,
+                                            raw_bytes: vec![b],
+                                            font_name: fn_.clone(),
+                                            font_size: fs,
+                                        });
                                     }
                                 }
                             }
@@ -1623,33 +1700,41 @@ fn find_cross_bt_matches(
                 if first_bt != last_bt {
                     let last_et = match bt_to_et.get(&last_bt) {
                         Some(&et) => et,
-                        None => { pos += 1; continue; }
+                        None => {
+                            pos += 1;
+                            continue;
+                        }
                     };
 
                     let anchor_tj = all_chars[pos].op_idx;
                     let last_tj = all_chars[pos + plen - 1].op_idx;
 
-                    let prefix_raw: Vec<u8> = all_chars[..pos].iter()
+                    let prefix_raw: Vec<u8> = all_chars[..pos]
+                        .iter()
                         .filter(|c| c.op_idx == anchor_tj && c.bt_op == first_bt)
                         .flat_map(|c| c.raw_bytes.iter().copied())
                         .collect();
-                    let suffix_raw: Vec<u8> = all_chars[pos + plen..].iter()
+                    let suffix_raw: Vec<u8> = all_chars[pos + plen..]
+                        .iter()
                         .filter(|c| c.op_idx == last_tj && c.bt_op == last_bt)
                         .flat_map(|c| c.raw_bytes.iter().copied())
                         .collect();
 
                     let fi = existing_fonts.get(&all_chars[pos].font_name);
                     let orig_width: f32 = if let Some(fi) = fi {
-                        all_chars[pos..pos + plen].iter().map(|c| {
-                            let gid = if fi.bytes_per_char == 2 && c.raw_bytes.len() == 2 {
-                                u16::from_be_bytes([c.raw_bytes[0], c.raw_bytes[1]])
-                            } else if !c.raw_bytes.is_empty() {
-                                c.raw_bytes[0] as u16
-                            } else {
-                                0
-                            };
-                            fi.advance_width(gid) as f32 / 1000.0
-                        }).sum()
+                        all_chars[pos..pos + plen]
+                            .iter()
+                            .map(|c| {
+                                let gid = if fi.bytes_per_char == 2 && c.raw_bytes.len() == 2 {
+                                    u16::from_be_bytes([c.raw_bytes[0], c.raw_bytes[1]])
+                                } else if !c.raw_bytes.is_empty() {
+                                    c.raw_bytes[0] as u16
+                                } else {
+                                    0
+                                };
+                                fi.advance_width(gid) as f32 / 1000.0
+                            })
+                            .sum()
                     } else {
                         0.0
                     };
@@ -1773,7 +1858,9 @@ pub(crate) fn collect_char_segments(
                 // to position every character individually on the same line.
                 if let Some(Operand::Num(f)) = op.operands.get(5) {
                     let new_y = *f;
-                    if let Some(prev_y) = tm_y && (new_y - prev_y).abs() >= 1.0 {
+                    if let Some(prev_y) = tm_y
+                        && (new_y - prev_y).abs() >= 1.0
+                    {
                         if !cur_chars.is_empty() {
                             segments.push(CharSegment {
                                 chars: std::mem::take(&mut cur_chars),
@@ -1975,23 +2062,23 @@ fn find_cross_op_matches_inner(
                         // horizontal-only Td/TD (ty == 0), horizontal Tm (same y — safe
                         // because collect_char_segments now flushes on vertical Tm), or
                         // text-state ops that do not alter text position (Tc/Tw/Tz/TL/Ts).
-                        let all_text = ops[first_op + 1..last_op]
-                            .iter()
-                            .all(|o| match o.keyword.as_slice() {
-                                b"Tj" | b"TJ" => true,
-                                b"Tm" => true, // horizontal only (vertical flushed segment)
-                                b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
-                                b"Td" | b"TD" => match (
-                                    o.operands.first(),
-                                    o.operands.get(1),
-                                ) {
-                                    (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
-                                        ty.abs() < 0.01
+                        let all_text =
+                            ops[first_op + 1..last_op]
+                                .iter()
+                                .all(|o| match o.keyword.as_slice() {
+                                    b"Tj" | b"TJ" => true,
+                                    b"Tm" => true, // horizontal only (vertical flushed segment)
+                                    b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
+                                    b"Td" | b"TD" => {
+                                        match (o.operands.first(), o.operands.get(1)) {
+                                            (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
+                                                ty.abs() < 0.01
+                                            }
+                                            _ => false,
+                                        }
                                     }
                                     _ => false,
-                                },
-                                _ => false,
-                            });
+                                });
 
                         if all_text {
                             let prefix_raw: Vec<u8> = seg.chars[..pos]
@@ -2076,32 +2163,30 @@ fn find_cross_tf_matches_inner(
                     if first_op != last_op {
                         // Only claim matches that genuinely cross a Tf boundary.
                         // Same-font cross-op matches are handled by find_cross_op_matches_inner.
-                        let has_tf = ops[first_op..=last_op]
-                            .iter()
-                            .any(|o| o.keyword == b"Tf");
+                        let has_tf = ops[first_op..=last_op].iter().any(|o| o.keyword == b"Tf");
                         if !has_tf {
                             pos = char_end;
                             continue;
                         }
 
-                        let all_text = ops[first_op + 1..last_op]
-                            .iter()
-                            .all(|o| match o.keyword.as_slice() {
-                                b"Tj" | b"TJ" => true,
-                                b"Tf" => true,
-                                b"Tm" => true, // horizontal only (vertical flushed segment)
-                                b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
-                                b"Td" | b"TD" => match (
-                                    o.operands.first(),
-                                    o.operands.get(1),
-                                ) {
-                                    (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
-                                        ty.abs() < 0.01
+                        let all_text =
+                            ops[first_op + 1..last_op]
+                                .iter()
+                                .all(|o| match o.keyword.as_slice() {
+                                    b"Tj" | b"TJ" => true,
+                                    b"Tf" => true,
+                                    b"Tm" => true, // horizontal only (vertical flushed segment)
+                                    b"Tc" | b"Tw" | b"Tz" | b"TL" | b"Ts" => true,
+                                    b"Td" | b"TD" => {
+                                        match (o.operands.first(), o.operands.get(1)) {
+                                            (Some(Operand::Num(_)), Some(Operand::Num(ty))) => {
+                                                ty.abs() < 0.01
+                                            }
+                                            _ => false,
+                                        }
                                     }
                                     _ => false,
-                                },
-                                _ => false,
-                            });
+                                });
 
                         if all_text {
                             let prefix_raw: Vec<u8> = seg.chars[..pos]
@@ -2124,14 +2209,13 @@ fn find_cross_tf_matches_inner(
                                         .get(&e.font_name)
                                         .or(fi_fallback)
                                         .expect("font must exist");
-                                    let gid =
-                                        if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
-                                            u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
-                                        } else if !e.raw_bytes.is_empty() {
-                                            e.raw_bytes[0] as u16
-                                        } else {
-                                            0
-                                        };
+                                    let gid = if fi.bytes_per_char == 2 && e.raw_bytes.len() == 2 {
+                                        u16::from_be_bytes([e.raw_bytes[0], e.raw_bytes[1]])
+                                    } else if !e.raw_bytes.is_empty() {
+                                        e.raw_bytes[0] as u16
+                                    } else {
+                                        0
+                                    };
                                     fi.advance_width(gid) as f32 / 1000.0
                                 })
                                 .sum();
@@ -2204,6 +2288,19 @@ pub(crate) struct Op {
     pub end: usize,
     pub keyword: Vec<u8>,
     pub operands: Vec<Operand>,
+    /// Set when a quote text-showing operator is canonicalized to `Tj` for
+    /// matching. The original operator is preserved unless its text is
+    /// rewritten.
+    quote_prefix: Option<QuotePrefix>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum QuotePrefix {
+    Single,
+    Double {
+        word_spacing: f32,
+        char_spacing: f32,
+    },
 }
 
 pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
@@ -2308,6 +2405,7 @@ pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
                         end: i,
                         keyword: word.to_vec(),
                         operands: std::mem::take(&mut operands),
+                        quote_prefix: None,
                     });
                     op_start = None;
                 }
@@ -2315,7 +2413,62 @@ pub(crate) fn parse_ops(bytes: &[u8]) -> Vec<Op> {
         }
     }
 
+    canonicalize_quote_ops(ops)
+}
+
+/// Treat the quote text-showing operators as ordinary `Tj` operations for the
+/// matching pipeline. Their implicit line move and spacing state are applied by
+/// the extraction path; replacement preserves the original raw operator when a
+/// match is not found and emits a regular `Tj` when it is rewritten.
+fn canonicalize_quote_ops(mut ops: Vec<Op>) -> Vec<Op> {
+    for op in &mut ops {
+        if op.keyword == b"'" {
+            op.quote_prefix = Some(QuotePrefix::Single);
+            op.keyword = b"Tj".to_vec();
+        } else if op.keyword == b"\""
+            && let Some(string) = op.operands.iter().rev().find_map(|operand| match operand {
+                Operand::Str(bytes) => Some(bytes.clone()),
+                _ => None,
+            })
+        {
+            let numbers: Vec<f32> = op
+                .operands
+                .iter()
+                .filter_map(|operand| match operand {
+                    Operand::Num(value) => Some(*value),
+                    _ => None,
+                })
+                .collect();
+            if numbers.len() >= 2 {
+                op.quote_prefix = Some(QuotePrefix::Double {
+                    word_spacing: numbers[0],
+                    char_spacing: numbers[1],
+                });
+            }
+            op.operands = vec![Operand::Str(string)];
+            op.keyword = b"Tj".to_vec();
+        }
+    }
     ops
+}
+
+/// Emit the state changes implicit in `'` / `"` before a rewritten string.
+/// The explicit form has the same persistent text state as the original
+/// operator, while allowing the replacement itself to use the normal rewriter.
+fn emit_quote_prefix(out: &mut Vec<u8>, prefix: Option<QuotePrefix>) {
+    match prefix {
+        Some(QuotePrefix::Single) => out.extend_from_slice(b"T*\n"),
+        Some(QuotePrefix::Double {
+            word_spacing,
+            char_spacing,
+        }) => {
+            push_number(out, word_spacing);
+            out.extend_from_slice(b" Tw\n");
+            push_number(out, char_spacing);
+            out.extend_from_slice(b" Tc\nT*\n");
+        }
+        None => {}
+    }
 }
 
 fn parse_tj_array(bytes: &[u8]) -> (Vec<ArrElem>, usize) {
@@ -2465,8 +2618,13 @@ mod tests {
 
     fn make_font(gid_to_char: &[(u16, char)], bytes_per_char: u8) -> FontInfo {
         let to_unicode: BTreeMap<u16, char> = gid_to_char.iter().copied().collect();
+        let to_unicode_text = to_unicode
+            .iter()
+            .map(|(&gid, &ch)| (gid, ch.to_string()))
+            .collect();
         FontInfo {
             to_unicode,
+            to_unicode_text,
             dw: 1000,
             w_runs: vec![],
             bytes_per_char,
@@ -2570,9 +2728,16 @@ mod tests {
         assert_eq!(text, "ABC");
 
         // The cross-op matcher should find "ABC" spanning the Td operators.
-        let r = TextReplacePreserveOp { old_text: "ABC".into(), new_text: "ABC".into() };
+        let r = TextReplacePreserveOp {
+            old_text: "ABC".into(),
+            new_text: "ABC".into(),
+        };
         let matches = find_cross_op_matches_preserve(&ops, &[r], &fonts);
-        assert_eq!(matches.len(), 1, "expected 1 cross-op match across Td operators");
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected 1 cross-op match across Td operators"
+        );
         let m = &matches[0];
         // first_op and last_op should differ (it's a cross-op match).
         assert_ne!(m.first_op, m.last_op);
@@ -2588,9 +2753,16 @@ mod tests {
         fonts.insert(b"F0".to_vec(), fi);
 
         let ops = parse_ops(stream);
-        let r = TextReplacePreserveOp { old_text: "AB".into(), new_text: "AB".into() };
+        let r = TextReplacePreserveOp {
+            old_text: "AB".into(),
+            new_text: "AB".into(),
+        };
         let matches = find_cross_op_matches_preserve(&ops, &[r], &fonts);
-        assert_eq!(matches.len(), 0, "vertical Td should block cross-op matching");
+        assert_eq!(
+            matches.len(),
+            0,
+            "vertical Td should block cross-op matching"
+        );
     }
 
     /// When a per-char stream is rewritten, the intermediate Td ops must be
@@ -2614,7 +2786,9 @@ mod tests {
             new_text: "AB".into(),
             new_pdf_font_name: b"HR0".to_vec(),
             char_to_gid: [('A', 0x0041u16), ('B', 0x0042u16)].into_iter().collect(),
-            gid_to_advance: [(0x0041u16, 500u16), (0x0042u16, 500u16)].into_iter().collect(),
+            gid_to_advance: [(0x0041u16, 500u16), (0x0042u16, 500u16)]
+                .into_iter()
+                .collect(),
             units_per_em: 1000,
             font_size_override: None,
             char_spacing: None,
@@ -2624,9 +2798,15 @@ mod tests {
         let out_str = String::from_utf8_lossy(&out);
 
         // The distinctive "7 0 Td" (intermediate) must NOT appear in output.
-        assert!(!out_str.contains("7 0 Td"), "intermediate Td should be suppressed: {out_str}");
+        assert!(
+            !out_str.contains("7 0 Td"),
+            "intermediate Td should be suppressed: {out_str}"
+        );
         // The replacement font should be used.
-        assert!(out_str.contains("HR0"), "replacement font HR0 should appear: {out_str}");
+        assert!(
+            out_str.contains("HR0"),
+            "replacement font HR0 should appear: {out_str}"
+        );
         // The replacement GIDs should appear.
         assert!(
             out_str.contains("0041") && out_str.contains("0042"),

@@ -288,7 +288,11 @@ pub struct FitOptions {
 
 impl Default for FitOptions {
     fn default() -> Self {
-        Self { shrink_to_fit: true, min_font_size: 6.0, color: None }
+        Self {
+            shrink_to_fit: true,
+            min_font_size: 6.0,
+            color: None,
+        }
     }
 }
 

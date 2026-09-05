@@ -146,8 +146,8 @@ impl Document {
         }
 
         // Extract signer name from /Name field if present
-        let signer_name = dict_string(sig_dict, b"Name")
-            .or_else(|| Some(format!("Signed by {}", field_name)));
+        let signer_name =
+            dict_string(sig_dict, b"Name").or_else(|| Some(format!("Signed by {}", field_name)));
 
         // Verify the signature cryptographically
         let is_valid = self.verify_signature_crypto(&contents_hex, &byte_range, pdf_bytes);
@@ -164,7 +164,12 @@ impl Document {
     /// Verifies a signature cryptographically using RSA and ByteRange validation.
     /// Returns true if the signature is valid, false otherwise.
     #[cfg(feature = "digital-signature")]
-    fn verify_signature_crypto(&self, contents_hex: &str, byte_range: &[u32], pdf_bytes: &[u8]) -> bool {
+    fn verify_signature_crypto(
+        &self,
+        contents_hex: &str,
+        byte_range: &[u32],
+        pdf_bytes: &[u8],
+    ) -> bool {
         use num_bigint::BigUint;
 
         // Convert hex-encoded contents to bytes
@@ -218,7 +223,12 @@ impl Document {
     }
 
     #[cfg(not(feature = "digital-signature"))]
-    fn verify_signature_crypto(&self, _contents_hex: &str, _byte_range: &[u32], _pdf_bytes: &[u8]) -> bool {
+    fn verify_signature_crypto(
+        &self,
+        _contents_hex: &str,
+        _byte_range: &[u32],
+        _pdf_bytes: &[u8],
+    ) -> bool {
         false
     }
 }

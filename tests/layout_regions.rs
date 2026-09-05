@@ -23,8 +23,14 @@ fn two_col_fragments() -> (Document, harumi::FontHandle, Vec<harumi::TextFragmen
     let values = ["CHEM-001-A", "Toluene", "2026-06-20"];
     for (i, (lbl, val)) in labels.iter().zip(values.iter()).enumerate() {
         let y = 700.0 - i as f32 * 15.0;
-        doc.page(1).unwrap().add_text(lbl, font, [50.0, y], 10.0, [0.0; 3]).unwrap();
-        doc.page(1).unwrap().add_text(val, font, [250.0, y], 10.0, [0.0; 3]).unwrap();
+        doc.page(1)
+            .unwrap()
+            .add_text(lbl, font, [50.0, y], 10.0, [0.0; 3])
+            .unwrap();
+        doc.page(1)
+            .unwrap()
+            .add_text(val, font, [250.0, y], 10.0, [0.0; 3])
+            .unwrap();
     }
 
     let bytes = doc.save_to_bytes().unwrap();
@@ -156,7 +162,10 @@ fn table_cell_kind_for_normal_text() {
         .iter()
         .filter(|r| r.kind == LayoutRegionKind::TableCell)
         .collect();
-    assert!(!table_cells.is_empty(), "should classify at least some cells as TableCell");
+    assert!(
+        !table_cells.is_empty(),
+        "should classify at least some cells as TableCell"
+    );
 }
 
 #[test]
@@ -166,10 +175,19 @@ fn heading_classified_by_font_size_ratio() {
     let font = doc.embed_font(&fb).unwrap();
 
     // Heading at 20pt (2× body)
-    doc.page(1).unwrap().add_text("Section 1", font, [50.0, 750.0], 20.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Section 1", font, [50.0, 750.0], 20.0, [0.0; 3])
+        .unwrap();
     // Body text at 10pt
-    doc.page(1).unwrap().add_text("Label A", font, [50.0, 700.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Value A long text", font, [250.0, 700.0], 10.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Label A", font, [50.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Value A long text", font, [250.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -180,7 +198,10 @@ fn heading_classified_by_font_size_ratio() {
         .iter()
         .filter(|r| matches!(r.kind, LayoutRegionKind::Heading(_)))
         .collect();
-    assert!(!headings.is_empty(), "large-font text should be classified as Heading");
+    assert!(
+        !headings.is_empty(),
+        "large-font text should be classified as Heading"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +236,10 @@ fn zero_page_width_returns_empty() {
     let fb = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&fb).unwrap();
-    doc.page(1).unwrap().add_text("Hello", font, [72.0, 700.0], 12.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Hello", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
     let frags = doc2.extract_text_runs(1).unwrap();
@@ -243,7 +267,9 @@ fn plan_text_for_regions_returns_one_plan_per_pair() {
 
     let replacements: Vec<String> = regions.iter().map(|r| format!("TR:{}", r.text)).collect();
     let opts = BoxFitOptions::default();
-    let plans = doc3.plan_text_for_regions(&regions, &replacements, plan_font, opts).unwrap();
+    let plans = doc3
+        .plan_text_for_regions(&regions, &replacements, plan_font, opts)
+        .unwrap();
 
     assert_eq!(
         plans.len(),
@@ -252,7 +278,10 @@ fn plan_text_for_regions_returns_one_plan_per_pair() {
     );
     for plan in &plans {
         assert!(plan.fit.font_size > 0.0, "fit font_size must be positive");
-        assert!(plan.fit.used_rect[2] > 0.0, "fit used_rect width must be positive");
+        assert!(
+            plan.fit.used_rect[2] > 0.0,
+            "fit used_rect width must be positive"
+        );
     }
 }
 
@@ -264,10 +293,22 @@ fn plan_text_detects_collision_when_regions_overlap() {
 
     // Both rows very close together so their usable_rects overlap vertically.
     // Use same column (x=50) with rows only 5pt apart.
-    doc.page(1).unwrap().add_text("A", font, [50.0, 700.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("B", font, [250.0, 700.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("C", font, [50.0, 696.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("D", font, [250.0, 696.0], 10.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("A", font, [50.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("B", font, [250.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("C", font, [50.0, 696.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("D", font, [250.0, 696.0], 10.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -278,13 +319,18 @@ fn plan_text_detects_collision_when_regions_overlap() {
         return;
     }
 
-    let replacements: Vec<String> = regions.iter().map(|r| format!("Replacement: {}", r.text)).collect();
+    let replacements: Vec<String> = regions
+        .iter()
+        .map(|r| format!("Replacement: {}", r.text))
+        .collect();
     let mut opts = BoxFitOptions::default();
     opts.overflow = OverflowPolicy::Report;
 
     let mut doc3 = Document::from_bytes(&bytes).unwrap();
     let plan_font = doc3.embed_font(&fb).unwrap();
-    let plans = doc3.plan_text_for_regions(&regions, &replacements, plan_font, opts).unwrap();
+    let plans = doc3
+        .plan_text_for_regions(&regions, &replacements, plan_font, opts)
+        .unwrap();
 
     // The plans should be computed without error; collisions list is populated if any overlap.
     assert_eq!(plans.len(), regions.len().min(replacements.len()));
@@ -337,9 +383,18 @@ fn section_heading_role_for_large_font() {
     let fb = font_bytes();
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(&fb).unwrap();
-    doc.page(1).unwrap().add_text("Section Header", font, [50.0, 750.0], 20.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Label", font, [50.0, 700.0], 10.0, [0.0; 3]).unwrap();
-    doc.page(1).unwrap().add_text("Value data here", font, [250.0, 700.0], 10.0, [0.0; 3]).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Section Header", font, [50.0, 750.0], 20.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Label", font, [50.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Value data here", font, [250.0, 700.0], 10.0, [0.0; 3])
+        .unwrap();
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc2 = Document::from_bytes(&bytes).unwrap();
@@ -350,7 +405,10 @@ fn section_heading_role_for_large_font() {
         .iter()
         .filter(|r| r.role == LayoutRegionRole::SectionHeading)
         .collect();
-    assert!(!headings.is_empty(), "large-font region should have SectionHeading role");
+    assert!(
+        !headings.is_empty(),
+        "large-font region should have SectionHeading role"
+    );
     assert!(
         matches!(headings[0].kind, LayoutRegionKind::Heading(_)),
         "SectionHeading role should come with Heading kind"
@@ -393,7 +451,9 @@ fn plan_with_policy_preserves_baseline_for_label() {
     let fb = font_bytes();
     let (_doc2, _, frags) = two_col_fragments();
     let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
-    if regions.is_empty() { return; }
+    if regions.is_empty() {
+        return;
+    }
 
     let mut doc3 = Document::new((595.0, 842.0)).unwrap();
     let plan_font = doc3.embed_font(&fb).unwrap();
@@ -438,17 +498,22 @@ fn plan_with_policy_uses_column_width_for_value() {
         .filter(|r| r.role == LayoutRegionRole::RightValue)
         .cloned()
         .collect();
-    if value_regions.is_empty() { return; }
+    if value_regions.is_empty() {
+        return;
+    }
 
     let mut doc3 = Document::new((595.0, 842.0)).unwrap();
     let plan_font = doc3.embed_font(&fb).unwrap();
 
-    let replacements: Vec<String> =
-        value_regions.iter().map(|r| format!("Long replacement text for {}", r.text)).collect();
+    let replacements: Vec<String> = value_regions
+        .iter()
+        .map(|r| format!("Long replacement text for {}", r.text))
+        .collect();
 
     let mut val_opts = RegionTextFitOptions::default();
     val_opts.width = WidthPolicy::ClampToColumn;
-    let options: Vec<RegionTextFitOptions> = value_regions.iter().map(|_| val_opts.clone()).collect();
+    let options: Vec<RegionTextFitOptions> =
+        value_regions.iter().map(|_| val_opts.clone()).collect();
 
     let plans = doc3
         .plan_text_for_regions_with_policy(&value_regions, &replacements, plan_font, &options)
@@ -468,7 +533,9 @@ fn plan_with_policy_empty_options_uses_role_defaults() {
     let fb = font_bytes();
     let (_doc2, _, frags) = two_col_fragments();
     let regions = extract_layout_regions(&frags, 595.0, 842.0, LayoutRegionOptions::default());
-    if regions.is_empty() { return; }
+    if regions.is_empty() {
+        return;
+    }
 
     let mut doc3 = Document::new((595.0, 842.0)).unwrap();
     let plan_font = doc3.embed_font(&fb).unwrap();
@@ -496,13 +563,17 @@ fn clamp_before_next_region_caps_width() {
         .filter(|r| r.role == LayoutRegionRole::LeftLabel)
         .cloned()
         .collect();
-    if label_regions.is_empty() { return; }
+    if label_regions.is_empty() {
+        return;
+    }
 
     let mut doc3 = Document::new((595.0, 842.0)).unwrap();
     let plan_font = doc3.embed_font(&fb).unwrap();
 
-    let replacements: Vec<String> =
-        label_regions.iter().map(|r| format!("LBL {}", r.text)).collect();
+    let replacements: Vec<String> = label_regions
+        .iter()
+        .map(|r| format!("LBL {}", r.text))
+        .collect();
 
     let mut clamp_opts = RegionTextFitOptions::default();
     clamp_opts.width = WidthPolicy::ClampBeforeNextRegion;
@@ -518,6 +589,9 @@ fn clamp_before_next_region_caps_width() {
     // Note: if there is no sibling (last column), it falls back to usable_rect width.
     assert_eq!(plans.len(), label_regions.len().min(replacements.len()));
     for plan in &plans {
-        assert!(plan.fit.font_size > 0.0, "plan should have positive font size");
+        assert!(
+            plan.fit.font_size > 0.0,
+            "plan should have positive font size"
+        );
     }
 }

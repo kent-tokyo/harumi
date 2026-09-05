@@ -52,6 +52,18 @@ jobs:
       - name: Test (Node.js runner, no browser needed)
         run: wasm-pack test --node -- --test wasm_smoke
 
+  wasm-dependency-boundary:
+    name: WASM dependency boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Reject native runtime dependencies from WASM graph
+        run: bash scripts/check-wasm-deps.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

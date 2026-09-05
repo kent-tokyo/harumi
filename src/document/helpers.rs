@@ -445,7 +445,11 @@ pub(super) fn append_annotation_to_page(
 
 /// Reads a named page box (e.g. CropBox) from the page dict.
 /// Returns `None` when the key is absent. Parses `[x1 y1 x2 y2]` → `[x, y, w, h]`.
-pub(super) fn read_page_box(doc: &lopdf::Document, page_id: ObjectId, key: &[u8]) -> Result<Option<[f32; 4]>> {
+pub(super) fn read_page_box(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    key: &[u8],
+) -> Result<Option<[f32; 4]>> {
     let dict = doc.get_object(page_id)?.as_dict()?;
     match dict.get(key).ok().cloned() {
         Some(Object::Reference(ref_id)) => parse_box_array(doc.get_object(ref_id)?).map(Some),
@@ -684,7 +688,11 @@ pub(super) fn plan_text_fit(
                 fs = (fs * rw / w).max(min_fs);
             }
             let status = if fs < fs0 {
-                if fs <= min_fs { PlacementStatus::ShrunkToMin } else { PlacementStatus::Shrunk }
+                if fs <= min_fs {
+                    PlacementStatus::ShrunkToMin
+                } else {
+                    PlacementStatus::Shrunk
+                }
             } else {
                 PlacementStatus::Ok
             };
@@ -712,7 +720,11 @@ pub(super) fn plan_text_fit(
                 };
             }
             let status = if fs < fs0 {
-                if fs <= min_fs { PlacementStatus::ShrunkToMin } else { PlacementStatus::Shrunk }
+                if fs <= min_fs {
+                    PlacementStatus::ShrunkToMin
+                } else {
+                    PlacementStatus::Shrunk
+                }
             } else {
                 PlacementStatus::Ok
             };
@@ -776,8 +788,7 @@ pub(super) fn plan_text_fit(
     // Top-aligned within the requested rect (matching add_text_box placement).
     let used_rect = [rx, ry + rh - used_h, used_w, used_h];
 
-    let overflow_horizontal =
-        lines.iter().any(|l| text_width_with_face(l, face, fs) > rw);
+    let overflow_horizontal = lines.iter().any(|l| text_width_with_face(l, face, fs) > rw);
     let overflow_vertical = used_h > rh;
 
     // Post-hoc status fixups using the computed overflow flags.
@@ -802,7 +813,14 @@ pub(super) fn plan_text_fit(
         _ => status,
     };
 
-    FitResult { lines, font_size: fs, used_rect, overflow_horizontal, overflow_vertical, status }
+    FitResult {
+        lines,
+        font_size: fs,
+        used_rect,
+        overflow_horizontal,
+        overflow_vertical,
+        status,
+    }
 }
 
 pub(super) fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {
@@ -823,7 +841,10 @@ pub(super) fn root_pages_id(doc: &lopdf::Document) -> Result<ObjectId> {
 ///
 /// Closest ancestor wins: the first ancestor to provide a value for a given key
 /// is used; outer ancestors' values for the same key are ignored.
-pub(super) fn realize_page_inherited_attrs(doc: &mut lopdf::Document, page_id: ObjectId) -> Result<()> {
+pub(super) fn realize_page_inherited_attrs(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+) -> Result<()> {
     const INHERITABLE: &[&[u8]] = &[
         b"MediaBox",
         b"CropBox",
@@ -1021,7 +1042,10 @@ pub(super) fn append_to_contents(
 
 /// Wraps all existing content streams of a page in a `q`/`Q` pair to isolate any
 /// unbalanced `cm` operators from affecting subsequently appended streams.
-pub(super) fn wrap_page_contents_in_q_q(doc: &mut lopdf::Document, page_id: ObjectId) -> Result<()> {
+pub(super) fn wrap_page_contents_in_q_q(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+) -> Result<()> {
     let has_contents = doc
         .get_object(page_id)
         .ok()
@@ -1031,9 +1055,14 @@ pub(super) fn wrap_page_contents_in_q_q(doc: &mut lopdf::Document, page_id: Obje
     if !has_contents {
         return Ok(());
     }
-    let q_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), b"q\n".to_vec())));
-    let big_q_id =
-        doc.add_object(Object::Stream(Stream::new(Dictionary::new(), b"Q\n".to_vec())));
+    let q_id = doc.add_object(Object::Stream(Stream::new(
+        Dictionary::new(),
+        b"q\n".to_vec(),
+    )));
+    let big_q_id = doc.add_object(Object::Stream(Stream::new(
+        Dictionary::new(),
+        b"Q\n".to_vec(),
+    )));
     prepend_to_contents(doc, page_id, q_id)?;
     append_to_contents(doc, page_id, big_q_id)?;
     Ok(())
@@ -1056,9 +1085,38 @@ pub(super) fn add_font_to_resources(
     let font_ref = Object::Reference(type0_id);
 
     if let Some(res_id) = resources_id {
+        let font_dict_id = {
+            let res_dict = doc.get_object(res_id)?.as_dict()?;
+            match res_dict.get(b"Font").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        };
+        if let Some(font_dict_id) = font_dict_id {
+            doc.get_object_mut(font_dict_id)?
+                .as_dict_mut()?
+                .set(pdf_name, font_ref);
+            return Ok(());
+        }
         let res_dict = doc.get_object_mut(res_id)?.as_dict_mut()?;
         ensure_font_entry(res_dict, pdf_name, font_ref);
     } else {
+        let inline_font_id = {
+            let page_dict = doc.get_object(page_id)?.as_dict()?;
+            match page_dict.get(b"Resources").ok() {
+                Some(Object::Dictionary(resources)) => match resources.get(b"Font").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(font_dict_id) = inline_font_id {
+            doc.get_object_mut(font_dict_id)?
+                .as_dict_mut()?
+                .set(pdf_name, font_ref);
+            return Ok(());
+        }
         let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
         match page_dict.get_mut(b"Resources") {
             Ok(res_obj) => {
@@ -1117,7 +1175,9 @@ pub(super) fn add_font_to_xobject_resources(
                 font_dict.set(pdf_name, font_ref);
                 let mut res_dict = Dictionary::new();
                 res_dict.set("Font", Object::Dictionary(font_dict));
-                xobj_stream.dict.set("Resources", Object::Dictionary(res_dict));
+                xobj_stream
+                    .dict
+                    .set("Resources", Object::Dictionary(res_dict));
             }
         }
     }
@@ -1141,7 +1201,11 @@ pub(super) fn ensure_font_entry(res_dict: &mut Dictionary, pdf_name: &[u8], font
 }
 
 /// Resolves the Resources dict for a page (direct or indirect) and applies `f`.
-pub(super) fn with_resources_dict_mut<F>(doc: &mut lopdf::Document, page_id: ObjectId, f: F) -> Result<()>
+pub(super) fn with_resources_dict_mut<F>(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    f: F,
+) -> Result<()>
 where
     F: FnOnce(&mut Dictionary),
 {
@@ -1262,8 +1326,8 @@ pub(super) fn inherited_resources(doc: &lopdf::Document, page_id: ObjectId) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::Document;
+    use super::*;
 
     #[test]
     fn document_is_send() {

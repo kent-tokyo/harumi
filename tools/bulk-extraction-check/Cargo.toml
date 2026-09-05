@@ -1,0 +1,12 @@
+[workspace]
+
+[package]
+name = "harumi-bulk-extraction-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+harumi = { path = "../..", features = ["image", "flow"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

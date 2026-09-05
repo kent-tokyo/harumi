@@ -93,7 +93,8 @@ impl QualityGate {
         let mut violations = Vec::new();
 
         if let Some(limit) = self.max_collision_count
-            && summary.collision_count > limit {
+            && summary.collision_count > limit
+        {
             violations.push(QualityViolation::TooManyCollisions {
                 count: summary.collision_count,
                 limit,
@@ -101,7 +102,8 @@ impl QualityGate {
         }
 
         if let Some(limit) = self.max_overflow_count
-            && summary.overflow_count > limit {
+            && summary.overflow_count > limit
+        {
             violations.push(QualityViolation::TooManyOverflows {
                 count: summary.overflow_count,
                 limit,
@@ -109,7 +111,8 @@ impl QualityGate {
         }
 
         if let Some(limit) = self.max_shrunk_count
-            && summary.shrunk_count > limit {
+            && summary.shrunk_count > limit
+        {
             violations.push(QualityViolation::TooManyShrunk {
                 count: summary.shrunk_count,
                 limit,
@@ -122,7 +125,8 @@ impl QualityGate {
         // is added here because the count already tracks this via max_shrunk_count.)
 
         if let Some(limit) = self.max_worst_overlap_area
-            && summary.worst_overlap_area > limit {
+            && summary.worst_overlap_area > limit
+        {
             violations.push(QualityViolation::WorstOverlapTooLarge {
                 area: summary.worst_overlap_area,
                 limit,
@@ -134,9 +138,9 @@ impl QualityGate {
         } else {
             // Only font-shrink violations → Warn (layout is preserved, text just smaller).
             // Any overflow, collision, or overlap violation → Fail.
-            let hard_fail = violations.iter().any(|v| {
-                !matches!(v, QualityViolation::TooManyShrunk { .. })
-            });
+            let hard_fail = violations
+                .iter()
+                .any(|v| !matches!(v, QualityViolation::TooManyShrunk { .. }));
             if hard_fail {
                 QualityResult::Fail(violations)
             } else {
@@ -218,7 +222,10 @@ impl std::fmt::Display for QualityViolation {
                 write!(f, "{count} shrunk regions exceed limit of {limit}")
             }
             Self::WorstOverlapTooLarge { area, limit } => {
-                write!(f, "worst overlap {area:.1} pt² exceeds limit of {limit:.1} pt²")
+                write!(
+                    f,
+                    "worst overlap {area:.1} pt² exceeds limit of {limit:.1} pt²"
+                )
             }
         }
     }

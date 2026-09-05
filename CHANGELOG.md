@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.20.0] — 2026-09-05
+
+### Added
+
+- **Layout-safe text extraction**: quote operators, horizontal scale, text rise,
+  multi-scalar ToUnicode mappings, CropBox/MediaBox origins, UserUnit, page rotation,
+  and axis-aligned bboxes for rotated or sheared text.
+- **Rotation-aware write-back**: common 90°/270° text direction is exposed through
+  `TextFragment::rotation_degrees` and preserved by `harumi-ai` overlay placement.
+- **Scanned-PDF translation**: multi-page OCR JSON input with page validation and
+  page-specific coordinate conversion.
+- **PDF ecosystem contracts**: pinned fixtures and boundary checks for rendering,
+  report generation, bulk extraction, and WASM/native dependency separation.
+
+### Changed
+
+- Updated layout quality diagnostics and replacement handling for safer best-effort
+  translation. Complex vertical writing, mixed styles, and visual identity still
+  require rendered-PDF review.
+- **`harumi-ai` v0.10.0**: synchronized with harumi 1.20 and the rotation-aware
+  extraction/overlay pipeline.
+
+---
+
 ## [1.19.0] — 2026-06-26
 
 ### Added
@@ -892,10 +916,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Japanese changelog (`CHANGELOG_ja.md`) now documents cross-`Tf` text matching,
+- The English changelog now documents cross-`Tf` text matching,
   `TranslationMode::InPlace`, `TranslateOptions::cover_color`, synthetic bold
-  rendering, and related harumi-ai features (previously documented only in English
-  under v1.4.5).
+  rendering, and related harumi-ai features (previously documented only under v1.4.5).
 
 ---
 

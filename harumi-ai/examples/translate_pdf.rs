@@ -22,8 +22,8 @@
 //!   TRANSLATE_FONT     — path to TTF font embedded in output PDF
 //!                        default: NotoSansJP-Regular.ttf in current directory
 
+use harumi_ai::{TranslationMode, providers::AnthropicTranslator, translate_pdf};
 use std::env;
-use harumi_ai::{TranslationMode, translate_pdf, providers::AnthropicTranslator};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,33 +37,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let input_path  = &args[1];
+    let input_path = &args[1];
     let output_path = &args[2];
     let target_lang = &args[3];
     let source_lang = args.get(4).map(String::as_str);
-    let mode_arg    = args.get(5).map(String::as_str).unwrap_or("overlay");
+    let mode_arg = args.get(5).map(String::as_str).unwrap_or("overlay");
 
     let mode = match mode_arg {
-        "new"     => TranslationMode::NewDocument,
+        "new" => TranslationMode::NewDocument,
         "inplace" => TranslationMode::InPlace,
-        _         => TranslationMode::Overlay,
+        _ => TranslationMode::Overlay,
     };
 
     // ── API key & model ───────────────────────────────────────────────────────
-    let api_key = env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY is not set");
-    let model = env::var("ANTHROPIC_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-6".to_owned());
+    let api_key = env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY is not set");
+    let model = env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_owned());
 
     // ── Font ─────────────────────────────────────────────────────────────────
-    let font_path = env::var("TRANSLATE_FONT")
-        .unwrap_or_else(|_| "NotoSansJP-Regular.ttf".to_owned());
-    let font = std::fs::read(&font_path)
-        .unwrap_or_else(|e| panic!("Cannot read font '{font_path}': {e}"));
+    let font_path =
+        env::var("TRANSLATE_FONT").unwrap_or_else(|_| "NotoSansJP-Regular.ttf".to_owned());
+    let font =
+        std::fs::read(&font_path).unwrap_or_else(|e| panic!("Cannot read font '{font_path}': {e}"));
 
     // ── Input PDF ─────────────────────────────────────────────────────────────
-    let pdf_bytes = std::fs::read(input_path)
-        .unwrap_or_else(|e| panic!("Cannot read '{input_path}': {e}"));
+    let pdf_bytes =
+        std::fs::read(input_path).unwrap_or_else(|e| panic!("Cannot read '{input_path}': {e}"));
 
     // ── Translate ─────────────────────────────────────────────────────────────
     let translator = AnthropicTranslator::builder()
@@ -87,14 +85,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let src_display = source_lang.unwrap_or("auto");
-    println!("[harumi-ai] Translating: {input_path}  ({src_display} → {target_lang})  mode={mode_arg}");
+    println!(
+        "[harumi-ai] Translating: {input_path}  ({src_display} → {target_lang})  mode={mode_arg}"
+    );
 
-    let translated = translate_pdf(&pdf_bytes, opts).await
+    let translated = translate_pdf(&pdf_bytes, opts)
+        .await
         .unwrap_or_else(|e| panic!("Translation failed: {e}"));
 
     std::fs::write(output_path, &translated.pdf_bytes)
         .unwrap_or_else(|e| panic!("Cannot write '{output_path}': {e}"));
 
-    println!("[harumi-ai] Done: {output_path} ({} bytes)", translated.pdf_bytes.len());
+    println!(
+        "[harumi-ai] Done: {output_path} ({} bytes)",
+        translated.pdf_bytes.len()
+    );
     Ok(())
 }

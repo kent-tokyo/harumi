@@ -8,18 +8,18 @@ AI-powered PDF translation for digital and scanned PDFs, built on [harumi](https
 
 ## What it does
 
-- **Digital PDFs** — extract positioned text, translate with any LLM, write back with layout intact (overlay or in-place replacement).
+- **Digital PDFs** — extract positioned text, translate with any LLM, and write back into inferred regions (overlay or in-place replacement). Existing content is retained in overlay mode, but pixel-identical layout is not guaranteed.
 - **Scanned PDFs** — accept OCR JSON from ocrs-cjk, PaddleOCR, or any HierText-format tool; translate regions; mask original image text; overlay translated CJK/Unicode text without rasterizing the page.
 
 ## Quick start
 
 ```toml
 [dependencies]
-harumi-ai = "0.9"
+harumi-ai = "0.10"
 
 # optional built-in providers
-# harumi-ai = { version = "0.9", features = ["anthropic"] }
-# harumi-ai = { version = "0.9", features = ["openai"] }
+# harumi-ai = { version = "0.10", features = ["anthropic"] }
+# harumi-ai = { version = "0.10", features = ["openai"] }
 ```
 
 ```rust
@@ -61,7 +61,7 @@ Implement the `Translator` trait to use any other LLM.
 
 ## Quality gate
 
-`TranslateOutput` includes per-page layout quality scores. `QualityResult::Pass` / `Warn` / `Fail` indicate whether translated text fits the original bounding regions without overflow.
+`TranslateOutput` includes per-page layout quality scores. `QualityResult::Pass` / `Warn` / `Fail` indicate whether the implemented geometry checks found overflow or collision issues. A pass is not a guarantee of visual identity; review complex, rotated, vertical, or image-backed pages.
 
 ## Getting CJK fonts
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{prompts::translation_system_prompt, Error, Result, Translator};
+use crate::{Error, Result, Translator, prompts::translation_system_prompt};
 
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -149,8 +149,14 @@ impl Translator for OpenAiTranslator {
             let req = ChatRequest {
                 model: self.model.clone(),
                 messages: vec![
-                    ChatMessage { role: "system".into(), content: system.clone() },
-                    ChatMessage { role: "user".into(), content: text.clone() },
+                    ChatMessage {
+                        role: "system".into(),
+                        content: system.clone(),
+                    },
+                    ChatMessage {
+                        role: "user".into(),
+                        content: text.clone(),
+                    },
                 ],
                 temperature: 0.3,
             };

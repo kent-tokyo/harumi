@@ -1,0 +1,12 @@
+[workspace]
+
+[package]
+name = "harumi-report-generation-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+genpdf = "=0.2.0"
+harumi = { path = "../..", features = ["html"] }
+printpdf = "=0.12.6"

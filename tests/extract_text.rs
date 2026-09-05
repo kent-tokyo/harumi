@@ -62,6 +62,34 @@ fn minimal_winansi_pdf(content_stream: &[u8]) -> Vec<u8> {
     buf
 }
 
+fn with_page_geometry(
+    pdf_bytes: &[u8],
+    media_box: [i64; 4],
+    crop_box: [i64; 4],
+    rotate: i64,
+    user_unit: f32,
+) -> Vec<u8> {
+    use harumi::lopdf::{Document as LDoc, Object};
+
+    let mut doc = LDoc::load_mem(pdf_bytes).unwrap();
+    let page_id = *doc.get_pages().values().next().unwrap();
+    let page = doc.get_object_mut(page_id).unwrap().as_dict_mut().unwrap();
+    page.set(
+        "MediaBox",
+        Object::Array(media_box.into_iter().map(Object::Integer).collect()),
+    );
+    page.set(
+        "CropBox",
+        Object::Array(crop_box.into_iter().map(Object::Integer).collect()),
+    );
+    page.set("Rotate", Object::Integer(rotate));
+    page.set("UserUnit", Object::Real(user_unit));
+
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
 fn font_bytes() -> Vec<u8> {
     std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf")
         .expect("tests/fixtures/NotoSansJP-Regular.ttf not found")
@@ -155,6 +183,49 @@ fn roundtrip_cjk_text() {
 
     assert_eq!(fragments.len(), 1);
     assert_eq!(fragments[0].text, "日本語");
+}
+
+#[test]
+fn extracts_type0_font_with_indirect_descendant_fonts() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_invisible_text("日本語", font, [100.0, 500.0], 14.0)
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let mut low = harumi::lopdf::Document::load_mem(&bytes).unwrap();
+    let type0_ids: Vec<_> = low
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            let dict = object.as_dict().ok()?;
+            (dict.get(b"Subtype").ok()?.as_name().ok()? == b"Type0").then_some(*id)
+        })
+        .collect();
+    assert!(!type0_ids.is_empty(), "fixture must contain a Type0 font");
+    for id in type0_ids {
+        let descendant = low
+            .get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .remove(b"DescendantFonts")
+            .unwrap();
+        let descendant_id = low.add_object(descendant);
+        low.get_object_mut(id).unwrap().as_dict_mut().unwrap().set(
+            "DescendantFonts",
+            harumi::lopdf::Object::Reference(descendant_id),
+        );
+    }
+    let mut indirect_bytes = Vec::new();
+    low.save_to(&mut indirect_bytes).unwrap();
+
+    let reloaded = Document::from_bytes(&indirect_bytes).unwrap();
+    let text = reloaded.extract_text(1).unwrap();
+    assert_eq!(text, "日本語");
 }
 
 #[test]
@@ -276,6 +347,112 @@ fn simple_font_winansi_literal_string() {
     let frags = doc.extract_text_runs(1).unwrap();
     assert_eq!(frags.len(), 1, "expected 1 fragment, got {}", frags.len());
     assert_eq!(frags[0].text, "Hello");
+}
+
+#[test]
+fn page_geometry_normalizes_crop_origin_rotation_and_user_unit() {
+    let content = b"BT\n/F1 12 Tf\n110 220 Td\n(Hello) Tj\nET\n";
+    let pdf_bytes = with_page_geometry(
+        &minimal_winansi_pdf(content),
+        [100, 200, 700, 1000],
+        [100, 200, 500, 600],
+        90,
+        2.0,
+    );
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let fragment = &doc.extract_text_runs(1).unwrap()[0];
+
+    // Crop-local (10, 20) × UserUnit 2 = (20, 40), then page Rotate=90:
+    // (x, y) -> (y, crop_width - x) = (40, 780).
+    assert!((fragment.x - 40.0).abs() < 0.5, "x={}", fragment.x);
+    assert!((fragment.y - 780.0).abs() < 0.5, "y={}", fragment.y);
+    assert!(
+        (fragment.font_size - 24.0).abs() < 0.5,
+        "font_size={}",
+        fragment.font_size
+    );
+    assert!(fragment.width > 0.0 && fragment.height > 0.0);
+    assert!((fragment.rotation_degrees - 90.0).abs() < 0.5);
+}
+
+#[test]
+fn rotated_and_sheared_tm_use_axis_aligned_bboxes() {
+    let content =
+        b"BT\n/F1 12 Tf\n0 1 -1 0 100 200 Tm\n(Hello) Tj\n1 0.5 0.2 1 200 200 Tm\n(World) Tj\nET\n";
+    let doc = Document::from_bytes(&minimal_winansi_pdf(content)).unwrap();
+    let fragments = doc.extract_text_runs(1).unwrap();
+    assert_eq!(fragments.len(), 2);
+
+    let rotated = &fragments[0];
+    assert!((rotated.x - 88.0).abs() < 0.5, "x={}", rotated.x);
+    assert!((rotated.y - 200.0).abs() < 0.5, "y={}", rotated.y);
+    assert!(rotated.height > rotated.width, "bbox={rotated:?}");
+    assert!((rotated.rotation_degrees - 90.0).abs() < 0.5);
+
+    let sheared = &fragments[1];
+    assert!(sheared.width > 0.0 && sheared.height > 0.0);
+    assert!(sheared.width > sheared.font_size, "bbox={sheared:?}");
+    assert!((sheared.rotation_degrees - 26.565).abs() < 0.5);
+}
+
+#[test]
+fn extracts_single_quote_text_show_operator() {
+    let content = b"BT\n/F1 12 Tf\n72 700 Td\n(Hello) '\nET\n";
+    let pdf_bytes = minimal_winansi_pdf(content);
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let fragments = doc.extract_text_runs(1).unwrap();
+    assert_eq!(fragments.len(), 1);
+    assert_eq!(fragments[0].text, "Hello");
+}
+
+#[test]
+fn extracts_double_quote_text_show_operator() {
+    let content = b"BT\n/F1 12 Tf\n72 700 Td\n0 0 (Hello) \"\nET\n";
+    let pdf_bytes = minimal_winansi_pdf(content);
+    let doc = Document::from_bytes(&pdf_bytes).unwrap();
+    let fragments = doc.extract_text_runs(1).unwrap();
+    assert_eq!(fragments.len(), 1);
+    assert_eq!(fragments[0].text, "Hello");
+}
+
+#[test]
+fn text_horizontal_scale_affects_width() {
+    let normal = minimal_winansi_pdf(b"BT\n/F1 12 Tf\n72 700 Td\n(Hello) Tj\nET\n");
+    let scaled = minimal_winansi_pdf(b"BT\n/F1 12 Tf\n50 Tz\n72 700 Td\n(Hello) Tj\nET\n");
+    let normal_width = Document::from_bytes(&normal)
+        .unwrap()
+        .extract_text_runs(1)
+        .unwrap()[0]
+        .width;
+    let scaled_width = Document::from_bytes(&scaled)
+        .unwrap()
+        .extract_text_runs(1)
+        .unwrap()[0]
+        .width;
+    assert!(
+        scaled_width < normal_width * 0.6,
+        "Tz should reduce width: {normal_width} -> {scaled_width}"
+    );
+}
+
+#[test]
+fn text_rise_affects_bbox_position() {
+    let normal = minimal_winansi_pdf(b"BT\n/F1 12 Tf\n72 700 Td\n(Hello) Tj\nET\n");
+    let raised = minimal_winansi_pdf(b"BT\n/F1 12 Tf\n5 Ts\n72 700 Td\n(Hello) Tj\nET\n");
+    let normal_y = Document::from_bytes(&normal)
+        .unwrap()
+        .extract_text_runs(1)
+        .unwrap()[0]
+        .y;
+    let raised_y = Document::from_bytes(&raised)
+        .unwrap()
+        .extract_text_runs(1)
+        .unwrap()[0]
+        .y;
+    assert!(
+        (raised_y - normal_y - 5.0).abs() < 0.5,
+        "Ts should raise bbox: {normal_y} -> {raised_y}"
+    );
 }
 
 #[test]

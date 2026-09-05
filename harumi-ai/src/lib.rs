@@ -27,11 +27,11 @@
 //! ```
 //!
 //! # Known limitations
-//! - **Layout**: overlay mode places translated text at the original baseline with
-//!   font-accurate descender coverage; in-place mode rewrites Tj/TJ operators directly.
-//!   Tables, multi-column layouts, and font colours require `TranslationMode::Overlay`
-//!   with `detect_text_columns` for best results; images are preserved as-is.
-//! - **Font**: all output text uses the single font provided in `TranslateOptions::font`.
+//! - **Layout**: write-back uses extracted coordinates and inferred regions; it does
+//!   not guarantee pixel-identical output. Complex tables, rotated or vertical text,
+//!   and text over non-uniform image backgrounds require visual review.
+//! - **Font and style**: translated text uses the configured primary/fallback fonts;
+//!   source font styling is not preserved run-for-run in every translation mode.
 //! - **Paragraph classification**: `extract_text_chunks` uses font-size heuristics;
 //!   complex PDFs may have imperfect heading/paragraph classification.
 
@@ -55,16 +55,16 @@ mod translator;
 
 pub use cache::TranslationCache;
 pub use error::{Error, Result};
+pub use font_sizing::FontSizePolicy;
 pub use layout::LayoutOptions;
 pub use layout_repair::{
     LayoutCorrection, LayoutRepairMode, RasterizeOptions, VisionProvider, VisionRepairRequest,
 };
+pub use ocr_input::OcrRegion;
 pub use output::{
     CorrectionRound, DebugArtifacts, DebugOptions, PageQualityReport, TranslateOutput,
     TranslateQuality,
 };
-pub use font_sizing::FontSizePolicy;
-pub use ocr_input::OcrRegion;
 pub use pdf_translator::{
     InputTextSource, OverflowStrategy, TranslateOptions, TranslateOptionsBuilder, TranslationMode,
     translate_pdf,

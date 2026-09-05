@@ -151,6 +151,45 @@ fn many_table_rows_paginate() {
     );
 }
 
+/// Shared report-generation contract used when comparing harumi FlowDocument
+/// with printpdf/genpdf: a CJK heading, a table, an explicit page break, and
+/// extractable text must survive serialization.
+#[test]
+fn report_generation_fixture_contract() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_heading("四半期レポート", 1).unwrap();
+    doc.push_paragraph(
+        "同一帳票比較用の固定フィクスチャです。既存 PDF の修復ではなく、新規生成の契約を検証します。",
+    )
+    .unwrap();
+    doc.push_key_value_table(&[
+        ("売上", "¥12,345,678"),
+        ("顧客数", "1,234"),
+        ("地域", "東京・大阪・福岡"),
+    ])
+    .unwrap();
+    doc.push_page_break().unwrap();
+    doc.push_heading("明細", 2).unwrap();
+    doc.push_paragraph("ページ分割後も帳票本文を抽出できることを確認します。")
+        .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for expected in ["四半期レポート", "売上", "¥12,345,678", "明細"] {
+        assert!(text.contains(expected), "missing {expected:?} in {text:?}");
+    }
+    assert!(
+        bytes
+            .windows(b"/FontFile2".len())
+            .any(|w| w == b"/FontFile2")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // InlineSpan / push_paragraph_styled tests
 // ---------------------------------------------------------------------------

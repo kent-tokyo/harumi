@@ -790,10 +790,7 @@ fn replace_text(params: Option<serde_json::Value>) -> serde_json::Value {
 
     for page_num in &pages {
         // Extract fragments to determine actual font sizes for overflow calculation
-        let page_fragments = match doc.extract_text_runs(*page_num) {
-            Ok(frags) => frags,
-            Err(_) => Vec::new(), // If extraction fails, continue with empty fragments
-        };
+        let page_fragments = doc.extract_text_runs(*page_num).unwrap_or_default();
         let fragment_map: HashMap<&str, &harumi::TextFragment> = page_fragments
             .iter()
             .map(|f| (f.text.as_str(), f))
@@ -858,32 +855,33 @@ fn replace_text(params: Option<serde_json::Value>) -> serde_json::Value {
                             None
                         };
 
-                        if let Some(new_w) = new_text_width {
-                            if let Some(warning) = check_overflow(
+                        if let Some(new_w) = new_text_width
+                            && let Some(warning) = check_overflow(
                                 fragment.width,
                                 new_w,
                                 &old_text,
                                 &new_text,
                                 *page_num,
-                            ) {
-                                warnings.push(warning);
-                            }
+                            )
+                        {
+                            warnings.push(warning);
                         }
 
                         // Pre-check only when the text was extracted on this page. Without this guard,
                         // multi-page translations validate every replacement on every page and produce
                         // noisy missing-glyph warnings for text that is not present on that page.
-                        if mode.requires_font_validation() && !font_bytes.is_empty() {
-                            if let Some(error) = validate_font_support(
+                        if mode.requires_font_validation()
+                            && !font_bytes.is_empty()
+                            && let Some(error) = validate_font_support(
                                 &new_text,
                                 &font_bytes,
                                 actual_font_size,
                                 *page_num,
                                 idx,
-                            ) {
-                                errors.push(error);
-                                continue;
-                            }
+                            )
+                        {
+                            errors.push(error);
+                            continue;
                         }
                     }
 

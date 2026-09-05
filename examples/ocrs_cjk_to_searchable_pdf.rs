@@ -80,8 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  output.pdf — searchable PDF output");
         std::process::exit(1);
     }
-    let (input_pdf, ocr_json, font_ttf, output_pdf) =
-        (&args[1], &args[2], &args[3], &args[4]);
+    let (input_pdf, ocr_json, font_ttf, output_pdf) = (&args[1], &args[2], &args[3], &args[4]);
 
     // 1. Parse ocrs-cjk JSON (one JSON file = one image = one PDF page).
     let json_bytes = std::fs::read(ocr_json)?;
@@ -142,15 +141,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let pdf_y = page_h_pt - (y_bl_px as f32 * scale_y);
 
                 // Font size: height of the bounding box in PDF points.
-                let font_size =
-                    ((y_bl_px as f32 - y_tl_px as f32) * scale_y).max(4.0);
+                let font_size = ((y_bl_px as f32 - y_tl_px as f32) * scale_y).max(4.0);
 
-                doc.page(1)?.add_invisible_text(
-                    &word.text,
-                    font,
-                    [pdf_x, pdf_y],
-                    font_size,
-                )?;
+                doc.page(1)?
+                    .add_invisible_text(&word.text, font, [pdf_x, pdf_y], font_size)?;
                 placed += 1;
             }
         }
@@ -163,8 +157,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          ({placed} words embedded, {skipped} skipped below {:.0}% confidence)",
         MIN_CONFIDENCE * 100.0
     );
-    println!(
-        "Press Cmd+A / Ctrl+A in a PDF viewer to verify the invisible text layer."
-    );
+    println!("Press Cmd+A / Ctrl+A in a PDF viewer to verify the invisible text layer.");
     Ok(())
 }

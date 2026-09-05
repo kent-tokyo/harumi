@@ -45,6 +45,10 @@ doc.save_to_bytes()?;   // in-memory variant
 
 // Extract text from existing PDFs (CID + standard simple fonts)
 let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
+// `run.rotation_degrees` preserves common 90°/270° text direction.
+
+// Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
+let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
 
 // PDF metadata (/Info dictionary)
 let meta: PdfMetadata = doc.metadata()?;
@@ -87,7 +91,11 @@ doc.set_encryption(user_pw, owner_pw)?;
 
 ## Coordinate System
 
-Coordinates are in **PDF points** (1 pt = 1/72 inch), origin at the **bottom-left** of the page.
+Coordinates are in **PDF points** (1 pt = 1/72 inch), origin at the **bottom-left** of the
+visible page area. Extraction normalizes inherited `CropBox`/`MediaBox` origins, `/UserUnit`,
+and right-angle page `/Rotate` into that local coordinate system. Content writing APIs still
+accept the source PDF's ordinary page coordinates; use the page box and rotation metadata when
+placing new content on rotated or cropped pages.
 
 For OCR tools that output pixel coordinates from the top-left, use the `ocr` feature helper:
 
@@ -148,3 +156,9 @@ harumi
 Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
 collects all characters used across every page, subsets once per font, and writes everything
 in one pass.
+
+Extraction is best-effort for malformed or underspecified PDFs. In particular, a Type0/CIDFont
+without a usable `/ToUnicode` CMap may use an Identity-H/V fallback. Use
+`extract_text_runs_verbose()` when the distinction between decoded text and inferred text matters.
+The `TextFragment` bounding box is axis-aligned; complex vertical writing and mixed styles remain
+best-effort and may require visual verification.

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::{Result, Translator};
+use async_trait::async_trait;
 
 /// A no-op translator that returns every input string unchanged.
 ///

@@ -123,6 +123,7 @@ fn parse_w_array_run_format() {
 fn font_info_advance_width_fallback() {
     let info = FontInfo {
         to_unicode: BTreeMap::new(),
+        to_unicode_text: BTreeMap::new(),
         dw: 1000,
         w_runs: vec![WidthRun {
             start_gid: 5,
@@ -147,6 +148,17 @@ fn win_ansi_spot_checks() {
     assert_eq!(WIN_ANSI_ENCODING[0x80], Some('€'));
     assert_eq!(WIN_ANSI_ENCODING[0xE9], Some('é'));
     assert_eq!(WIN_ANSI_ENCODING[0x7F], None);
+}
+
+#[test]
+fn parse_to_unicode_preserves_multiple_scalars() {
+    let cmap = br#"
+        1 beginbfchar
+        <0001> <00410301>
+        endbfchar
+    "#;
+    let parsed = parse_to_unicode_cmap_text(cmap);
+    assert_eq!(parsed.get(&1), Some(&"A\u{301}".to_owned()));
 }
 
 #[test]
@@ -221,6 +233,7 @@ fn detect_text_columns_single() {
         y: 700.0,
         width: 100.0,
         height: 12.0,
+        rotation_degrees: 0.0,
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
@@ -258,6 +271,7 @@ fn detect_text_columns_two_columns() {
         y: 700.0,
         width: 150.0,
         height: 12.0,
+        rotation_degrees: 0.0,
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
@@ -285,6 +299,7 @@ fn detect_text_columns_two_columns() {
         y: 700.0,
         width: 150.0,
         height: 12.0,
+        rotation_degrees: 0.0,
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
@@ -318,6 +333,7 @@ fn make_frag(text: &str, x: f32, y: f32, w: f32, fs: f32) -> TextFragment {
         y,
         width: w,
         height: fs,
+        rotation_degrees: 0.0,
         font_size: fs,
         font_name: "F1".into(),
         color: [0.0; 3],
@@ -689,6 +705,21 @@ fn extract_cid_xobject_inherited_resources() {
         text.contains("Hi"),
         "expected 'Hi' from CID+hex decode, got: {text:?}"
     );
+
+    // Without /ToUnicode, the Identity-H path remains best-effort for the
+    // compatibility API, but verbose extraction must report that inference.
+    if let Ok(obj) = doc.get_object_mut(font_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.remove(b"ToUnicode");
+    }
+    let (_, warnings) = extract_text_runs_from_page_verbose(&doc, page_id).unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::MissingToUnicodeCMap)),
+        "expected MissingToUnicodeCMap warning, got: {warnings:?}"
+    );
 }
 
 // Verify that a non-identity CTM established by q/cm/Q is correctly applied to
@@ -711,6 +742,7 @@ fn ctm_transforms_coordinates_to_page_space() {
         b"F1".to_vec(),
         FontInfo {
             to_unicode,
+            to_unicode_text: BTreeMap::new(),
             dw: 1000,
             w_runs: vec![WidthRun {
                 start_gid: 0x41,
@@ -1660,6 +1692,7 @@ fn merge_short_cjk_tails_basic() {
         y,
         width: w,
         height: fs,
+        rotation_degrees: 0.0,
         font_size: fs,
         font_name: "F1".into(),
         color: [0.0; 3],

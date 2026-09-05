@@ -353,7 +353,9 @@ impl HtmlParser {
                         self.advance();
                     }
                     // Pop from stack if tag matches
-                    if let Some((tag, _, _)) = stack.last() && closing_tag == *tag {
+                    if let Some((tag, _, _)) = stack.last()
+                        && closing_tag == *tag
+                    {
                         let (tag, attrs, children) = stack.pop().unwrap();
                         let node = HtmlNode::Element {
                             tag,
@@ -389,7 +391,9 @@ impl HtmlParser {
                     self.advance();
                 }
                 let decoded = Self::decode_html_entities(&text);
-                if !decoded.trim().is_empty() && let Some((_, _, children)) = stack.last_mut() {
+                if !decoded.trim().is_empty()
+                    && let Some((_, _, children)) = stack.last_mut()
+                {
                     children.push(HtmlNode::Text(decoded));
                 }
             }

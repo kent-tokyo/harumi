@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "harumi-bulk-extraction-compare"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pdf_oxide = { version = "=0.3.77", default-features = false }
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unpdf = { version = "=0.17.0", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

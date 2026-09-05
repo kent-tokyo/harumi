@@ -51,28 +51,40 @@ struct Word {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn apply_ocrs_json(doc: &mut Document, font: harumi::FontHandle, ocrs: &OcrsOutput)
-    -> Result<usize, harumi::Error>
-{
+fn apply_ocrs_json(
+    doc: &mut Document,
+    font: harumi::FontHandle,
+    ocrs: &OcrsOutput,
+) -> Result<usize, harumi::Error> {
     let (page_w, page_h) = doc.page(1)?.size()?;
-    let scale_x = if ocrs.image_width > 0 { page_w / ocrs.image_width as f32 } else { 1.0 };
-    let scale_y = if ocrs.image_height > 0 { page_h / ocrs.image_height as f32 } else { 1.0 };
+    let scale_x = if ocrs.image_width > 0 {
+        page_w / ocrs.image_width as f32
+    } else {
+        1.0
+    };
+    let scale_y = if ocrs.image_height > 0 {
+        page_h / ocrs.image_height as f32
+    } else {
+        1.0
+    };
 
     let mut placed = 0;
     for para in &ocrs.paragraphs {
         for line in &para.lines {
             for word in &line.words {
-                if word.confidence < MIN_CONFIDENCE || word.text.trim().is_empty()
+                if word.confidence < MIN_CONFIDENCE
+                    || word.text.trim().is_empty()
                     || word.vertices.len() < 4
                 {
                     continue;
                 }
                 let [x_tl, y_tl] = word.vertices[2]; // top-left
-                let [_, y_bl] = word.vertices[1];     // bottom-left
+                let [_, y_bl] = word.vertices[1]; // bottom-left
                 let pdf_x = x_tl as f32 * scale_x;
                 let pdf_y = page_h - (y_bl as f32 * scale_y);
                 let font_size = ((y_bl as f32 - y_tl as f32) * scale_y).max(4.0);
-                doc.page(1)?.add_invisible_text(&word.text, font, [pdf_x, pdf_y], font_size)?;
+                doc.page(1)?
+                    .add_invisible_text(&word.text, font, [pdf_x, pdf_y], font_size)?;
                 placed += 1;
             }
         }
@@ -87,21 +99,24 @@ fn ocrs_cjk_fixture_becomes_searchable_without_rasterizing() {
     // ── Setup ────────────────────────────────────────────────────────────────
 
     let font_bytes = std::fs::read(FONT_PATH).expect("NotoSansJP-Regular.ttf missing");
-    let pdf_bytes  = std::fs::read(PDF_PATH).expect("scanned_sample.pdf missing");
+    let pdf_bytes = std::fs::read(PDF_PATH).expect("scanned_sample.pdf missing");
     let json_bytes = std::fs::read(JSON_PATH).expect("ocrs_sample.json missing");
 
-    let ocrs: OcrsOutput = serde_json::from_slice(&json_bytes)
-        .expect("failed to parse ocrs_sample.json");
+    let ocrs: OcrsOutput =
+        serde_json::from_slice(&json_bytes).expect("failed to parse ocrs_sample.json");
 
     // ── Build searchable PDF ─────────────────────────────────────────────────
 
     let mut doc = Document::from_bytes(&pdf_bytes).expect("from_bytes");
     let page_count_before = doc.page_count();
-    let page_size_before  = doc.page(1).unwrap().size().unwrap();
+    let page_size_before = doc.page(1).unwrap().size().unwrap();
 
     let font = doc.embed_font(&font_bytes).expect("embed_font");
     let placed = apply_ocrs_json(&mut doc, font, &ocrs).expect("apply_ocrs_json");
-    assert!(placed > 0, "no words were placed — fixture or threshold issue");
+    assert!(
+        placed > 0,
+        "no words were placed — fixture or threshold issue"
+    );
 
     let out = doc.save_to_bytes().expect("save_to_bytes");
     assert!(!out.is_empty());
@@ -122,13 +137,29 @@ fn ocrs_cjk_fixture_becomes_searchable_without_rasterizing() {
     );
 
     let runs = doc2.extract_text_runs(1).expect("extract_text_runs");
-    let text: String = runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = runs
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
 
     // 1. High-confidence words are present.
-    assert!(text.contains("請求書"),        "missing 請求書  (conf 0.97) in: {text:?}");
-    assert!(text.contains("株式会社サンプル"), "missing 株式会社サンプル (conf 0.93) in: {text:?}");
-    assert!(text.contains("品名"),          "missing 品名  (conf 0.88) in: {text:?}");
-    assert!(text.contains("金額"),          "missing 金額  (conf 0.91) in: {text:?}");
+    assert!(
+        text.contains("請求書"),
+        "missing 請求書  (conf 0.97) in: {text:?}"
+    );
+    assert!(
+        text.contains("株式会社サンプル"),
+        "missing 株式会社サンプル (conf 0.93) in: {text:?}"
+    );
+    assert!(
+        text.contains("品名"),
+        "missing 品名  (conf 0.88) in: {text:?}"
+    );
+    assert!(
+        text.contains("金額"),
+        "missing 金額  (conf 0.91) in: {text:?}"
+    );
 
     // 2. Low-confidence word is absent.
     assert!(

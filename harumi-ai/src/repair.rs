@@ -13,15 +13,17 @@ pub(crate) fn is_likely_mojibake(text: &str) -> bool {
         return false;
     }
     let total = text.chars().count();
-    let garbage = text.chars().filter(|&c| {
-        // C0 control codes (except tab/LF/CR) or C1 controls or replacement char
-        (c < '\x20' && c != '\t' && c != '\n' && c != '\r')
-            || ('\x7f'..='\u{9F}').contains(&c)
-            || c == '\u{FFFD}'
-    }).count();
+    let garbage = text
+        .chars()
+        .filter(|&c| {
+            // C0 control codes (except tab/LF/CR) or C1 controls or replacement char
+            (c < '\x20' && c != '\t' && c != '\n' && c != '\r')
+                || ('\x7f'..='\u{9F}').contains(&c)
+                || c == '\u{FFFD}'
+        })
+        .count();
     garbage as f32 / total as f32 > 0.30
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -35,12 +37,16 @@ mod tests {
 
     #[test]
     fn normal_text_not_flagged() {
-        assert!(!is_likely_mojibake("This is a perfectly normal English sentence."));
+        assert!(!is_likely_mojibake(
+            "This is a perfectly normal English sentence."
+        ));
     }
 
     #[test]
     fn cjk_text_not_flagged() {
-        assert!(!is_likely_mojibake("日本語のテキストはモジバケではありません。"));
+        assert!(!is_likely_mojibake(
+            "日本語のテキストはモジバケではありません。"
+        ));
     }
 
     #[test]

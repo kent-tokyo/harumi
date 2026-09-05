@@ -1,0 +1,8 @@
+{
+  "input": "examples/fixtures/scanned_sample.pdf",
+  "page_index": 0,
+  "target_width": 1600,
+  "output_format": "png",
+  "golden": null,
+  "golden_policy": "Add a Pdfium-rendered PNG only after the Pdfium runtime/API build is pinned in CI. Compare dimensions and pixels at the same target width; do not compare Pdfium output against a Poppler golden as if they were pixel-identical."
+}

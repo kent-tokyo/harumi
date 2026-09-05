@@ -9,7 +9,10 @@ use crate::{
     cache::TranslationCache,
     extractor,
     layout_repair::{LayoutRepairMode, RasterizeOptions, VisionProvider},
-    output::{DebugArtifacts, DebugOptions, TranslateOutput, TranslateQuality},
+    output::{
+        DebugArtifacts, DebugOptions, LineIssue, PageQualityReport, TranslateOutput,
+        TranslateQuality,
+    },
     quality::{QualityGate, QualityProfile, QualityResult},
 };
 use tokio::sync::Mutex;
@@ -64,7 +67,9 @@ pub enum InputTextSource {
     /// rasterized by harumi; original pixel content is preserved.
     ///
     /// For each OCR line region: harumi covers the source area with a white
-    /// rectangle, then overlays the translated text inside that region.
+    /// rectangle, then overlays the translated text inside that region. A legacy
+    /// single-page object, a `{"pages": [...]}` document, or an array of page
+    /// objects is accepted; page objects may set a 1-based `page`/`page_num`.
     OcrJson(Vec<u8>),
 }
 
@@ -560,7 +565,10 @@ pub async fn translate_pdf(pdf_bytes: &[u8], options: TranslateOptions) -> Resul
     // OCR JSON path: skip the digital-PDF pipeline entirely.
     if let InputTextSource::OcrJson(ref json) = options.input_source {
         let json = json.clone();
-        return translate_pdf_from_ocr(pdf_bytes, &json, options).await;
+        let profile = clone_profile(&options.profile);
+        let debug_opts = options.debug.clone();
+        let raw = translate_pdf_from_ocr(pdf_bytes, &json, options).await?;
+        return finalize_output(raw, profile, debug_opts, TranslationMode::Overlay, None);
     }
 
     // Auto mode with quality-aware profiles uses a multi-stage cascade.
@@ -619,7 +627,7 @@ async fn translate_pdf_auto_cascade(
     let debug_opts = options.debug.clone();
 
     // ── Stage 1: InPlace ─────────────────────────────────────────────────────
-    let (inplace_bytes, inplace_stats) =
+    let (inplace_bytes, inplace_stats, inplace_reports) =
         crate::inplace::translate_pdf_inplace_inner(pdf_bytes, &options).await?;
 
     // Decide whether to cascade: high fallback rate OR quality gate would fail
@@ -632,7 +640,7 @@ async fn translate_pdf_auto_cascade(
         let raw = TranslateOutput {
             pdf_bytes: inplace_bytes,
             quality: TranslateQuality {
-                pages: vec![],
+                pages: inplace_reports,
                 overall: QualityResult::Pass,
                 correction_rounds: 0,
                 mode_used: TranslationMode::InPlace,
@@ -749,9 +757,9 @@ fn finalize_output(
         if all_violations.is_empty() {
             QualityResult::Pass
         } else {
-            let hard_fail = all_violations.iter().any(|v| {
-                !matches!(v, crate::quality::QualityViolation::TooManyShrunk { .. })
-            });
+            let hard_fail = all_violations
+                .iter()
+                .any(|v| !matches!(v, crate::quality::QualityViolation::TooManyShrunk { .. }));
             if hard_fail {
                 QualityResult::Fail(all_violations)
             } else {
@@ -995,7 +1003,6 @@ async fn translate_pdf_new_document_full(
 /// The original page image is not modified — only text and rectangles are appended
 /// (harumi's append-only PDF editing model).
 ///
-/// Currently operates on **page 1 only**; multi-page support is a future addition.
 async fn translate_pdf_from_ocr(
     pdf_bytes: &[u8],
     ocr_json: &[u8],
@@ -1004,12 +1011,18 @@ async fn translate_pdf_from_ocr(
     use harumi::Color;
 
     let mut doc = Document::from_bytes(pdf_bytes)?;
-    let (page_w, page_h) = doc.page(1)?.size()?;
+    let page_sizes: Vec<(f32, f32)> = (1..=doc.page_count())
+        .map(|page| doc.page(page)?.size())
+        .collect::<std::result::Result<_, _>>()?;
 
-    // Parse OCR JSON → PDF-coordinate regions.
-    let regions = crate::ocr_input::ocr_json_to_regions(ocr_json, page_w, page_h)?;
+    // Parse OCR JSON → page-specific PDF-coordinate regions.
+    let page_regions = crate::ocr_input::ocr_json_to_page_regions(ocr_json, &page_sizes)?;
+    let jobs: Vec<(u32, &crate::ocr_input::OcrRegion)> = page_regions
+        .iter()
+        .flat_map(|(page, regions)| regions.iter().map(move |region| (*page, region)))
+        .collect();
 
-    if regions.is_empty() {
+    if jobs.is_empty() {
         let out = doc.save_to_bytes()?;
         return Ok(TranslateOutput {
             pdf_bytes: out,
@@ -1025,12 +1038,23 @@ async fn translate_pdf_from_ocr(
     }
 
     // Batch-translate all region texts.
-    let source_texts: Vec<String> = regions.iter().map(|r| r.text.clone()).collect();
+    let source_texts: Vec<String> = jobs.iter().map(|(_, r)| r.text.clone()).collect();
     let translated: Vec<String> = opts
         .translator
-        .translate(&source_texts, &opts.target_lang, opts.source_lang.as_deref())
+        .translate(
+            &source_texts,
+            &opts.target_lang,
+            opts.source_lang.as_deref(),
+        )
         .await
         .map_err(|e| Error::Translator(e.to_string()))?;
+    if translated.len() != jobs.len() {
+        return Err(Error::Translator(format!(
+            "OCR translator returned {} regions for {} inputs",
+            translated.len(),
+            jobs.len()
+        )));
+    }
 
     // Embed font.
     let font = if opts.font.is_empty() {
@@ -1043,19 +1067,47 @@ async fn translate_pdf_from_ocr(
 
     let cover_color: [f32; 3] = opts.cover_color.unwrap_or([1.0, 1.0, 1.0]);
 
-    // Apply cover + overlay for each region.
-    for (region, translated_text) in regions.iter().zip(translated.iter()) {
+    struct OcrPlacement {
+        source_rect: [f32; 4],
+        placed_rect: [f32; 4],
+        font_size: f32,
+        overflow: bool,
+        original_text: String,
+        translated_text: String,
+    }
+    let mut placements_by_page: std::collections::BTreeMap<u32, Vec<OcrPlacement>> =
+        std::collections::BTreeMap::new();
+
+    // Apply cover + overlay for each region on its destination page.
+    for ((page, region), translated_text) in jobs.iter().zip(translated.iter()) {
+        // A translator may intentionally omit an uncertain region. Keep the source
+        // pixels visible instead of drawing a cover with no replacement text.
+        if translated_text.trim().is_empty() {
+            continue;
+        }
         let [rx, ry, rw, rh] = region.bbox;
 
         // Cover original OCR text area with a filled rectangle.
-        doc.page(1)?
+        doc.page(*page)?
             .add_rect([rx, ry, rw, rh], Color::Rgb(cover_color), 1.0)?;
 
         // Derive a font size from the region height; use a 90% scale to leave margins.
         let font_size = (rh * 0.85).clamp(4.0, 72.0);
 
+        // Plan with the exact font size/line-height used by add_text_box so the OCR
+        // path produces a real quality report instead of an unconditional Pass.
+        let mut fit_options = harumi::BoxFitOptions::default();
+        fit_options.overflow = harumi::OverflowPolicy::Report;
+        let fit = doc.fit_text_to_box(
+            translated_text,
+            font,
+            [rx, ry, rw, rh],
+            font_size,
+            fit_options,
+        )?;
+
         // Overlay translated text.
-        doc.page(1)?.add_text_box(
+        doc.page(*page)?.add_text_box(
             translated_text,
             font,
             [rx, ry, rw, rh],
@@ -1063,14 +1115,76 @@ async fn translate_pdf_from_ocr(
             Color::Rgb([0.0, 0.0, 0.0]),
             font_size * 1.2,
         )?;
+
+        placements_by_page
+            .entry(*page)
+            .or_default()
+            .push(OcrPlacement {
+                source_rect: region.bbox,
+                placed_rect: fit.used_rect,
+                font_size,
+                overflow: fit.overflow(),
+                original_text: region.text.clone(),
+                translated_text: translated_text.clone(),
+            });
     }
 
     let pdf_out = doc.save_to_bytes()?;
 
+    let page_reports: Vec<PageQualityReport> = placements_by_page
+        .into_iter()
+        .map(|(page_num, placements)| {
+            let simple: Vec<harumi::SimplePlacement> = placements
+                .iter()
+                .enumerate()
+                .map(|(id, p)| {
+                    harumi::SimplePlacement::new(
+                        id,
+                        p.source_rect,
+                        p.placed_rect,
+                        p.font_size,
+                        p.overflow,
+                    )
+                })
+                .collect();
+            // Text/image overlap is expected for scanned pages because the source text
+            // is part of the page image. OCR quality therefore checks text geometry only.
+            let quality =
+                harumi::PageLayoutQuality::from_simple_placements(page_num, &simple, &[], &[]);
+            let issues = quality
+                .issues
+                .iter()
+                .map(|issue| {
+                    let placement = placements.get(issue.id);
+                    LineIssue {
+                        block_id: issue.id,
+                        kind: issue.kind.clone(),
+                        severity: issue.severity.clone(),
+                        source_rect: placement.map(|p| p.source_rect).unwrap_or([0.0; 4]),
+                        placed_rect: issue.placed_rect,
+                        original_text: placement
+                            .map(|p| p.original_text.clone())
+                            .unwrap_or_default(),
+                        translated_text: placement
+                            .map(|p| p.translated_text.clone())
+                            .unwrap_or_default(),
+                        suggested_correction: None,
+                        resolved: false,
+                    }
+                })
+                .collect();
+            PageQualityReport {
+                page_num,
+                summary: quality.summary,
+                issues,
+            }
+        })
+        .collect();
+
     Ok(TranslateOutput {
         pdf_bytes: pdf_out,
         quality: TranslateQuality {
-            pages: vec![],
+            pages: page_reports,
             overall: QualityResult::Pass,
             correction_rounds: 0,
             mode_used: TranslationMode::Overlay,

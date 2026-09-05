@@ -1,6 +1,6 @@
-use harumi::{wrap_paragraph, Document};
-use ttf_parser::Face;
 use crate::{Error, LayoutOptions, Result};
+use harumi::{Document, wrap_paragraph};
+use ttf_parser::Face;
 
 // ── Wire types ───────────────────────────────────────────────────────────────
 
@@ -34,8 +34,7 @@ pub(crate) fn build_pdf(
         return doc.save_to_bytes().map_err(Into::into);
     }
 
-    let face = Face::parse(font_bytes, 0)
-        .map_err(|e| Error::FontParse(e.to_string()))?;
+    let face = Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
     let first_size = pages[0].size;
     let mut doc = Document::new(first_size)?;
@@ -62,7 +61,13 @@ pub(crate) fn build_pdf(
                     y = page_size.1 - layout.margin;
                 }
                 let mut ph = doc.page(cur_page)?;
-                ph.add_text(line, font, [layout.margin, y], font_size, [0.0f32, 0.0, 0.0])?;
+                ph.add_text(
+                    line,
+                    font,
+                    [layout.margin, y],
+                    font_size,
+                    [0.0f32, 0.0, 0.0],
+                )?;
                 y -= font_size * layout.line_height_ratio;
             }
 

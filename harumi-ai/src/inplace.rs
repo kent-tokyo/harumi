@@ -4,8 +4,9 @@ use harumi::{Document, FontHandle, ReplaceOptions};
 use ttf_parser::Face;
 
 use crate::{
-    Error, Result, TranslateOptions, overlay,
-    output::{TranslateOutput, TranslateQuality},
+    Error, Result, TranslateOptions,
+    output::{PageQualityReport, TranslateOutput, TranslateQuality},
+    overlay,
     quality::QualityResult,
 };
 
@@ -36,7 +37,11 @@ pub(crate) struct InPlaceStats {
 impl InPlaceStats {
     /// Fraction of lines that needed overlay fallback (0.0 – 1.0).
     pub fn fallback_rate(&self) -> f32 {
-        if self.total_lines == 0 { 0.0 } else { self.fallback as f32 / self.total_lines as f32 }
+        if self.total_lines == 0 {
+            0.0
+        } else {
+            self.fallback as f32 / self.total_lines as f32
+        }
     }
 }
 
@@ -47,14 +52,15 @@ impl InPlaceStats {
 pub(crate) async fn translate_pdf_inplace_inner(
     pdf_bytes: &[u8],
     options: &TranslateOptions,
-) -> Result<(Vec<u8>, InPlaceStats)> {
+) -> Result<(Vec<u8>, InPlaceStats, Vec<PageQualityReport>)> {
     let (overlay_pages, page_translations, global_body_fs) =
         overlay::extract_and_translate(pdf_bytes, options).await?;
 
-    let face = Face::parse(&options.font, 0)
-        .map_err(|e| Error::FontParse(e.to_string()))?;
+    let face = Face::parse(&options.font, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
-    let fallback_faces: Vec<Face<'_>> = options.font_fallbacks.iter()
+    let fallback_faces: Vec<Face<'_>> = options
+        .font_fallbacks
+        .iter()
         .filter_map(|b| Face::parse(b, 0).ok())
         .collect();
     let all_faces: Vec<&Face<'_>> = std::iter::once(&face)
@@ -62,15 +68,13 @@ pub(crate) async fn translate_pdf_inplace_inner(
         .collect();
 
     let cover_color = options.cover_color.unwrap_or([1.0, 1.0, 1.0]);
-    let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32)
-        .clamp(0.05, 0.35);
+    let descender_ratio = (-face.descender() as f32 / face.units_per_em() as f32).clamp(0.05, 0.35);
 
     let mut doc = Document::from_bytes(pdf_bytes)?;
     let primary_font = doc.embed_font(&options.font)?;
-    let mut font_handles: Vec<Option<FontHandle>> =
-        std::iter::once(Some(primary_font))
-            .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
-            .collect();
+    let mut font_handles: Vec<Option<FontHandle>> = std::iter::once(Some(primary_font))
+        .chain(std::iter::repeat_n(None, options.font_fallbacks.len()))
+        .collect();
 
     let mut stats = InPlaceStats::default();
 
@@ -81,11 +85,15 @@ pub(crate) async fn translate_pdf_inplace_inner(
             doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
 
-        let Some(translations) = page_translations.get(&page_num) else { continue };
+        let Some(translations) = page_translations.get(&page_num) else {
+            continue;
+        };
 
         for (line, trans_text) in overlay_page.lines.iter().zip(translations.iter()) {
             let text = trans_text.trim();
-            if text.is_empty() { continue; }
+            if text.is_empty() {
+                continue;
+            }
 
             stats.total_lines += 1;
 
@@ -95,9 +103,17 @@ pub(crate) async fn translate_pdf_inplace_inner(
             // character spacing compression.
             let min_fs = options.overflow.min_font_size();
             let max_fs_cap = line.line_height * 0.85;
-            let base_fs = if line.normalized_font_size > 0.0 { line.normalized_font_size } else { global_body_fs };
-            let desired_fs = if line.is_heading { (base_fs * 1.4).min(max_fs_cap) } else { base_fs.min(max_fs_cap) };
-            let avail_w = (line.region_usable_right - line.x).max(50.0);
+            let base_fs = if line.normalized_font_size > 0.0 {
+                line.normalized_font_size
+            } else {
+                global_body_fs
+            };
+            let desired_fs = if line.is_heading {
+                (base_fs * 1.4).min(max_fs_cap)
+            } else {
+                base_fs.min(max_fs_cap)
+            };
+            let avail_w = overlay::available_width(line);
             let text_w = overlay::measure_text_width(text, &face, desired_fs);
 
             let (font_size_override, char_spacing_override) = if text_w > avail_w {
@@ -106,7 +122,12 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 if tc >= -1.0 {
                     (Some(desired_fs), Some(tc))
                 } else {
-                    (Some(overlay::fit_font_size(text, &face, desired_fs, avail_w, min_fs)), None)
+                    (
+                        Some(overlay::fit_font_size(
+                            text, &face, desired_fs, avail_w, min_fs,
+                        )),
+                        None,
+                    )
                 }
             } else {
                 (Some(desired_fs), None)
@@ -116,7 +137,12 @@ pub(crate) async fn translate_pdf_inplace_inner(
             replace_opts.font_size_override = font_size_override;
             replace_opts.char_spacing_override = char_spacing_override;
 
-            let count = doc.page(page_num)?.replace_text_opts(&line.text, text, primary_font, replace_opts.clone())?;
+            let count = doc.page(page_num)?.replace_text_opts(
+                &line.text,
+                text,
+                primary_font,
+                replace_opts.clone(),
+            )?;
             if count > 0 {
                 stats.replaced += count;
                 continue;
@@ -126,9 +152,18 @@ pub(crate) async fn translate_pdf_inplace_inner(
             let retry = if let Some(stripped_orig) = strip_colon_prefix(&line.text) {
                 if !stripped_orig.is_empty() {
                     let stripped_trans = strip_colon_prefix(text).unwrap_or(text);
-                    doc.page(page_num)?.replace_text_opts(stripped_orig, stripped_trans, primary_font, replace_opts)?
-                } else { 0 }
-            } else { 0 };
+                    doc.page(page_num)?.replace_text_opts(
+                        stripped_orig,
+                        stripped_trans,
+                        primary_font,
+                        replace_opts,
+                    )?
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
 
             if retry > 0 {
                 continue;
@@ -144,7 +179,8 @@ pub(crate) async fn translate_pdf_inplace_inner(
             let x = line.x - 1.0;
             let w = (line.right - x + 2.0).max(10.0);
             let h = line.line_height + below;
-            doc.page(page_num_u)?.add_rect([x, y, w, h], cover_color, 1.0)?;
+            doc.page(page_num_u)?
+                .add_rect([x, y, w, h], cover_color, 1.0)?;
 
             // Tc-before-shrink: try character spacing compression first, then shrink.
             let base_w = overlay::measure_text_width(text, &face, desired);
@@ -154,7 +190,10 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 if tc >= -1.0 {
                     (desired, tc)
                 } else {
-                    (overlay::fit_font_size(text, &face, desired, avail_w, min_fs), 0.0)
+                    (
+                        overlay::fit_font_size(text, &face, desired, avail_w, min_fs),
+                        0.0,
+                    )
                 }
             } else {
                 (desired, 0.0)
@@ -178,7 +217,14 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 let fh = font_handles[fidx].unwrap();
                 let run_face = all_faces[fidx];
                 doc.page(page_num_u)?.add_text_styled_with_char_spacing(
-                    &run_text, fh, [run_x, line.y], scaled, [0.0f32, 0.0, 0.0], bold, false, char_spacing,
+                    &run_text,
+                    fh,
+                    [run_x, line.y],
+                    scaled,
+                    [0.0f32, 0.0, 0.0],
+                    bold,
+                    false,
+                    char_spacing,
                 )?;
                 let char_count_run = run_text.chars().count() as f32;
                 run_x += overlay::measure_text_width(&run_text, run_face, scaled)
@@ -189,11 +235,22 @@ pub(crate) async fn translate_pdf_inplace_inner(
 
     eprintln!(
         "[harumi-ai] InPlace: {} stream-replaced, {} overlay-fallback / {} total (fallback rate {:.0}%)",
-        stats.replaced, stats.fallback, stats.total_lines,
+        stats.replaced,
+        stats.fallback,
+        stats.total_lines,
         stats.fallback_rate() * 100.0,
     );
 
-    Ok((doc.save_to_bytes()?, stats))
+    let page_reports = overlay::compute_page_quality(
+        pdf_bytes,
+        &overlay_pages,
+        &page_translations,
+        &face,
+        global_body_fs,
+        options.overflow.min_font_size(),
+    );
+
+    Ok((doc.save_to_bytes()?, stats, page_reports))
 }
 
 /// Translate a PDF by rewriting content streams in-place, returning raw bytes.
@@ -202,19 +259,25 @@ pub(crate) async fn translate_pdf_inplace_inner(
 /// don't need placement statistics.  For the full structured result, use
 /// [`translate_pdf_inplace_full`] or [`translate_pdf`].
 #[allow(dead_code)]
-pub(crate) async fn translate_pdf_inplace(pdf_bytes: &[u8], options: TranslateOptions) -> Result<Vec<u8>> {
-    let (bytes, _stats) = translate_pdf_inplace_inner(pdf_bytes, &options).await?;
+pub(crate) async fn translate_pdf_inplace(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<Vec<u8>> {
+    let (bytes, _stats, _page_reports) = translate_pdf_inplace_inner(pdf_bytes, &options).await?;
     Ok(bytes)
 }
 
-
 /// Full InPlace translation returning [`TranslateOutput`] (v0.2.0+).
-pub async fn translate_pdf_inplace_full(pdf_bytes: &[u8], options: TranslateOptions) -> Result<TranslateOutput> {
-    let (pdf_bytes_out, _stats) = translate_pdf_inplace_inner(pdf_bytes, &options).await?;
+pub async fn translate_pdf_inplace_full(
+    pdf_bytes: &[u8],
+    options: TranslateOptions,
+) -> Result<TranslateOutput> {
+    let (pdf_bytes_out, _stats, page_reports) =
+        translate_pdf_inplace_inner(pdf_bytes, &options).await?;
     Ok(TranslateOutput {
         pdf_bytes: pdf_bytes_out,
         quality: TranslateQuality {
-            pages: vec![],
+            pages: page_reports,
             overall: QualityResult::Pass,
             correction_rounds: 0,
             mode_used: crate::TranslationMode::InPlace,

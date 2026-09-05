@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "harumi-pdfium-render-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pdfium-render = { version = "=0.9.3", default-features = true }

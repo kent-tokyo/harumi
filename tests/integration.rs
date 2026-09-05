@@ -233,7 +233,9 @@ fn otf_no_longer_rejected_at_embed() {
                 .find(|e| {
                     let p = e.path();
                     p.extension().map(|x| x == "otf").unwrap_or(false)
-                        && std::fs::read(&p).map(|b| b.starts_with(b"OTTO")).unwrap_or(false)
+                        && std::fs::read(&p)
+                            .map(|b| b.starts_with(b"OTTO"))
+                            .unwrap_or(false)
                 })
                 .and_then(|e| std::fs::read(e.path()).ok())
         });

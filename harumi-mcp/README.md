@@ -567,18 +567,18 @@ Add to `~/.continue/config.json`:
 ✅ **CJK Support** — full support for Chinese, Japanese, Korean fonts  
 ✅ **Text Extraction** — extract with precise x,y positions from single/all pages  
 ✅ **Structured Extraction** — semantic heading/paragraph detection  
-✅ **Translation Ready** — `pdf_replace_text` with automatic layout preservation  
+✅ **Translation Ready** — `pdf_replace_text` with best-effort layout-aware write-back
 ✅ **OCR Integration** — add invisible text layers for scanned PDFs  
 ✅ **HTML to PDF** — convert HTML directly to PDF with CJK support  
 ✅ **PDF Merge** — combine multiple PDFs  
 ✅ **Robust Error Handling** — descriptive error messages with error codes  
-✅ **Zero Setup** — binary distribution, no Python/Node runtime required  
+✅ **Low Setup** — pure-Rust binary, no Python/Node runtime required
 
 ## Known Limitations
 
 ### Text Replacement & Layout
 
-- **Line wrapping not automatic:** When replacing text with longer translations, content may exceed line boundaries. **Workaround:** Review output PDF visually or keep translation lengths within ±20% of original.
+- **Line wrapping not automatic:** When replacing text with longer translations, content may exceed line boundaries. Use harumi-ai's region planning and quality report, then review complex output visually.
 - **Single-line compensation:** Width compensation works within a line only. Does not reflow to next line.
 
 ### Font Support
@@ -589,7 +589,7 @@ Add to `~/.continue/config.json`:
 
 ### Text Extraction
 
-- **Unicode combining marks:** Decomposed characters (e.g., é as e + acute) may be extracted as separate fragments
+- **Unicode combining marks:** extraction preserves multi-scalar ToUnicode mappings, but legacy single-character replacement matching may still treat combining sequences separately
 - **RTL text:** Arabic/Hebrew text position coordinates may be semantically incorrect
 
 ## Building from Source

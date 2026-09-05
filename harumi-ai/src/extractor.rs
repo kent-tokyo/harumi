@@ -1,6 +1,6 @@
+use crate::{Error, Result};
 use harumi::{ChunkType, Document};
 use serde::{Deserialize, Serialize};
-use crate::{Error, Result};
 
 // ── Internal data types ─────────────────────────────────────────────────────
 
@@ -76,7 +76,11 @@ pub(crate) fn extract_pages(doc: &mut Document) -> Result<Vec<PageContent>> {
             .collect();
 
         if !blocks.is_empty() {
-            pages.push(PageContent { page_num, size, blocks });
+            pages.push(PageContent {
+                page_num,
+                size,
+                blocks,
+            });
         }
     }
     Ok(pages)
@@ -92,7 +96,10 @@ pub(crate) fn pages_to_json(pages: &[PageContent]) -> Result<String> {
     let batch = BatchJson {
         pages: pages
             .iter()
-            .map(|p| PageInBatch { page: p.page_num, blocks: &p.blocks })
+            .map(|p| PageInBatch {
+                page: p.page_num,
+                blocks: &p.blocks,
+            })
             .collect(),
     };
     serde_json::to_string(&batch)
@@ -112,11 +119,7 @@ pub(crate) fn json_to_translated_pages(raw: &str) -> Result<Vec<Vec<TranslatedBl
     let repaired = repair_json_strings(s);
     serde_json::from_str::<TranslatedBatchJson>(&repaired)
         .map(|b| b.pages.into_iter().map(|p| p.blocks).collect())
-        .map_err(|e| {
-            Error::Translator(format!(
-                "LLM response is not valid JSON: {e}. Raw: {raw}"
-            ))
-        })
+        .map_err(|e| Error::Translator(format!("LLM response is not valid JSON: {e}. Raw: {raw}")))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -168,7 +171,9 @@ fn repair_json_strings(s: &str) -> String {
                 continue;
             }
             match c {
-                '\\' => { prev_backslash = true; }
+                '\\' => {
+                    prev_backslash = true;
+                }
                 '"' => {
                     let tail = after_open[i + c.len_utf8()..].trim_start();
                     let is_close = tail.starts_with('}')
@@ -182,7 +187,9 @@ fn repair_json_strings(s: &str) -> String {
                     value.push('\\');
                     value.push('"');
                 }
-                _ => { value.push(c); }
+                _ => {
+                    value.push(c);
+                }
             }
         }
 
@@ -212,10 +219,13 @@ mod repair_tests {
         // Claude output where section name is wrapped in unescaped quotes
         let broken = r#"{"pages":[{"blocks":[{"id":9,"text":"（参照"8 防護措置"章节）"}]}]}"#;
         let repaired = repair_json_strings(broken);
-        let v: serde_json::Value = serde_json::from_str(&repaired)
-            .expect("repaired JSON should parse");
+        let v: serde_json::Value =
+            serde_json::from_str(&repaired).expect("repaired JSON should parse");
         let text = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
-        assert!(text.contains('"'), "interior quotes should be preserved in value: {text}");
+        assert!(
+            text.contains('"'),
+            "interior quotes should be preserved in value: {text}"
+        );
         assert!(text.starts_with('（'));
         assert!(text.ends_with('）'));
     }
@@ -224,8 +234,8 @@ mod repair_tests {
     fn handles_multiple_blocks() {
         let broken = r#"{"pages":[{"blocks":[{"id":1,"text":"see "section 1""},{"id":2,"text":"plain text"}]}]}"#;
         let repaired = repair_json_strings(broken);
-        let v: serde_json::Value = serde_json::from_str(&repaired)
-            .expect("repaired JSON should parse");
+        let v: serde_json::Value =
+            serde_json::from_str(&repaired).expect("repaired JSON should parse");
         let t1 = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
         let t2 = v["pages"][0]["blocks"][1]["text"].as_str().unwrap();
         assert!(t1.contains('"'));
@@ -236,8 +246,8 @@ mod repair_tests {
     fn passes_through_already_escaped_quotes() {
         let valid = r#"{"pages":[{"blocks":[{"id":1,"text":"say \"hello\""}]}]}"#;
         let repaired = repair_json_strings(valid);
-        let v: serde_json::Value = serde_json::from_str(&repaired)
-            .expect("repaired JSON should parse");
+        let v: serde_json::Value =
+            serde_json::from_str(&repaired).expect("repaired JSON should parse");
         let text = v["pages"][0]["blocks"][0]["text"].as_str().unwrap();
         assert_eq!(text, "say \"hello\"");
     }

@@ -13,11 +13,7 @@ pub mod inner {
 
     impl CmsSignedDataBuilder {
         /// Create a new CMS SignedData builder
-        pub fn new(
-            cert_der: Vec<u8>,
-            signature: Vec<u8>,
-            hash: Vec<u8>,
-        ) -> Self {
+        pub fn new(cert_der: Vec<u8>, signature: Vec<u8>, hash: Vec<u8>) -> Self {
             CmsSignedDataBuilder {
                 certificate_der: cert_der,
                 signature_bytes: signature,
@@ -89,7 +85,8 @@ pub mod inner {
             signed_data.push(0x30); // SEQUENCE tag
 
             // SignedData content: version (1 byte INTEGER=3) + digestAlgs + contentInfo + certs + signerInfos
-            let signed_data_content_len = 3 + digest_algs.len() + content_info.len() + certs.len() + signer_infos.len();
+            let signed_data_content_len =
+                3 + digest_algs.len() + content_info.len() + certs.len() + signer_infos.len();
             self.encode_length(&mut signed_data, signed_data_content_len);
 
             // Version 3
@@ -159,7 +156,8 @@ pub mod inner {
             enc_digest.extend_from_slice(&self.signature_bytes);
 
             // Calculate total length
-            let signer_info_content_len = version.len() + digest_alg.len() + enc_alg.len() + enc_digest.len();
+            let signer_info_content_len =
+                version.len() + digest_alg.len() + enc_alg.len() + enc_digest.len();
             self.encode_length(&mut signer_info, signer_info_content_len);
             signer_info.extend_from_slice(&version);
             signer_info.extend_from_slice(&digest_alg);
@@ -190,10 +188,12 @@ pub mod inner {
     /// Lowercase hex-encode a byte slice.
     fn to_hex(bytes: &[u8]) -> String {
         use std::fmt::Write;
-        bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
-            let _ = write!(acc, "{:02x}", b);
-            acc
-        })
+        bytes
+            .iter()
+            .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+                let _ = write!(acc, "{:02x}", b);
+                acc
+            })
     }
 }
 

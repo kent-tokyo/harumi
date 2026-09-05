@@ -1,9 +1,10 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use harumi::Document;
-use harumi_ai::{LayoutOptions, InputTextSource, QualityGate, QualityProfile, TranslateOptions,
-                TranslationMode, TranslationCache, providers::EchoTranslator, translate_pdf,
-                Translator};
+use harumi_ai::{
+    InputTextSource, LayoutOptions, QualityGate, QualityProfile, TranslateOptions,
+    TranslationCache, TranslationMode, Translator, providers::EchoTranslator, translate_pdf,
+};
+use std::sync::Arc;
 
 /// Test translator that returns every input text with a "TRANSLATED: " prefix,
 /// making the output ~30% longer than the input.  Used to exercise width
@@ -19,24 +20,27 @@ impl Translator for LongerTranslator {
         _source_lang: Option<&str>,
     ) -> harumi_ai::Result<Vec<String>> {
         // Each element is a batch-JSON string; parse, extend, and re-serialise.
-        texts.iter().map(|raw| {
-            let mut v: serde_json::Value = serde_json::from_str(raw)
-                .map_err(|e| harumi_ai::Error::Translator(e.to_string()))?;
-            if let Some(pages) = v.get_mut("pages").and_then(|p| p.as_array_mut()) {
-                for page in pages.iter_mut() {
-                    if let Some(blocks) = page.get_mut("blocks").and_then(|b| b.as_array_mut()) {
-                        for block in blocks.iter_mut() {
-                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                let longer = format!("TRANSLATED LONGER VERSION OF: {text}");
-                                block["text"] = serde_json::Value::String(longer);
+        texts
+            .iter()
+            .map(|raw| {
+                let mut v: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|e| harumi_ai::Error::Translator(e.to_string()))?;
+                if let Some(pages) = v.get_mut("pages").and_then(|p| p.as_array_mut()) {
+                    for page in pages.iter_mut() {
+                        if let Some(blocks) = page.get_mut("blocks").and_then(|b| b.as_array_mut())
+                        {
+                            for block in blocks.iter_mut() {
+                                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                    let longer = format!("TRANSLATED LONGER VERSION OF: {text}");
+                                    block["text"] = serde_json::Value::String(longer);
+                                }
                             }
                         }
                     }
                 }
-            }
-            serde_json::to_string(&v)
-                .map_err(|e| harumi_ai::Error::Translator(e.to_string()))
-        }).collect()
+                serde_json::to_string(&v).map_err(|e| harumi_ai::Error::Translator(e.to_string()))
+            })
+            .collect()
     }
 }
 
@@ -106,10 +110,7 @@ impl harumi_ai::Translator for DelayedPageTranslator {
             let pages = input["pages"]
                 .as_array()
                 .ok_or_else(|| harumi_ai::Error::Translator("missing pages".into()))?;
-            let first_page = pages
-                .first()
-                .and_then(|p| p["page"].as_u64())
-                .unwrap_or(1);
+            let first_page = pages.first().and_then(|p| p["page"].as_u64()).unwrap_or(1);
 
             tokio::time::sleep(std::time::Duration::from_millis((5 - first_page) * 20)).await;
 
@@ -157,7 +158,11 @@ async fn echo_translator_multipage() {
     let pdf = make_multipage_pdf();
     let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
     let result = translate_pdf(&pdf, opts).await;
-    assert!(result.is_ok(), "multipage translate_pdf failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "multipage translate_pdf failed: {:?}",
+        result.err()
+    );
 
     let out = result.unwrap().pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
@@ -235,7 +240,11 @@ async fn pages_per_batch_multipage() {
         .pages_per_batch(2)
         .build();
     let result = translate_pdf(&pdf, opts).await;
-    assert!(result.is_ok(), "pages_per_batch_multipage failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "pages_per_batch_multipage failed: {:?}",
+        result.err()
+    );
     let check = Document::from_bytes(&result.unwrap().pdf_bytes).unwrap();
     assert!(check.page_count() >= 2);
 }
@@ -247,9 +256,19 @@ async fn inplace_mode_basic() {
     let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
     opts.mode = TranslationMode::InPlace;
     let result = translate_pdf(&pdf, opts).await;
-    assert!(result.is_ok(), "InPlace translate_pdf failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "InPlace translate_pdf failed: {:?}",
+        result.err()
+    );
 
-    let out = result.unwrap().pdf_bytes;
+    let output = result.unwrap();
+    assert_eq!(
+        output.quality.pages.len(),
+        1,
+        "InPlace page was not quality-evaluated"
+    );
+    let out = output.pdf_bytes;
     let check = Document::from_bytes(&out).unwrap();
     assert!(check.page_count() >= 1);
     // Either the in-place replacement or the fallback overlay places text on page 1.
@@ -266,7 +285,11 @@ async fn inplace_mode_unmatched_falls_back() {
     let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
     opts.mode = TranslationMode::InPlace;
     let result = translate_pdf(&pdf, opts).await;
-    assert!(result.is_ok(), "InPlace empty PDF failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "InPlace empty PDF failed: {:?}",
+        result.err()
+    );
     let check = Document::from_bytes(&result.unwrap().pdf_bytes).unwrap();
     assert_eq!(check.page_count(), 1);
 }
@@ -303,7 +326,10 @@ async fn quality_gate_best_effort_always_passes() {
     let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
     opts.profile = QualityProfile::BestEffort;
     let output = translate_pdf(&pdf, opts).await.unwrap();
-    assert!(output.quality.overall.is_pass() || !output.quality.overall.is_pass(), "any result is fine");
+    assert!(
+        output.quality.overall.is_pass() || !output.quality.overall.is_pass(),
+        "any result is fine"
+    );
 }
 
 #[tokio::test]
@@ -314,7 +340,11 @@ async fn quality_gate_strict_passes_for_simple_pdf() {
     opts.profile = QualityProfile::Strict;
     // Strict only errors for Overlay/layout mode; Overlay on this simple PDF should be clean.
     let result = translate_pdf(&pdf, opts).await;
-    assert!(result.is_ok(), "strict gate failed unexpectedly: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "strict gate failed unexpectedly: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -325,7 +355,10 @@ async fn auto_mode_selects_a_mode() {
     let output = translate_pdf(&pdf, opts).await.unwrap();
     // Mode should be resolved to something concrete.
     assert!(
-        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
+        matches!(
+            output.quality.mode_used,
+            TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument
+        ),
         "Auto mode did not resolve to a concrete mode"
     );
 }
@@ -335,7 +368,10 @@ async fn quality_gate_evaluate_empty_summary() {
     use harumi::PageFitSummary;
     let gate = QualityGate::from_profile(&QualityProfile::Strict);
     let summary = PageFitSummary::from_plans(&[]);
-    assert!(gate.evaluate(&summary).is_pass(), "empty summary should always pass Strict gate");
+    assert!(
+        gate.evaluate(&summary).is_pass(),
+        "empty summary should always pass Strict gate"
+    );
 }
 
 #[tokio::test]
@@ -360,7 +396,10 @@ async fn auto_best_effort_no_cascade_no_fallback_reason() {
     opts.profile = QualityProfile::BestEffort;
     let output = translate_pdf(&pdf, opts).await.unwrap();
     assert!(
-        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
+        matches!(
+            output.quality.mode_used,
+            TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument
+        ),
         "mode_used must be a concrete mode, not Auto"
     );
     assert!(
@@ -380,8 +419,12 @@ async fn auto_preserve_layout_cascade_sets_fallback_reason() {
     let output = translate_pdf(&pdf, opts).await.unwrap();
     // mode_used must always be concrete
     assert!(
-        matches!(output.quality.mode_used, TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument),
-        "mode_used {:?} must be concrete", output.quality.mode_used
+        matches!(
+            output.quality.mode_used,
+            TranslationMode::Overlay | TranslationMode::InPlace | TranslationMode::NewDocument
+        ),
+        "mode_used {:?} must be concrete",
+        output.quality.mode_used
     );
     // If there was a cascade, fallback_reason must be Some (non-empty)
     if output.quality.mode_used != TranslationMode::InPlace {
@@ -411,23 +454,27 @@ async fn cache_deduplicates_repeated_phrases() {
     // Build a PDF with the same text on two pages.
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(FONT).unwrap();
-    doc.page(1).unwrap()
-        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
     doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
-    doc.page(2).unwrap()
-        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
     let pdf = doc.save_to_bytes().unwrap();
 
     let cache = Arc::new(tokio::sync::Mutex::new(TranslationCache::default()));
-    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
-        .with_cache(Arc::clone(&cache));
+    let opts =
+        TranslateOptions::new("en", EchoTranslator, FONT.to_vec()).with_cache(Arc::clone(&cache));
     let output = translate_pdf(&pdf, opts).await.unwrap();
     // Translation must succeed regardless of caching.
     assert!(output.pdf_bytes.starts_with(b"%PDF"));
 
     // On the second call the text should come from cache (hits > 0).
-    let opts2 = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
-        .with_cache(Arc::clone(&cache));
+    let opts2 =
+        TranslateOptions::new("en", EchoTranslator, FONT.to_vec()).with_cache(Arc::clone(&cache));
     let _out2 = translate_pdf(&pdf, opts2).await.unwrap();
     let c = cache.lock().await;
     assert!(c.hits() > 0, "expected cache hits on second call");
@@ -439,15 +486,16 @@ async fn skip_patterns_preserve_cas_numbers() {
     // PDF with a CAS number that must not be translated.
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(FONT).unwrap();
-    doc.page(1).unwrap()
-        .add_text("7664-93-9", font, [72.0, 700.0], 14.0, BLACK).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("7664-93-9", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
     let pdf = doc.save_to_bytes().unwrap();
 
     // EchoTranslator echoes input, so if the pattern is active the text is
     // passed through as-is (resolved path) rather than going to AI.
     // Either way the output PDF must be valid.
-    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
-        .with_sds_patterns();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec()).with_sds_patterns();
     let output = translate_pdf(&pdf, opts).await.unwrap();
     assert!(output.pdf_bytes.starts_with(b"%PDF"));
 }
@@ -478,8 +526,7 @@ async fn bilingual_single_page_gives_two_pages() {
 #[tokio::test]
 async fn with_sds_patterns_method_compiles() {
     // Smoke test — just verify with_sds_patterns() doesn't panic on compile.
-    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec())
-        .with_sds_patterns();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec()).with_sds_patterns();
     assert!(!opts.skip_patterns.is_empty());
 }
 
@@ -529,10 +576,14 @@ async fn auto_skip_math_flag_compiles_and_runs() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(FONT).unwrap();
     // Greek letter α — classified as primarily-math (length ≤ 20, math char present).
-    doc.page(1).unwrap()
-        .add_text("α", font, [72.0, 700.0], 14.0, BLACK).unwrap();
-    doc.page(1).unwrap()
-        .add_text("Normal text here", font, [72.0, 680.0], 14.0, BLACK).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("α", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Normal text here", font, [72.0, 680.0], 14.0, BLACK)
+        .unwrap();
     let pdf = doc.save_to_bytes().unwrap();
 
     let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
@@ -549,8 +600,10 @@ async fn auto_skip_math_prose_with_alpha_not_skipped() {
     let mut doc = Document::new((595.0, 842.0)).unwrap();
     let font = doc.embed_font(FONT).unwrap();
     let long_prose = "The coefficient alpha represents the scaling factor in the model";
-    doc.page(1).unwrap()
-        .add_text(long_prose, font, [72.0, 700.0], 12.0, BLACK).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text(long_prose, font, [72.0, 700.0], 12.0, BLACK)
+        .unwrap();
     let pdf = doc.save_to_bytes().unwrap();
 
     let mut opts = TranslateOptions::new("en", LongerTranslator, FONT.to_vec());
@@ -596,23 +649,48 @@ async fn translate_pdf_from_ocr_json_e2e() {
 
     // 4. MediaBox unchanged (within 2pt rounding).
     let (w, h) = doc.page(1).unwrap().size().unwrap();
-    assert!((w - 595.28).abs() < 2.0 && (h - 841.89).abs() < 2.0,
-        "MediaBox changed: {w:.2} x {h:.2}");
+    assert!(
+        (w - 595.28).abs() < 2.0 && (h - 841.89).abs() < 2.0,
+        "MediaBox changed: {w:.2} x {h:.2}"
+    );
 
     // 1. High-confidence words are in the output.
     let runs = doc.extract_text_runs(1).unwrap();
-    let text: String = runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("");
-    assert!(text.contains("請求書"),         "high-confidence word '請求書' missing from output");
-    assert!(text.contains("品名"),           "high-confidence word '品名' missing from output");
-    assert!(text.contains("金額"),           "high-confidence word '金額' missing from output");
+    let text: String = runs
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(
+        text.contains("請求書"),
+        "high-confidence word '請求書' missing from output"
+    );
+    assert!(
+        text.contains("品名"),
+        "high-confidence word '品名' missing from output"
+    );
+    assert!(
+        text.contains("金額"),
+        "high-confidence word '金額' missing from output"
+    );
 
     // 2. Low-confidence word (conf 0.35) is absent.
-    assert!(!text.contains("低品質"),
-        "low-confidence word '低品質' should not be in output");
+    assert!(
+        !text.contains("低品質"),
+        "low-confidence word '低品質' should not be in output"
+    );
 
     // 5. Quality gate passed or warned (not failed).
-    assert!(output.quality.overall.is_ok(), "unexpected quality failure: {:?}",
-        output.quality.overall.violations());
+    assert!(
+        output.quality.overall.is_ok(),
+        "unexpected quality failure: {:?}",
+        output.quality.overall.violations()
+    );
+    assert_eq!(
+        output.quality.pages.len(),
+        1,
+        "OCR page was not quality-evaluated"
+    );
 
     // 6. No rasterization: output has no Image XObjects.
     //    scanned_sample.pdf has no images; OcrJson path is append-only (add_rect + add_text_box).
@@ -622,4 +700,78 @@ async fn translate_pdf_from_ocr_json_e2e() {
         image_bboxes.is_empty(),
         "unexpected Image XObjects in output — possible rasterization: {image_bboxes:?}"
     );
+}
+
+#[tokio::test]
+async fn translate_pdf_from_multipage_ocr_json() {
+    let pdf = make_multipage_pdf();
+    let ocr = serde_json::json!({
+        "pages": [
+            {
+                "page": 1,
+                "image_width": 595,
+                "image_height": 842,
+                "paragraphs": [{"lines": [{"words": [{
+                    "text": "OCR Page One",
+                    "confidence": 0.99,
+                    "vertices": [[72, 100], [220, 100], [220, 120], [72, 120]]
+                }]}]}]
+            },
+            {
+                "page": 2,
+                "image_width": 595,
+                "image_height": 842,
+                "paragraphs": [{"lines": [{"words": [{
+                    "text": "OCR Page Two",
+                    "confidence": 0.99,
+                    "vertices": [[72, 200], [220, 200], [220, 220], [72, 220]]
+                }]}]}]
+            }
+        ]
+    });
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.input_source = InputTextSource::OcrJson(ocr.to_string().into_bytes());
+
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    assert_eq!(output.quality.pages.len(), 2);
+    let doc = Document::from_bytes(&output.pdf_bytes).unwrap();
+    let page_one: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.text)
+        .collect();
+    let page_two: String = doc
+        .extract_text_runs(2)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.text)
+        .collect();
+    assert!(page_one.contains("OCR Page One"));
+    assert!(!page_one.contains("OCR Page Two"));
+    assert!(page_two.contains("OCR Page Two"));
+    assert!(!page_two.contains("OCR Page One"));
+}
+
+#[tokio::test]
+async fn strict_ocr_uses_page_quality_report() {
+    let pdf = make_test_pdf();
+    let ocr = serde_json::json!({
+        "image_width": 595,
+        "image_height": 842,
+        "paragraphs": [{"lines": [{"words": [{
+            "text": "This text cannot fit inside a one point box",
+            "confidence": 0.99,
+            "vertices": [[72, 100], [73, 100], [73, 101], [72, 101]]
+        }]}]}]
+    });
+    let mut opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    opts.input_source = InputTextSource::OcrJson(ocr.to_string().into_bytes());
+    opts.profile = QualityProfile::Strict;
+
+    let result = translate_pdf(&pdf, opts).await;
+    assert!(matches!(
+        result,
+        Err(harumi_ai::Error::QualityGateFailed(_))
+    ));
 }

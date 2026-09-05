@@ -78,6 +78,10 @@ pub(crate) struct OverlayLine {
     pub(crate) region_usable_right: f32,
     /// Semantic role of the containing layout region (HeaderFooter, ParagraphBody, …).
     pub(crate) region_role: LayoutRegionRole,
+    /// Counter-clockwise direction of the source text baseline.
+    pub(crate) rotation_degrees: f32,
+    /// Axis-aligned source bbox, retained separately from the baseline anchor.
+    pub(crate) source_rect: [f32; 4],
     /// True when this line must not be covered or translated.
     /// Set in `extract_and_translate` based on `skip_header_footer` / `auto_skip_math`.
     pub(crate) is_skip: bool,
@@ -108,6 +112,80 @@ struct RawLine {
     is_bold: bool,
     /// Max font_size across fragments on this line (PDF points).
     font_size: f32,
+    rotation_degrees: f32,
+    source_rect: [f32; 4],
+}
+
+fn rotation_is_vertical(rotation: f32) -> bool {
+    (rotation - 90.0).abs() < 1.0 || (rotation - 270.0).abs() < 1.0
+}
+
+fn fragment_anchor(fragment: &TextFragment) -> (f32, f32) {
+    match fragment.rotation_degrees.round() as i32 {
+        90 => (fragment.x + fragment.width, fragment.y),
+        270 => (fragment.x, fragment.y + fragment.height),
+        _ => (fragment.x, fragment.y),
+    }
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3000..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+            | 0x20000..=0x2CEAF
+    )
+}
+
+fn needs_space_between(left: char, right: char, gap: f32, space_width: f32) -> bool {
+    let threshold = if is_cjk(left) && is_cjk(right) {
+        space_width * 0.8
+    } else {
+        space_width * 0.35
+    };
+    gap > threshold.max(0.5)
+}
+
+/// Decide whether two adjacent PDF text fragments need a semantic word space.
+///
+/// PDF generators frequently emit CJK one glyph per `Tj`; inserting a space at every
+/// fragment boundary corrupts both translation input and InPlace matching.  Preserve an
+/// explicit source-space, otherwise infer a space only from a visible geometric gap.
+fn needs_fragment_space(last: &RawLine, frag: &TextFragment) -> bool {
+    if last.text.ends_with(char::is_whitespace) || frag.text.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(left) = last.text.chars().next_back() else {
+        return false;
+    };
+    let Some(right) = frag.text.chars().next() else {
+        return false;
+    };
+    let gap = frag.x - last.right;
+    let space_width = if frag.space_advance > 0.0 {
+        frag.space_advance
+    } else {
+        frag.font_size * 0.5
+    };
+    needs_space_between(left, right, gap, space_width)
+}
+
+pub(crate) fn available_width(line: &OverlayLine) -> f32 {
+    let inferred = line.region_usable_right - line.x;
+    let source_width = line.right - line.x;
+    if inferred.is_finite() && inferred > 0.0 {
+        inferred.max(1.0)
+    } else {
+        source_width.max(1.0)
+    }
+}
+
+fn has_translation(translations: Option<&Vec<String>>, line_index: usize) -> bool {
+    translations
+        .and_then(|items| items.get(line_index))
+        .is_some_and(|text| !text.trim().is_empty())
 }
 
 /// Group a slice of fragments (already sorted top-to-bottom within a column)
@@ -118,9 +196,12 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
     for frag in frags {
         let frag_right = frag.x + frag.width.max(0.0);
         if let Some(last) = raw_lines.last_mut()
-            && (frag.y - last.y).abs() <= Y_TOL
+            && ((rotation_is_vertical(frag.rotation_degrees) && (frag.x - last.x).abs() <= Y_TOL)
+                || (!rotation_is_vertical(frag.rotation_degrees)
+                    && (frag.y - last.y).abs() <= Y_TOL))
+            && (frag.rotation_degrees - last.rotation_degrees).abs() < 1.0
         {
-            if !last.text.is_empty() && !last.text.ends_with(' ') {
+            if !last.text.is_empty() && needs_fragment_space(last, frag) {
                 last.text.push(' ');
             }
             last.text.push_str(&frag.text);
@@ -129,17 +210,25 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             last.fragments.push(frag.text.clone());
             last.is_bold = last.is_bold || frag.is_bold;
             last.font_size = last.font_size.max(frag.font_size);
+            let x0 = last.source_rect[0].min(frag.x);
+            let y0 = last.source_rect[1].min(frag.y);
+            let x1 = (last.source_rect[0] + last.source_rect[2]).max(frag.x + frag.width);
+            let y1 = (last.source_rect[1] + last.source_rect[3]).max(frag.y + frag.height);
+            last.source_rect = [x0, y0, x1 - x0, y1 - y0];
             continue;
         }
+        let (anchor_x, anchor_y) = fragment_anchor(frag);
         raw_lines.push(RawLine {
-            x: frag.x,
-            y: frag.y,
+            x: anchor_x,
+            y: anchor_y,
             right: frag_right,
             col_right,
             text: frag.text.clone(),
             fragments: vec![frag.text.clone()],
             is_bold: frag.is_bold,
             font_size: frag.font_size,
+            rotation_degrees: frag.rotation_degrees,
+            source_rect: [frag.x, frag.y, frag.width, frag.height],
         });
     }
     raw_lines
@@ -310,6 +399,8 @@ pub(crate) fn extract_overlay_pages(
                     normalized_font_size: 0.0,
                     region_usable_right,
                     region_role,
+                    rotation_degrees: rl.rotation_degrees,
+                    source_rect: rl.source_rect,
                     is_skip: false,
                 }
             })
@@ -497,7 +588,7 @@ async fn run_correction_loop(
                 } else {
                     fs.min(max_fs)
                 };
-                let avail_w = (line.region_usable_right - line.x).max(50.0);
+                let avail_w = available_width(line);
                 let text_w = measure_text_width(text, face, desired);
                 let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
                 let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
@@ -1058,10 +1149,16 @@ pub(crate) async fn extract_and_translate(
         if let Some(texts) = page_translations.get_mut(&op.page_num) {
             for (idx, text) in texts.iter_mut().enumerate() {
                 if !text.is_empty() && crate::repair::is_likely_mojibake(text) {
-                    let safe: String = op.lines.get(idx)
-                        .map(|l| l.text.chars().take(40)
-                            .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
-                            .collect())
+                    let safe: String = op
+                        .lines
+                        .get(idx)
+                        .map(|l| {
+                            l.text
+                                .chars()
+                                .take(40)
+                                .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+                                .collect()
+                        })
                         .unwrap_or_default();
                     eprintln!(
                         "[harumi-ai] Mojibake detected p{}:{idx} ({safe:?}) — original preserved",
@@ -1202,7 +1299,7 @@ pub async fn translate_pdf_overlay_full(
 }
 
 /// Compute per-page quality summaries including per-line issues and border collision checks.
-fn compute_page_quality(
+pub(crate) fn compute_page_quality(
     pdf_bytes: &[u8],
     overlay_pages: &[OverlayPage],
     page_translations: &HashMap<u32, Vec<String>>,
@@ -1210,8 +1307,8 @@ fn compute_page_quality(
     global_body_fs: f32,
     min_fs: f32,
 ) -> Vec<crate::output::PageQualityReport> {
-    use harumi::{LayoutIssueKind, LayoutIssueSeverity, SimplePlacement};
     use crate::output::LineIssue;
+    use harumi::{LayoutIssueKind, LayoutIssueSeverity, SimplePlacement};
 
     // Load the document once for vector rule extraction.
     let doc = harumi::Document::from_bytes(pdf_bytes).ok();
@@ -1243,20 +1340,37 @@ fn compute_page_quality(
         let mut overflow_count = 0usize;
         let mut shrunk_count = 0usize;
 
-        for (idx, (line, trans_text)) in overlay_page.lines.iter().zip(translations.iter()).enumerate() {
+        for (idx, (line, trans_text)) in overlay_page
+            .lines
+            .iter()
+            .zip(translations.iter())
+            .enumerate()
+        {
             let text = trans_text.trim();
             if text.is_empty() {
                 continue;
             }
             let max_fs_cap = line.line_height * 0.85;
-            let fs = if line.normalized_font_size > 0.0 { line.normalized_font_size } else { global_body_fs };
-            let desired = if line.is_heading { (fs * 1.4).min(max_fs_cap) } else { fs.min(max_fs_cap) };
-            let avail_w = (line.region_usable_right - line.x).max(50.0);
+            let fs = if line.normalized_font_size > 0.0 {
+                line.normalized_font_size
+            } else {
+                global_body_fs
+            };
+            let desired = if line.is_heading {
+                (fs * 1.4).min(max_fs_cap)
+            } else {
+                fs.min(max_fs_cap)
+            };
+            let avail_w = available_width(line);
             let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
             let text_w = measure_text_width(text, face, desired);
             let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
-            if overflow { overflow_count += 1; }
-            if actual_fs < desired * 0.99 { shrunk_count += 1; }
+            if overflow {
+                overflow_count += 1;
+            }
+            if actual_fs < desired * 0.99 {
+                shrunk_count += 1;
+            }
             let placed_w = text_w.min(avail_w * 1.5);
             let placed_rect = [line.x, line.y, placed_w, line.line_height];
             let source_rect = [line.x, line.y, line.right - line.x, line.line_height];
@@ -1272,9 +1386,13 @@ fn compute_page_quality(
         }
 
         // Use SimplePlacement + PageLayoutQuality for collision + border detection.
-        let simple_placements: Vec<SimplePlacement> = placements.iter().enumerate().map(|(i, p)| {
-            SimplePlacement::new(i, p.source_rect, p.placed_rect, p.actual_fs, p.overflow)
-        }).collect();
+        let simple_placements: Vec<SimplePlacement> = placements
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                SimplePlacement::new(i, p.source_rect, p.placed_rect, p.actual_fs, p.overflow)
+            })
+            .collect();
         let quality = harumi::PageLayoutQuality::from_simple_placements(
             page_num,
             &simple_placements,
@@ -1290,7 +1408,10 @@ fn compute_page_quality(
             let mut col_groups: Vec<(f32, Vec<(usize, f32)>)> = Vec::new();
             for (i, p) in placements.iter().enumerate() {
                 let col_x = p.source_rect[0];
-                if let Some((_, grp)) = col_groups.iter_mut().find(|(cx, _)| (cx - col_x).abs() <= col_tol) {
+                if let Some((_, grp)) = col_groups
+                    .iter_mut()
+                    .find(|(cx, _)| (cx - col_x).abs() <= col_tol)
+                {
                     grp.push((i, p.actual_fs));
                 } else {
                     col_groups.push((col_x, vec![(i, p.actual_fs)]));
@@ -1298,7 +1419,9 @@ fn compute_page_quality(
             }
             let mut outliers = std::collections::HashSet::new();
             for (_, grp) in &col_groups {
-                if grp.len() < 2 { continue; }
+                if grp.len() < 2 {
+                    continue;
+                }
                 let mut sizes: Vec<f32> = grp.iter().map(|(_, fs)| *fs).collect();
                 sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let median = sizes[sizes.len() / 2];
@@ -1312,20 +1435,24 @@ fn compute_page_quality(
         };
 
         // Build LineIssue list from PageLayoutQuality issues + font-size outliers.
-        let mut issues: Vec<LineIssue> = quality.issues.iter().map(|qi| {
-            let p = placements.get(qi.id);
-            LineIssue {
-                block_id: qi.id,
-                kind: qi.kind.clone(),
-                severity: qi.severity.clone(),
-                source_rect: p.map(|x| x.source_rect).unwrap_or([0.0; 4]),
-                placed_rect: qi.placed_rect,
-                original_text: p.map(|x| x.original_text.clone()).unwrap_or_default(),
-                translated_text: p.map(|x| x.translated_text.clone()).unwrap_or_default(),
-                suggested_correction: None,
-                resolved: false,
-            }
-        }).collect();
+        let mut issues: Vec<LineIssue> = quality
+            .issues
+            .iter()
+            .map(|qi| {
+                let p = placements.get(qi.id);
+                LineIssue {
+                    block_id: qi.id,
+                    kind: qi.kind.clone(),
+                    severity: qi.severity.clone(),
+                    source_rect: p.map(|x| x.source_rect).unwrap_or([0.0; 4]),
+                    placed_rect: qi.placed_rect,
+                    original_text: p.map(|x| x.original_text.clone()).unwrap_or_default(),
+                    translated_text: p.map(|x| x.translated_text.clone()).unwrap_or_default(),
+                    suggested_correction: None,
+                    resolved: false,
+                }
+            })
+            .collect();
 
         for &i in &font_size_outlier_ids {
             if let Some(p) = placements.get(i) {
@@ -1351,7 +1478,11 @@ fn compute_page_quality(
         summary.worst_overlap_area = quality.summary.worst_overlap_area;
         summary.worst_overlap_rect = quality.summary.worst_overlap_rect;
 
-        reports.push(crate::output::PageQualityReport { page_num, summary, issues });
+        reports.push(crate::output::PageQualityReport {
+            page_num,
+            summary,
+            issues,
+        });
     }
     reports
 }
@@ -1502,7 +1633,7 @@ fn overlay_geometry_issues_json(
         } else {
             fs.min(max_fs)
         };
-        let avail_w = (line.region_usable_right - line.x).max(50.0);
+        let avail_w = available_width(line);
         let text_w = measure_text_width(text, face, desired);
         let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
         let overflow = text_w > avail_w * 1.05 || actual_fs < desired * 0.9;
@@ -1653,8 +1784,8 @@ fn apply_overlay(
         for &rect in &overlay_page.invisible_rects {
             doc.page(page_num)?.add_rect(rect, cover_color, 1.0)?;
         }
-        for line in &overlay_page.lines {
-            if line.is_skip {
+        for (line_index, line) in overlay_page.lines.iter().enumerate() {
+            if line.is_skip || !has_translation(translated_texts, line_index) {
                 continue;
             }
             let x = line.x - 1.0;
@@ -1663,7 +1794,11 @@ fn apply_overlay(
             let w = (line.right - x + 2.0).max(10.0);
             let h = line.line_height + below;
             // Skip white rect if the line overlaps an image region.
-            let line_rect = [x, y, w, h];
+            let line_rect = if rotation_is_vertical(line.rotation_degrees) {
+                line.source_rect
+            } else {
+                [x, y, w, h]
+            };
             if overlay_page
                 .image_bboxes
                 .iter()
@@ -1695,7 +1830,11 @@ fn apply_overlay(
                 };
                 // Use region_usable_right (from extract_layout_regions) for a more
                 // precise column-right boundary than the heuristic col_right.
-                let avail_w = (line.region_usable_right - line.x).max(50.0);
+                let avail_w = if rotation_is_vertical(line.rotation_degrees) {
+                    line.source_rect[3].max(1.0)
+                } else {
+                    available_width(line)
+                };
 
                 // Tc-before-shrink: try character spacing compression for any overflow,
                 // then fall back to font size reduction only when Tc would be too tight.
@@ -1730,6 +1869,7 @@ fn apply_overlay(
                 // Character spacing (Tc) is distributed evenly across all runs.
                 let runs = split_by_font(&display_text, all_faces);
                 let mut run_x = line.x;
+                let mut run_y = line.y;
                 for (run_text, fidx) in runs {
                     // Embed fallback font on first use.
                     if font_handles[fidx].is_none() {
@@ -1738,19 +1878,37 @@ fn apply_overlay(
                     }
                     let fh = font_handles[fidx].unwrap();
                     let run_face = all_faces[fidx];
-                    doc.page(page_num)?.add_text_styled_with_char_spacing(
-                        &run_text,
-                        fh,
-                        [run_x, line.y],
-                        display_fs,
-                        [0.0f32, 0.0, 0.0],
-                        bold,
-                        false,
-                        char_spacing,
-                    )?;
+                    if rotation_is_vertical(line.rotation_degrees) {
+                        doc.page(page_num)?.add_text_with_rotation(
+                            &run_text,
+                            fh,
+                            [run_x, run_y],
+                            display_fs,
+                            [0.0f32, 0.0, 0.0],
+                            1.0,
+                            line.rotation_degrees,
+                        )?;
+                    } else {
+                        doc.page(page_num)?.add_text_styled_with_char_spacing(
+                            &run_text,
+                            fh,
+                            [run_x, line.y],
+                            display_fs,
+                            [0.0f32, 0.0, 0.0],
+                            bold,
+                            false,
+                            char_spacing,
+                        )?;
+                    }
                     let char_count_run = run_text.chars().count() as f32;
-                    run_x += measure_text_width(&run_text, run_face, display_fs)
+                    let run_advance = measure_text_width(&run_text, run_face, display_fs)
                         + char_spacing * char_count_run;
+                    if rotation_is_vertical(line.rotation_degrees) && line.rotation_degrees < 180.0
+                    {
+                        run_y += run_advance;
+                    } else {
+                        run_x += run_advance;
+                    }
                 }
             }
         }
@@ -1800,4 +1958,51 @@ pub async fn translate_pdf_bilingual_full(
         },
         debug: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn narrow_line() -> OverlayLine {
+        OverlayLine {
+            x: 10.0,
+            y: 20.0,
+            right: 22.0,
+            col_right: 22.0,
+            line_height: 10.0,
+            is_heading: false,
+            is_bold: false,
+            page_width: 100.0,
+            text: "x".to_owned(),
+            fragment_texts: vec!["x".to_owned()],
+            font_size: 10.0,
+            normalized_font_size: 10.0,
+            region_usable_right: 22.0,
+            region_role: LayoutRegionRole::Unknown,
+            rotation_degrees: 0.0,
+            source_rect: [10.0, 20.0, 12.0, 10.0],
+            is_skip: false,
+        }
+    }
+
+    #[test]
+    fn narrow_region_is_not_expanded_to_fifty_points() {
+        assert_eq!(available_width(&narrow_line()), 12.0);
+    }
+
+    #[test]
+    fn adjacent_cjk_fragments_do_not_gain_space() {
+        assert!(!needs_space_between('日', '本', 0.1, 10.0));
+        assert!(needs_space_between('日', '本', 9.0, 10.0));
+    }
+
+    #[test]
+    fn cover_requires_non_empty_translation() {
+        let translations = vec![String::new(), "  ".to_owned(), "translated".to_owned()];
+        assert!(!has_translation(Some(&translations), 0));
+        assert!(!has_translation(Some(&translations), 1));
+        assert!(has_translation(Some(&translations), 2));
+        assert!(!has_translation(None, 0));
+    }
 }

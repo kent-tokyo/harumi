@@ -364,8 +364,10 @@ fn subset_font_excludes_tables_with_stale_gid_refs() {
 
     // Tables that must NOT appear: they contain GID references that are stale
     // after subsetting and would cause Core Text / PDF viewers to reject the font.
-    let forbidden = ["GSUB", "GPOS", "GDEF", "BASE", "gvar", "fvar", "avar", "HVAR",
-                     "STAT", "post", "vhea", "vmtx", "kern", "morx", "mort"];
+    let forbidden = [
+        "GSUB", "GPOS", "GDEF", "BASE", "gvar", "fvar", "avar", "HVAR", "STAT", "post", "vhea",
+        "vmtx", "kern", "morx", "mort",
+    ];
     for &tag in &forbidden {
         assert!(
             !tables.contains(&tag.to_string()),
@@ -431,8 +433,10 @@ fn read_maxp_num_glyphs(font_data: &[u8]) -> u16 {
         }
         if &font_data[base..base + 4] == b"maxp" {
             let offset = u32::from_be_bytes([
-                font_data[base + 8], font_data[base + 9],
-                font_data[base + 10], font_data[base + 11],
+                font_data[base + 8],
+                font_data[base + 9],
+                font_data[base + 10],
+                font_data[base + 11],
             ]) as usize;
             if offset + 6 <= font_data.len() {
                 return u16::from_be_bytes([font_data[offset + 4], font_data[offset + 5]]);
@@ -452,15 +456,26 @@ fn subset_offset_table_is_well_formed() {
     let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
     let f = doc.embed_font(&font).unwrap();
-    doc.page(1).unwrap()
-        .add_text("Hello World NotoSansJP", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
+    doc.page(1)
+        .unwrap()
+        .add_text(
+            "Hello World NotoSansJP",
+            f,
+            [72.0, 700.0],
+            14.0,
+            [0.0, 0.0, 0.0],
+        )
         .unwrap();
     let out = doc.save_to_bytes().unwrap();
 
     // Verify text round-trips correctly (ToUnicode CMap OK).
     let doc2 = harumi::Document::from_bytes(&out).unwrap();
     let runs = doc2.extract_text_runs(1).unwrap();
-    let text: String = runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("");
+    let text: String = runs
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect::<Vec<_>>()
+        .join("");
     assert!(text.contains("Hello"), "text extraction failed: {text:?}");
 
     // Verify the embedded font has a valid TTF offset table (12 bytes).
@@ -475,19 +490,31 @@ fn subset_offset_table_is_well_formed() {
                 let font_data = &raw[start..start + end];
                 assert!(font_data.len() > 12, "embedded font too small");
                 // sfVersion: 0x00010000
-                let sf = u32::from_be_bytes([font_data[0], font_data[1], font_data[2], font_data[3]]);
+                let sf =
+                    u32::from_be_bytes([font_data[0], font_data[1], font_data[2], font_data[3]]);
                 assert_eq!(sf, 0x00010000, "wrong sfVersion");
                 let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
-                assert!(num_tables > 0 && num_tables <= 64, "implausible numTables={num_tables}");
+                assert!(
+                    num_tables > 0 && num_tables <= 64,
+                    "implausible numTables={num_tables}"
+                );
                 // All table offsets must be within the font data.
                 for i in 0..num_tables {
                     let base = 12 + i * 16;
-                    if base + 16 > font_data.len() { break; }
+                    if base + 16 > font_data.len() {
+                        break;
+                    }
                     let offset = u32::from_be_bytes([
-                        font_data[base+8], font_data[base+9], font_data[base+10], font_data[base+11],
+                        font_data[base + 8],
+                        font_data[base + 9],
+                        font_data[base + 10],
+                        font_data[base + 11],
                     ]) as usize;
                     let length = u32::from_be_bytes([
-                        font_data[base+12], font_data[base+13], font_data[base+14], font_data[base+15],
+                        font_data[base + 12],
+                        font_data[base + 13],
+                        font_data[base + 14],
+                        font_data[base + 15],
                     ]) as usize;
                     assert!(
                         offset + length <= font_data.len(),
@@ -514,7 +541,8 @@ fn subset_hmtx_and_hhea_are_consistent() {
     let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
     let f = doc.embed_font(&font).unwrap();
-    doc.page(1).unwrap()
+    doc.page(1)
+        .unwrap()
         .add_text("Hello", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
         .unwrap();
     let out = doc.save_to_bytes().unwrap();
@@ -531,8 +559,10 @@ fn subset_hmtx_and_hhea_are_consistent() {
     // hmtx must be exactly numGlyphs * 4 bytes (all longHorMetric, no lsb-only section).
     let hmtx_len = read_table_length(&embedded, b"hmtx");
     assert_eq!(
-        hmtx_len, num_glyphs * 4,
-        "hmtx length ({hmtx_len}) != numGlyphs*4 ({})", num_glyphs * 4
+        hmtx_len,
+        num_glyphs * 4,
+        "hmtx length ({hmtx_len}) != numGlyphs*4 ({})",
+        num_glyphs * 4
     );
 }
 
@@ -540,11 +570,15 @@ fn read_hhea_num_h_metrics(font_data: &[u8]) -> u16 {
     let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
     for i in 0..num_tables {
         let base = 12 + i * 16;
-        if base + 16 > font_data.len() { break; }
+        if base + 16 > font_data.len() {
+            break;
+        }
         if &font_data[base..base + 4] == b"hhea" {
             let offset = u32::from_be_bytes([
-                font_data[base + 8], font_data[base + 9],
-                font_data[base + 10], font_data[base + 11],
+                font_data[base + 8],
+                font_data[base + 9],
+                font_data[base + 10],
+                font_data[base + 11],
             ]) as usize;
             // numberOfHMetrics is at bytes 34-35 of hhea (total header = 36 bytes)
             if offset + 36 <= font_data.len() {
@@ -563,7 +597,8 @@ fn subset_head_checksum_adjustment_is_valid() {
     let font = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
     let mut doc = harumi::Document::new((595.0, 842.0)).unwrap();
     let f = doc.embed_font(&font).unwrap();
-    doc.page(1).unwrap()
+    doc.page(1)
+        .unwrap()
         .add_text("Hello", f, [72.0, 700.0], 14.0, [0.0, 0.0, 0.0])
         .unwrap();
     let out = doc.save_to_bytes().unwrap();
@@ -575,17 +610,16 @@ fn subset_head_checksum_adjustment_is_valid() {
     }
 
     // Compute the sum of all 32-bit big-endian words in the font (wrapping).
-    let total_sum: u32 = embedded.chunks(4)
-        .fold(0u32, |acc, chunk| {
-            let word = if chunk.len() == 4 {
-                u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-            } else {
-                let mut buf = [0u8; 4];
-                buf[..chunk.len()].copy_from_slice(chunk);
-                u32::from_be_bytes(buf)
-            };
-            acc.wrapping_add(word)
-        });
+    let total_sum: u32 = embedded.chunks(4).fold(0u32, |acc, chunk| {
+        let word = if chunk.len() == 4 {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            let mut buf = [0u8; 4];
+            buf[..chunk.len()].copy_from_slice(chunk);
+            u32::from_be_bytes(buf)
+        };
+        acc.wrapping_add(word)
+    });
 
     assert_eq!(
         total_sum, 0xB1B0AFBA,
@@ -597,11 +631,15 @@ fn read_table_length(font_data: &[u8], tag: &[u8; 4]) -> usize {
     let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
     for i in 0..num_tables {
         let base = 12 + i * 16;
-        if base + 16 > font_data.len() { break; }
+        if base + 16 > font_data.len() {
+            break;
+        }
         if &font_data[base..base + 4] == tag {
             return u32::from_be_bytes([
-                font_data[base + 12], font_data[base + 13],
-                font_data[base + 14], font_data[base + 15],
+                font_data[base + 12],
+                font_data[base + 13],
+                font_data[base + 14],
+                font_data[base + 15],
             ]) as usize;
         }
     }
@@ -611,13 +649,22 @@ fn read_table_length(font_data: &[u8], tag: &[u8; 4]) -> usize {
 #[test]
 fn diagnose_fragment_coords() {
     let pdf = std::fs::read("test_documents/kanto_chemical/J_10005.pdf");
-    if pdf.is_err() { return; }
+    if pdf.is_err() {
+        return;
+    }
     let doc = harumi::Document::from_bytes(&pdf.unwrap()).unwrap();
     let runs = doc.extract_text_runs(1).unwrap();
     println!("Total fragments page 1: {}", runs.len());
     for r in runs.iter().take(10) {
-        println!("  x={:.1} y={:.1} w={:.1} h={:.1} fs={:.1} inv={} text={:?}",
-            r.x, r.y, r.width, r.height, r.font_size, r.invisible,
-            r.text.chars().take(20).collect::<String>());
+        println!(
+            "  x={:.1} y={:.1} w={:.1} h={:.1} fs={:.1} inv={} text={:?}",
+            r.x,
+            r.y,
+            r.width,
+            r.height,
+            r.font_size,
+            r.invisible,
+            r.text.chars().take(20).collect::<String>()
+        );
     }
 }

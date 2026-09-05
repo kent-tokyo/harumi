@@ -1,9 +1,11 @@
 # harumi
 
-**Layout-preserving CJK PDF editing in pure Rust.**
+**Position-aware CJK PDF write-back in pure Rust.**
 
 harumi extracts positioned text from existing PDFs, lets you translate or replace it,
-and writes the result back while preserving the original page layout.
+and writes the result back into inferred layout regions. Overlay mode retains the
+existing page content, but pixel-identical layout is not guaranteed: complex,
+rotated, vertical, or image-backed pages can require review.
 CID fonts, CMaps, Unicode mapping, font subsetting, text fitting, and layout
 collision checks are all handled automatically.
 
@@ -18,12 +20,17 @@ collision checks are all handled automatically.
 **[Try the live browser demo →](https://kent-tokyo.github.io/harumi/)** — annotation editor (text · rect · line · freehand pen) running entirely in your browser via WASM
 
 **Use harumi for:**
-- Digital PDF translation (extract text → translate with an LLM → write back with layout intact)
+- Digital PDF translation (extract text → translate with an LLM → best-effort layout-aware write-back)
 - Scanned PDF translation (pass OCR JSON → translate → mask original → overlay translated text)
 - OCR searchable text layers on scanned PDFs
 - Japanese / Chinese / Korean text overlays and stamps
 - Page manipulation, annotation, form editing, and PDF merging
 - WASM, Lambda, Tauri, and MCP-based AI document workflows
+
+The detailed, version-pinned comparison boundary is documented in
+[PDF ecosystem comparison contract](docs/PDF_ECOSYSTEM.md). It separates
+rendering, new-report generation, low-level object editing, bulk extraction, and
+existing-PDF CJK write-back instead of treating them as one capability.
 
 > Not an OCR engine. Not a PDF viewer.  
 > harumi is the PDF write-back layer for document automation.
@@ -150,7 +157,7 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 
 > Yes = supported  Partial = partial / limited  No = not supported  N/A = language-level feature  
 > † API complete; third-party PDF validator (Adobe Reader/qpdf/veraPDF) verification pending.  
-> Comparison based on crate documentation and README as of June 2026.
+> Comparison based on pinned crate documentation and README snapshots as of 2026-09-05.
 
 ---
 
@@ -169,10 +176,10 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 **Key differences:**
 - **harumi** — Specialized for *writing* CJK text onto existing PDFs; layout regions, quality gate, scanned PDF translation
 - **unpdf** — Specialized for *reading* PDFs; superior CJK extraction (XY-Cut, RTL, Form XObject)
-- **pdf_oxide** — General-purpose; 5× faster extraction; multi-language bindings (Python/JS/Go/C#/Java)
+- **pdf_oxide** — General-purpose PDF lifecycle and extraction; its broader API and bindings are a different trade-off
 - **justpdf-core** — Full PDF engine; region-specific CID orderings for legacy PDF compatibility
 
-> Comparison based on crate documentation and README as of June 2026.
+> This is a role comparison, not a benchmark. See [`docs/PDF_ECOSYSTEM.md`](docs/PDF_ECOSYSTEM.md) for pinned versions and measured fixture results.
 
 ---
 
@@ -181,8 +188,13 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 JS has [`pdf-lib`](https://pdf-lib.js.org/) — it handles font subsetting, CMap generation, and text layer composition transparently. In Rust, the existing options force you to choose between:
 
 - **`lopdf`** — low-level binary surgery; you hand-assemble CID font objects from the PDF spec
-- **`printpdf`** — create-only; cannot modify existing PDFs
-- **`pdfium-render`** — C++ bindings that break WASM, cross-compilation, and Lambda deploys
+- **`printpdf` / `genpdf`** — new-document and report generation; use them when the input is a document model, while `harumi` Flow is a separate pure-Rust option
+- **`pdfium-render`** — capable rendering/editing wrapper, but its Pdfium C++ runtime and target-specific deployment are separate from harumi's default pure-Rust/WASM boundary
+
+For existing PDFs, harumi is the write-back layer: use its extraction, CJK font
+embedding, overlay, replacement, page operations, and layout diagnostics. The
+new-report boundary and fixed comparison fixture are documented in
+[`docs/PDF_ECOSYSTEM.md`](docs/PDF_ECOSYSTEM.md).
 
 `harumi` fills the gap.
 
@@ -266,19 +278,22 @@ doc.page(1)?.add_text(
 
 ---
 
-## Roadmap
+## Status and roadmap
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current: **v1.19.0** (harumi) / **v0.9.0** (harumi-ai)
+Current release versions: **v1.20.0** (harumi) / **v0.10.0** (harumi-ai).
+The repository also contains unreleased extraction and comparison work; version
+numbers are not advanced until a release is cut.
 
 | Milestone | Status |
 |---|---|
 | Core PDF write-back, CJK fonts, WASM | v0.1–v0.8 ✓ |
 | Text extraction, replace, FlowDocument, HTML→PDF | v0.4–v0.8 ✓ |
 | Layout regions, collision detection, quality gate | v1.9–v1.16 ✓ |
-| harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.9 ✓ |
-| Automated publish CI | v1.19 ✓ |
+| harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.10 ✓ |
+| Automated publish CI | v1.20 ✓ |
+| PDF ecosystem fixtures and pinned adapter checks | in progress / see `docs/PDF_ECOSYSTEM.md` |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
 | Multi-page OcrJson translation | planned |
 

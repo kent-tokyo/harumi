@@ -48,20 +48,15 @@ pub mod inner {
 
     impl SigningContext {
         /// Create a signing context from a certificate and private key.
-        pub fn from_cert_and_key(
-            cert: CertificateInput,
-            key: PrivateKeyInput,
-        ) -> Result<Self> {
+        pub fn from_cert_and_key(cert: CertificateInput, key: PrivateKeyInput) -> Result<Self> {
             let cert_der = match cert {
                 CertificateInput::Pem(pem_bytes) => parse_pem_to_der(&pem_bytes, "CERTIFICATE")?,
                 CertificateInput::Der(der_bytes) => der_bytes,
             };
 
             let key_der = match key {
-                PrivateKeyInput::Pem(pem_bytes) => {
-                    parse_pem_to_der(&pem_bytes, "PRIVATE KEY")
-                        .or_else(|_| parse_pem_to_der(&pem_bytes, "RSA PRIVATE KEY"))?
-                }
+                PrivateKeyInput::Pem(pem_bytes) => parse_pem_to_der(&pem_bytes, "PRIVATE KEY")
+                    .or_else(|_| parse_pem_to_der(&pem_bytes, "RSA PRIVATE KEY"))?,
                 PrivateKeyInput::Der(der_bytes) => der_bytes,
             };
 
@@ -103,11 +98,9 @@ pub mod inner {
         let begin = format!("-----BEGIN {}-----", block_name);
         let end = format!("-----END {}-----", block_name);
 
-        let start_idx = pem_str
-            .find(&begin)
-            .ok_or_else(|| {
-                crate::Error::InvalidCertificate(format!("No {} block found in PEM", block_name))
-            })?;
+        let start_idx = pem_str.find(&begin).ok_or_else(|| {
+            crate::Error::InvalidCertificate(format!("No {} block found in PEM", block_name))
+        })?;
 
         let end_idx = pem_str.find(&end).ok_or_else(|| {
             crate::Error::InvalidCertificate(format!("No {} block found in PEM", block_name))
@@ -154,20 +147,15 @@ pub mod inner {
             if chunk.len() > 2 && chunk[2] as char != '=' {
                 let b3 = BASE64_CHARS
                     .find(chunk[2] as char)
-                    .ok_or_else(|| {
-                        crate::Error::InvalidCertificate("Invalid base64 char".into())
-                    })?
+                    .ok_or_else(|| crate::Error::InvalidCertificate("Invalid base64 char".into()))?
                     as u8;
 
                 result.push((b2 << 4) | (b3 >> 2));
 
                 if chunk.len() > 3 && chunk[3] as char != '=' {
-                    let b4 = BASE64_CHARS
-                        .find(chunk[3] as char)
-                        .ok_or_else(|| {
-                            crate::Error::InvalidCertificate("Invalid base64 char".into())
-                        })?
-                        as u8;
+                    let b4 = BASE64_CHARS.find(chunk[3] as char).ok_or_else(|| {
+                        crate::Error::InvalidCertificate("Invalid base64 char".into())
+                    })? as u8;
 
                     result.push((b3 << 6) | b4);
                 }
@@ -212,10 +200,7 @@ pub mod inner {
     /// - bytes [0, start2) and bytes [start2 + length2, EOF)
     ///
     /// The /Contents placeholder itself (between start2 and length2) is excluded.
-    pub fn hash_pdf_content_with_byte_range(
-        content: &[u8],
-        byte_range: [u32; 4],
-    ) -> Vec<u8> {
+    pub fn hash_pdf_content_with_byte_range(content: &[u8], byte_range: [u32; 4]) -> Vec<u8> {
         let mut hasher = Sha256::new();
         let start1 = byte_range[0] as usize;
         let length1 = byte_range[1] as usize;
@@ -246,8 +231,8 @@ pub mod inner {
 
     /// Create an RSA signature using PKCS#1 v1.5 with SHA-256 digest info.
     pub fn sign_hash(private_key: &RsaPrivateKey, hash: &[u8]) -> Result<Vec<u8>> {
-        use rsa::traits::{PublicKeyParts, PrivateKeyParts};
         use num_bigint::BigUint;
+        use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 
         // Build DigestInfo with SHA-256 OID and hash
         let sha256_oid = vec![0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
@@ -296,7 +281,10 @@ pub mod inner {
     /// Build PKCS#1 v1.5 signature padding.
     /// Format: 0x00 || 0x01 || PS || 0x00 || DigestInfo
     /// where PS is 0xFF bytes (padding string)
-    fn build_pkcs1v15_signature_padding(digest_info: &[u8], modulus_size: usize) -> Result<Vec<u8>> {
+    fn build_pkcs1v15_signature_padding(
+        digest_info: &[u8],
+        modulus_size: usize,
+    ) -> Result<Vec<u8>> {
         if digest_info.len() + 11 > modulus_size {
             return Err(crate::Error::SignatureFailed(
                 "Digest too large for PKCS#1 v1.5 padding".into(),
@@ -329,7 +317,6 @@ pub mod inner {
             result.extend_from_slice(significant);
         }
     }
-
 
     /// Calculate PDF signature ByteRange [0, X, Y, Z]
     ///

@@ -60,9 +60,7 @@ pub mod inner {
             xref_table.extend_from_slice(b"xref\n");
             xref_table.extend_from_slice(b"1 1\n");
             let sig_obj_offset = (self.base_pdf.len() + sig_field_offset) as u32;
-            xref_table.extend_from_slice(
-                format!("{:010} 00000 n\n", sig_obj_offset).as_bytes()
-            );
+            xref_table.extend_from_slice(format!("{:010} 00000 n\n", sig_obj_offset).as_bytes());
 
             // Calculate xref offset (where xref table starts in incremental section)
             let xref_offset = self.base_pdf.len() + sig_field_offset + sig_field_update.len();
@@ -72,7 +70,8 @@ pub mod inner {
 
             // Now we can calculate the final structure size and correct ByteRange
             // After final assembly: [base_pdf][newline][sig_obj][xref][trailer]
-            let final_size = self.base_pdf.len() + update_section.len() + xref_table.len() + trailer.len();
+            let final_size =
+                self.base_pdf.len() + update_section.len() + xref_table.len() + trailer.len();
             let hex_len = self.cms_hex.len() as u32;
             let length2 = final_size as u32 - (self.base_pdf.len() as u32 + hex_len);
 
@@ -161,14 +160,16 @@ pub mod inner {
 
             let mut obj_str = format!(
                 "1 0 obj\n<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <{}> /ByteRange [ {} {} {} {} ]",
-                cms_hex,
-                start1, length1, start2, length2
+                cms_hex, start1, length1, start2, length2
             );
 
             // Add signer name if available
             if let Some(name) = &self.signer_name {
                 // PDF strings need proper escaping for special characters
-                let escaped = name.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)");
+                let escaped = name
+                    .replace('\\', "\\\\")
+                    .replace('(', "\\(")
+                    .replace(')', "\\)");
                 obj_str.push_str(&format!(" /Name ({}) ", escaped));
             }
 
@@ -188,11 +189,7 @@ pub mod inner {
             let mut trailer = Vec::new();
             trailer.extend_from_slice(b"trailer\n");
             trailer.extend_from_slice(
-                format!(
-                    "<< /Size 2 /Prev {} >>\n",
-                    prev_xref_offset
-                )
-                .as_bytes(),
+                format!("<< /Size 2 /Prev {} >>\n", prev_xref_offset).as_bytes(),
             );
             trailer.extend_from_slice(b"startxref\n");
             trailer.extend_from_slice(format!("{}\n", xref_offset).as_bytes());

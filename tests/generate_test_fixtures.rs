@@ -15,14 +15,13 @@ fn generate_test_rsa_keys() {
 
     println!("Generating test RSA 2048 key pair...");
 
-    use rsa::{RsaPrivateKey, pkcs8::EncodePrivateKey};
     use rand::thread_rng;
+    use rsa::{RsaPrivateKey, pkcs8::EncodePrivateKey};
 
     // Generate RSA 2048 key pair
     let mut rng = thread_rng();
     let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits)
-        .expect("Failed to generate RSA key pair");
+    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate RSA key pair");
 
     // Create a self-signed certificate using rcgen
 

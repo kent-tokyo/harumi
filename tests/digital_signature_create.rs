@@ -29,7 +29,6 @@ fn test_add_signature_field() {
     // Test passed if no error
 }
 
-
 #[test]
 fn test_signing_context_creation() {
     let (cert_der, key_der) = generate_test_cert_and_key();

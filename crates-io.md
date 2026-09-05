@@ -2,9 +2,11 @@
 
 > **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
 
-**Layout-preserving CJK PDF editing in pure Rust.**  
+**Position-aware CJK PDF write-back in pure Rust.**
 Extract positioned text from existing PDFs, translate or replace it, and write it
-back with layout intact — CID fonts, CMaps, and font subsetting handled automatically.
+back into inferred layout regions — CID fonts, CMaps, and font subsetting handled
+automatically. Existing content is retained in overlay mode; pixel-identical layout
+is not guaranteed for complex, rotated, vertical, or image-backed pages.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://img.shields.io/badge/docs.rs-passing-brightgreen)](https://docs.rs/harumi)
@@ -129,7 +131,7 @@ cargo build -p harumi-mcp
 # - pdf_page_info: Get page count & dimensions
 ```
 
-**Register on:** [smithery.ai](https://smithery.ai) or [mcp.so](https://mcp.so) (coming soon)
+See [`harumi-mcp/README.md`](harumi-mcp/README.md) for current MCP installation and tool details.
 
 ---
 
@@ -141,7 +143,7 @@ cargo build -p harumi-mcp
 ✅ **Text extraction** — decode CID fonts + standard fonts (Type1, TrueType, WinAnsi)  
 ✅ **Text replacement** — rewrite Tj/TJ operators with automatic re-subsetting  
 ✅ **Rich features** — draw shapes, embed images, page merge/split, HTML→PDF  
-✅ **Well-tested** — 100+ unit + integration + E2E tests  
+✅ **Well-tested** — unit, integration, feature, and E2E coverage
 
 ---
 
@@ -154,10 +156,5 @@ cargo build -p harumi-mcp
 
 ---
 
-## Roadmap
-
-- **v1.x** — Current stable
-- **v2.0** — PDF/A compliance, true digital signature verification (RSA/ECDSA)
-- **Future** — AES-256 write encryption, RTL text (Arabic/Hebrew)
-
-See the [full README](https://github.com/kent-tokyo/harumi) on GitHub for extensive examples, API reference, and internals explanation.
+For examples, API details, current limitations, and the active roadmap, see the
+[full README](https://github.com/kent-tokyo/harumi) and the linked documents.

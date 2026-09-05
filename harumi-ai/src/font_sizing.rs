@@ -88,7 +88,11 @@ pub(crate) fn resolve_font_size(
     role_medians: &[(LayoutRegionRole, f32)],
     body_fs: f32,
 ) -> f32 {
-    let raw = if line.font_size > 0.0 { line.font_size } else { body_fs };
+    let raw = if line.font_size > 0.0 {
+        line.font_size
+    } else {
+        body_fs
+    };
     match policy {
         FontSizePolicy::Preserve => raw,
         FontSizePolicy::PageBodyMedian => body_fs,
@@ -133,6 +137,8 @@ mod tests {
             normalized_font_size: 0.0,
             region_usable_right: 595.0,
             region_role: role,
+            rotation_degrees: 0.0,
+            source_rect: [0.0; 4],
             is_skip: false,
         }
     }
@@ -247,8 +253,7 @@ mod tests {
     fn resolve_fallback_to_body_fs() {
         let line = make_line(0.0, LayoutRegionRole::Unknown);
         let medians: Vec<(LayoutRegionRole, f32)> = vec![];
-        let result =
-            resolve_font_size(&line, &FontSizePolicy::RoleMedian, &medians, 10.0);
+        let result = resolve_font_size(&line, &FontSizePolicy::RoleMedian, &medians, 10.0);
         assert_eq!(result, 10.0); // font_size=0 → raw=body_fs=10; no median → fallback raw=10
     }
 

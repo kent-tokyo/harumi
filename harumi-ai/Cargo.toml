@@ -1,6 +1,6 @@
 [package]
 name = "harumi-ai"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]
@@ -11,7 +11,7 @@ keywords = ["pdf", "translation", "ai", "llm", "cjk"]
 categories = ["text-processing"]
 
 [dependencies]
-harumi = { path = "..", version = "1.19", features = ["draw"] }
+harumi = { path = "..", version = "1.20", features = ["draw"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "sync", "process", "time"] }
 futures = "0.3"

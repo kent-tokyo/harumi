@@ -57,8 +57,13 @@ fn measure_text_scales_with_font_size() {
 fn report_no_overflow_when_text_fits() {
     let (doc, font) = doc_with_font();
     let opts = opts_with_policy(OverflowPolicy::Report);
-    let result = doc.fit_text_to_box("Hi", font, [0.0, 0.0, 200.0, 100.0], 12.0, opts).unwrap();
-    assert!(!result.overflow_horizontal, "should not overflow horizontally");
+    let result = doc
+        .fit_text_to_box("Hi", font, [0.0, 0.0, 200.0, 100.0], 12.0, opts)
+        .unwrap();
+    assert!(
+        !result.overflow_horizontal,
+        "should not overflow horizontally"
+    );
     assert!(!result.overflow_vertical, "should not overflow vertically");
     assert_eq!(result.font_size, 12.0);
 }
@@ -107,7 +112,10 @@ fn shrink_policy_reduces_font_for_wide_text() {
         "font should be reduced; got {}",
         result.font_size
     );
-    assert!(!result.overflow_horizontal, "should not overflow H after shrink");
+    assert!(
+        !result.overflow_horizontal,
+        "should not overflow H after shrink"
+    );
     assert_eq!(result.lines.len(), 1, "Shrink = no wrap, single line");
 }
 
@@ -165,7 +173,10 @@ fn truncate_drops_excess_lines() {
         max_lines,
         result.lines.len()
     );
-    assert!(!result.overflow_vertical, "truncated result should not overflow vertically");
+    assert!(
+        !result.overflow_vertical,
+        "truncated result should not overflow vertically"
+    );
 }
 
 #[test]
@@ -177,7 +188,11 @@ fn truncate_respects_max_lines() {
     let result = doc
         .fit_text_to_box(text, font, [0.0, 0.0, 100.0, 200.0], 12.0, opts)
         .unwrap();
-    assert_eq!(result.lines.len(), 1, "max_lines=1 should yield exactly 1 line");
+    assert_eq!(
+        result.lines.len(),
+        1,
+        "max_lines=1 should yield exactly 1 line"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -210,16 +225,24 @@ fn used_rect_top_aligned_in_provided_rect() {
     let (doc, font) = doc_with_font();
     let opts = opts_with_policy(OverflowPolicy::Report);
     let rect = [10.0_f32, 20.0, 200.0, 100.0];
-    let result = doc.fit_text_to_box("Hello world", font, rect, 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box("Hello world", font, rect, 12.0, opts)
+        .unwrap();
     let [ux, uy, uw, uh] = result.used_rect;
-    assert!((ux - rect[0]).abs() < 0.1, "used_rect x should equal rect x; ux={ux}");
+    assert!(
+        (ux - rect[0]).abs() < 0.1,
+        "used_rect x should equal rect x; ux={ux}"
+    );
     assert!(
         ((uy + uh) - (rect[1] + rect[3])).abs() < 0.1,
         "top of used_rect ({}) should equal top of rect ({})",
         uy + uh,
         rect[1] + rect[3]
     );
-    assert!(uw <= rect[2] + 0.1, "used_rect width ({uw}) should not exceed rect width");
+    assert!(
+        uw <= rect[2] + 0.1,
+        "used_rect width ({uw}) should not exceed rect width"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +264,14 @@ fn detect_collisions_finds_overlap() {
     let [ox, oy, ow, oh] = c.overlap_rect;
     assert!((ox - 80.0).abs() < 0.1, "overlap x should be 80; got {ox}");
     assert!((oy - 0.0).abs() < 0.1, "overlap y should be 0; got {oy}");
-    assert!((ow - 20.0).abs() < 0.1, "overlap width should be 20; got {ow}");
-    assert!((oh - 50.0).abs() < 0.1, "overlap height should be 50; got {oh}");
+    assert!(
+        (ow - 20.0).abs() < 0.1,
+        "overlap width should be 20; got {ow}"
+    );
+    assert!(
+        (oh - 50.0).abs() < 0.1,
+        "overlap height should be 50; got {oh}"
+    );
 }
 
 #[test]
@@ -268,7 +297,11 @@ fn detect_collisions_all_overlapping() {
         PlacedBox::new([0.0, 0.0, 50.0, 50.0]),
     ];
     let collisions = detect_collisions(&boxes);
-    assert_eq!(collisions.len(), 3, "three identical boxes should yield 3 pairwise collisions");
+    assert_eq!(
+        collisions.len(),
+        3,
+        "three identical boxes should yield 3 pairwise collisions"
+    );
 }
 
 #[test]
@@ -297,8 +330,12 @@ fn fit_results_can_be_checked_for_collision() {
     // Identical rects: both texts land at the same position → used_rects always overlap.
     let rect = [0.0_f32, 500.0, 200.0, 50.0];
 
-    let result_a = doc.fit_text_to_box("Label A text", font, rect, 10.0, opts.clone()).unwrap();
-    let result_b = doc.fit_text_to_box("Label B text", font, rect, 10.0, opts).unwrap();
+    let result_a = doc
+        .fit_text_to_box("Label A text", font, rect, 10.0, opts.clone())
+        .unwrap();
+    let result_b = doc
+        .fit_text_to_box("Label B text", font, rect, 10.0, opts)
+        .unwrap();
 
     // Both used_rects share the same top-left origin (identical input rect), so they overlap.
     let placed = vec![
@@ -376,7 +413,13 @@ fn no_collision_has_zero_overlap_area() {
 fn placement_status_ok_when_text_fits() {
     let (doc, font) = doc_with_font();
     let result = doc
-        .fit_text_to_box("Hi", font, [0.0, 0.0, 500.0, 100.0], 12.0, BoxFitOptions::default())
+        .fit_text_to_box(
+            "Hi",
+            font,
+            [0.0, 0.0, 500.0, 100.0],
+            12.0,
+            BoxFitOptions::default(),
+        )
         .unwrap();
     assert_eq!(result.status, PlacementStatus::Ok);
 }
@@ -390,9 +433,14 @@ fn placement_status_shrunk_when_font_reduced() {
     opts.min_font_size = 1.0;
     // "A" repeated enough times to force shrinking at 48pt in a 50pt wide box
     let text = "A".repeat(50);
-    let result = doc.fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 48.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 48.0, opts)
+        .unwrap();
     assert!(
-        matches!(result.status, PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin),
+        matches!(
+            result.status,
+            PlacementStatus::Shrunk | PlacementStatus::ShrunkToMin
+        ),
         "expected Shrunk or ShrunkToMin, got {:?}",
         result.status
     );
@@ -407,7 +455,9 @@ fn placement_status_shrunk_to_min_at_floor() {
     opts.min_font_size = 20.0;
     // Use a very wide text in a tiny box so shrinking must stop at min_font_size
     let text = "WWWWWWWWWWWWWWWWWWWWWWWW";
-    let result = doc.fit_text_to_box(text, font, [0.0, 0.0, 10.0, 100.0], 48.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(text, font, [0.0, 0.0, 10.0, 100.0], 48.0, opts)
+        .unwrap();
     assert_eq!(result.status, PlacementStatus::ShrunkToMin);
     assert!((result.font_size - 20.0).abs() < 0.5);
 }
@@ -419,7 +469,9 @@ fn placement_status_overflow_with_report_policy() {
     opts.overflow = OverflowPolicy::Report;
     opts.wrap = false;
     let text = "A".repeat(200);
-    let result = doc.fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(&text, font, [0.0, 0.0, 50.0, 100.0], 12.0, opts)
+        .unwrap();
     assert_eq!(result.status, PlacementStatus::Overflow);
     assert!(result.overflow_horizontal);
 }
@@ -429,8 +481,9 @@ fn placement_status_ok_with_report_policy_when_fits() {
     let (doc, font) = doc_with_font();
     let mut opts = BoxFitOptions::default();
     opts.overflow = OverflowPolicy::Report;
-    let result =
-        doc.fit_text_to_box("Hi", font, [0.0, 0.0, 500.0, 100.0], 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box("Hi", font, [0.0, 0.0, 500.0, 100.0], 12.0, opts)
+        .unwrap();
     assert_eq!(result.status, PlacementStatus::Ok);
 }
 
@@ -445,7 +498,12 @@ fn placement_status_truncated_when_lines_dropped() {
     let result = doc
         .fit_text_to_box(text, font, [0.0, 0.0, 80.0, 1000.0], 12.0, opts)
         .unwrap();
-    assert_eq!(result.status, PlacementStatus::Truncated, "lines: {:?}", result.lines);
+    assert_eq!(
+        result.status,
+        PlacementStatus::Truncated,
+        "lines: {:?}",
+        result.lines
+    );
     assert_eq!(result.lines.len(), 1);
 }
 
@@ -472,7 +530,10 @@ fn page_fit_summary_empty_plans() {
 fn debug_overlay_no_error_on_empty_plans() {
     use harumi::DebugOverlayOptions;
     let mut doc = Document::new((595.0, 842.0)).unwrap();
-    doc.page(1).unwrap().add_fit_debug_overlay(&[], DebugOverlayOptions::default()).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_fit_debug_overlay(&[], DebugOverlayOptions::default())
+        .unwrap();
     let bytes = doc.save_to_bytes().unwrap();
     assert!(!bytes.is_empty());
 }
@@ -490,8 +551,9 @@ fn report_policy_with_max_lines_gives_truncated_status() {
     opts.max_lines = Some(1);
     // Text that wraps to many lines in a narrow box.
     let text = "Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa";
-    let result =
-        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 1000.0], 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(text, font, [0.0, 0.0, 80.0, 1000.0], 12.0, opts)
+        .unwrap();
     assert_eq!(
         result.status,
         PlacementStatus::Truncated,
@@ -510,8 +572,9 @@ fn wrap_then_shrink_at_min_font_gives_shrunk_to_min_when_overflow() {
     opts.min_font_size = 12.0;
     // Very tall wrapped text in a tiny box: can't shrink below 12pt, overflow expected.
     let text = "Line A Line B Line C Line D Line E Line F Line G Line H";
-    let result =
-        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 20.0], 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(text, font, [0.0, 0.0, 80.0, 20.0], 12.0, opts)
+        .unwrap();
     // Should NOT be Ok when text overflows and we're already at the font-size floor.
     assert_ne!(
         result.status,
@@ -531,8 +594,9 @@ fn truncate_zero_height_rect_gives_truncated_status() {
     opts.overflow = OverflowPolicy::Truncate;
     // Multiple lines in a zero-height rect.
     let text = "Alpha Beta Gamma Delta Epsilon Zeta";
-    let result =
-        doc.fit_text_to_box(text, font, [0.0, 0.0, 80.0, 0.0], 12.0, opts).unwrap();
+    let result = doc
+        .fit_text_to_box(text, font, [0.0, 0.0, 80.0, 0.0], 12.0, opts)
+        .unwrap();
     // Zero-height box should produce Truncated (at least 1 line kept) and overflow.
     assert_eq!(
         result.status,
@@ -554,7 +618,12 @@ fn stroked_line_is_detected() {
     let rules = extract_vector_rules(content, 842.0);
     assert_eq!(rules.len(), 1);
     let r = &rules[0];
-    assert!((r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5, "y should be 100, got {}/{}", r.y1, r.y2);
+    assert!(
+        (r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5,
+        "y should be 100, got {}/{}",
+        r.y1,
+        r.y2
+    );
     assert!(r.is_horizontal(), "expected horizontal rule");
     assert!((r.line_width - 1.0).abs() < 0.1);
 }
@@ -574,7 +643,10 @@ fn thick_filled_rect_is_not_emitted() {
     // A 200×100 filled rect — not a ruling line
     let content = b"0 0 200 100 re f";
     let rules = extract_vector_rules(content, 842.0);
-    assert!(rules.is_empty(), "thick filled rect should not produce rules");
+    assert!(
+        rules.is_empty(),
+        "thick filled rect should not produce rules"
+    );
 }
 
 #[test]
@@ -585,8 +657,12 @@ fn ctm_scaling_applied_to_rule() {
     assert_eq!(rules.len(), 1);
     let r = &rules[0];
     // After CTM [2,0,0,2,0,0]: x*2, y*2 — so y=100 in page space
-    assert!((r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5,
-        "CTM scaling should be applied: expected y=100 got y1={} y2={}", r.y1, r.y2);
+    assert!(
+        (r.y1 - 100.0).abs() < 0.5 && (r.y2 - 100.0).abs() < 0.5,
+        "CTM scaling should be applied: expected y=100 got y1={} y2={}",
+        r.y1,
+        r.y2
+    );
 }
 
 #[test]
@@ -595,19 +671,31 @@ fn detect_text_vs_rule_collision_basic() {
     let text_rects = vec![[10.0_f32, 95.0, 100.0, 12.0]]; // [x, y, w, h]
     let rules = vec![VectorRule::new(0.0, 100.0, 200.0, 100.0, 2.0)];
     let hits = detect_text_vs_rule_collisions(&text_rects, &rules);
-    assert!(!hits.is_empty(), "text overlapping a rule line should be detected");
+    assert!(
+        !hits.is_empty(),
+        "text overlapping a rule line should be detected"
+    );
 }
 
 #[test]
 fn simple_placement_quality_detects_rule_collision() {
     use harumi::{PageLayoutQuality, VectorRule};
-    let placements = vec![
-        SimplePlacement::new(0, [10.0, 95.0, 100.0, 12.0], [10.0, 95.0, 100.0, 12.0], 10.0, false),
-    ];
+    let placements = vec![SimplePlacement::new(
+        0,
+        [10.0, 95.0, 100.0, 12.0],
+        [10.0, 95.0, 100.0, 12.0],
+        10.0,
+        false,
+    )];
     let rules = vec![VectorRule::new(0.0, 100.0, 200.0, 100.0, 2.0)];
     let quality = PageLayoutQuality::from_simple_placements(1, &placements, &[], &rules);
-    let border_issues: Vec<_> = quality.issues.iter()
+    let border_issues: Vec<_> = quality
+        .issues
+        .iter()
         .filter(|i| i.kind == LayoutIssueKind::TextVsTableBorder)
         .collect();
-    assert!(!border_issues.is_empty(), "border collision should be reported as TextVsTableBorder issue");
+    assert!(
+        !border_issues.is_empty(),
+        "border collision should be reported as TextVsTableBorder issue"
+    );
 }
