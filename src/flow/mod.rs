@@ -241,6 +241,55 @@ impl InlineSpan {
     }
 }
 
+/// Shared page and text geometry used by the flow planner and renderer.
+///
+/// Keeping these calculations in one value prevents pagination decisions from
+/// drifting away from the coordinates used when operators are emitted.
+#[derive(Clone, Copy, Debug)]
+struct GeometryPlanner {
+    page_size: (f32, f32),
+    margins: Margins,
+    line_height_factor: f32,
+}
+
+impl GeometryPlanner {
+    fn new(options: &FlowOptions) -> Self {
+        Self {
+            page_size: options.page_size,
+            margins: options.margins,
+            line_height_factor: options.line_height_factor,
+        }
+    }
+
+    fn content_width(self) -> f32 {
+        self.page_size.0 - self.margins.left - self.margins.right
+    }
+
+    fn content_height(self) -> f32 {
+        self.page_size.1 - self.margins.top - self.margins.bottom
+    }
+
+    fn line_height(self, font_size: f32) -> f32 {
+        font_size * self.line_height_factor
+    }
+
+    /// PDF y coordinate of a text baseline at logical top-down `content_y`.
+    fn baseline_y(self, content_y: f32, font_size: f32) -> f32 {
+        self.page_size.1 - self.margins.top - content_y - font_size
+    }
+
+    /// PDF y coordinate of the top edge of a block at logical top-down `content_y`.
+    fn top_y(self, content_y: f32) -> f32 {
+        self.page_size.1 - self.margins.top - content_y
+    }
+
+    fn text_width(self, text: &str, face: &Face<'_>, font_size: f32) -> f32 {
+        text.chars()
+            .map(|ch| glyph_advance_pt(face, ch, font_size).unwrap_or(font_size * 0.5))
+            .sum()
+    }
+}
+
 /// A push-style document builder that generates a PDF with automatic pagination.
 ///
 /// Push block elements (headings, paragraphs, tables, lists) in order;
@@ -311,23 +360,8 @@ impl FlowDocument {
 
     // ── Geometry helpers ────────────────────────────────────────────────────
 
-    fn content_width(&self) -> f32 {
-        self.options.page_size.0 - self.options.margins.left - self.options.margins.right
-    }
-
-    fn content_height(&self) -> f32 {
-        self.options.page_size.1 - self.options.margins.top - self.options.margins.bottom
-    }
-
-    /// PDF y coordinate of the text baseline, given logical `content_y` and `font_size`.
-    /// PDF origin is bottom-left; `content_y` grows downward from the content area top.
-    fn pdf_baseline_y(&self, content_y: f32, font_size: f32) -> f32 {
-        self.options.page_size.1 - self.options.margins.top - content_y - font_size
-    }
-
-    /// PDF y coordinate of the top edge of the block at `content_y`.
-    fn pdf_top_y(&self, content_y: f32) -> f32 {
-        self.options.page_size.1 - self.options.margins.top - content_y
+    fn geometry(&self) -> GeometryPlanner {
+        GeometryPlanner::new(&self.options)
     }
 
     // ── Measurement ─────────────────────────────────────────────────────────
@@ -354,7 +388,8 @@ impl FlowDocument {
     /// If not, appends a new blank page and resets `content_y` to 0.
     /// Returns `Error::InvalidInput` if `max_pages` would be exceeded.
     fn ensure_space(&mut self, height: f32) -> Result<()> {
-        if self.content_y > 0.0 && self.content_y + height > self.content_height() + 0.1 {
+        let geometry = self.geometry();
+        if self.content_y > 0.0 && self.content_y + height > geometry.content_height() + 0.1 {
             let n = self.inner.page_count();
             if n >= self.options.max_pages {
                 return Err(crate::Error::InvalidInput(format!(
@@ -383,12 +418,13 @@ impl FlowDocument {
 
         let level = level.clamp(1, 6) as usize;
         let font_size = self.options.body_font_size * self.options.heading_size_scale[level - 1];
-        let line_h = font_size * self.options.line_height_factor;
+        let geometry = self.geometry();
+        let line_h = geometry.line_height(font_size);
         let font_bytes = self
             .heading_font_bytes
             .as_deref()
             .unwrap_or(&self.body_font_bytes);
-        let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
+        let lines = self.measure_lines(text, font_size, geometry.content_width(), font_bytes);
 
         // Keep pre-heading spacing + the full block together on one page.
         // Compute spacing BEFORE ensure_space so that the heading is not orphaned at the
@@ -408,7 +444,7 @@ impl FlowDocument {
 
         // Record a bookmark anchored at the top of this heading block (before rendering).
         if self.options.auto_bookmarks {
-            let bm_y = self.pdf_top_y(self.content_y);
+            let bm_y = geometry.top_y(self.content_y);
             let bm_page = self.current_page;
             self.outline_entries
                 .push((text.to_owned(), bm_page, bm_y, level as u8));
@@ -419,7 +455,7 @@ impl FlowDocument {
         let current_page = self.current_page;
 
         for line in &lines {
-            let y = self.pdf_baseline_y(self.content_y, font_size);
+            let y = geometry.baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(
                 line,
                 font,
@@ -445,9 +481,20 @@ impl FlowDocument {
         }
 
         let font_size = self.options.body_font_size;
-        let line_h = font_size * self.options.line_height_factor;
-        let lines =
-            self.measure_lines(text, font_size, self.content_width(), &self.body_font_bytes);
+        let geometry = self.geometry();
+        let line_h = geometry.line_height(font_size);
+        let lines = self.measure_lines(
+            text,
+            font_size,
+            geometry.content_width(),
+            &self.body_font_bytes,
+        );
+
+        // Keep at least two lines of a multi-line paragraph together. Without this
+        // guard a paragraph can leave a single orphan line at the bottom of a page.
+        if lines.len() >= 2 && self.content_y > 0.0 {
+            self.ensure_space(line_h * 2.0)?;
+        }
 
         let x = self.options.margins.left;
         let font = self.body_font;
@@ -455,7 +502,7 @@ impl FlowDocument {
         for line in &lines {
             self.ensure_space(line_h)?;
             let current_page = self.current_page;
-            let y = self.pdf_baseline_y(self.content_y, font_size);
+            let y = geometry.baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(
                 line,
                 font,
@@ -496,8 +543,9 @@ impl FlowDocument {
         }
 
         let font_size = self.options.body_font_size;
-        let line_h = font_size * self.options.line_height_factor;
-        let content_w = self.content_width();
+        let geometry = self.geometry();
+        let line_h = geometry.line_height(font_size);
+        let content_w = geometry.content_width();
         // Clone font bytes so the borrow doesn't conflict with ensure_space's &mut self.
         let font_bytes_owned = self.body_font_bytes.clone();
         let face: Option<Face<'_>> = Face::parse(&font_bytes_owned, 0).ok();
@@ -521,13 +569,17 @@ impl FlowDocument {
             None => full_text.lines().map(str::to_owned).collect(),
         };
 
+        if line_strings.len() >= 2 && self.content_y > 0.0 {
+            self.ensure_space(line_h * 2.0)?;
+        }
+
         let mut char_cursor = 0usize; // position in char_spans
 
         for line_str in &line_strings {
             let line_len = line_str.chars().count();
 
             self.ensure_space(line_h)?;
-            let y = self.pdf_baseline_y(self.content_y, font_size);
+            let y = geometry.baseline_y(self.content_y, font_size);
             let mut x = self.options.margins.left;
             let current_page = self.current_page;
 
@@ -558,13 +610,7 @@ impl FlowDocument {
 
                 // Advance x by measured width of the run.
                 if let Some(ref f) = face {
-                    x += run_text
-                        .chars()
-                        .map(|ch| {
-                            crate::document::glyph_advance_pt(f, ch, font_size)
-                                .unwrap_or(font_size * 0.5)
-                        })
-                        .sum::<f32>();
+                    x += geometry.text_width(&run_text, f, font_size);
                 }
 
                 run_start = run_end;
@@ -597,11 +643,12 @@ impl FlowDocument {
             return Ok(());
         }
 
-        let content_w = self.content_width();
+        let geometry = self.geometry();
+        let content_w = geometry.content_width();
         let key_w = content_w * self.options.table_key_ratio;
         let val_w = content_w - key_w;
         let font_size = self.options.body_font_size;
-        let line_h = font_size * self.options.line_height_factor;
+        let line_h = geometry.line_height(font_size);
         let cell_pad = 4.0_f32;
         let inner_key_w = (key_w - cell_pad * 2.0).max(1.0);
         let inner_val_w = (val_w - cell_pad * 2.0).max(1.0);
@@ -620,66 +667,85 @@ impl FlowDocument {
             let key_lines = self.measure_lines(key, font_size, inner_key_w, &self.body_font_bytes);
             let val_lines = self.measure_lines(val, font_size, inner_val_w, &self.body_font_bytes);
             let row_lines = key_lines.len().max(val_lines.len()).max(1);
-            let row_h = row_lines as f32 * line_h + cell_pad * 2.0;
+            let max_lines_per_page =
+                ((geometry.content_height() - cell_pad * 2.0) / line_h).floor() as usize;
+            if max_lines_per_page == 0 {
+                return Err(crate::Error::InvalidInput(format!(
+                    "table row {idx} cannot fit one line in the page content area"
+                )));
+            }
 
-            self.ensure_space(row_h)?;
+            // Split an oversized row into continuation chunks instead of drawing
+            // below the page. Each chunk has its own top separator; the final
+            // chunk receives the table's bottom border.
+            let mut line_offset = 0usize;
+            while line_offset < row_lines {
+                let chunk_lines = (row_lines - line_offset).min(max_lines_per_page);
+                let row_h = chunk_lines as f32 * line_h + cell_pad * 2.0;
+                self.ensure_space(row_h)?;
 
-            // All coordinates must be captured after ensure_space (which may change current_page).
-            let row_top_y = self.pdf_top_y(self.content_y);
-            self.content_y += row_h;
-            let row_bot_y = self.pdf_top_y(self.content_y);
-            let page_num = self.current_page;
-            let font = self.body_font;
+                let row_top_y = geometry.top_y(self.content_y);
+                self.content_y += row_h;
+                let row_bot_y = geometry.top_y(self.content_y);
+                let page_num = self.current_page;
+                let font = self.body_font;
+                let final_chunk = line_offset + chunk_lines >= row_lines;
 
-            {
-                let mut page = self.inner.page(page_num)?;
-
-                // Top separator (also acts as outer top border for first row)
-                page.add_line(
-                    [x_left, row_top_y],
-                    [x_right, row_top_y],
-                    border_color,
-                    border_lw,
-                    1.0,
-                )?;
-
-                // Key cell text
-                for (i, line) in key_lines.iter().enumerate() {
-                    let y = row_top_y - cell_pad - font_size - i as f32 * line_h;
-                    page.add_text(
-                        line,
-                        font,
-                        [x_left + cell_pad, y],
-                        font_size,
-                        [0.0, 0.0, 0.0],
-                    )?;
-                }
-
-                // Value cell text
-                for (i, line) in val_lines.iter().enumerate() {
-                    let y = row_top_y - cell_pad - font_size - i as f32 * line_h;
-                    page.add_text(line, font, [x_val, y], font_size, [0.0, 0.0, 0.0])?;
-                }
-
-                // Vertical divider between key and value columns
-                page.add_line(
-                    [x_divider, row_top_y],
-                    [x_divider, row_bot_y],
-                    border_color,
-                    border_lw,
-                    1.0,
-                )?;
-
-                // Bottom border on last row
-                if idx == last_idx {
+                {
+                    let mut page = self.inner.page(page_num)?;
                     page.add_line(
-                        [x_left, row_bot_y],
-                        [x_right, row_bot_y],
+                        [x_left, row_top_y],
+                        [x_right, row_top_y],
                         border_color,
                         border_lw,
                         1.0,
                     )?;
+
+                    for (i, line) in key_lines
+                        .iter()
+                        .skip(line_offset)
+                        .take(chunk_lines)
+                        .enumerate()
+                    {
+                        let y = row_top_y - cell_pad - font_size - i as f32 * line_h;
+                        page.add_text(
+                            line,
+                            font,
+                            [x_left + cell_pad, y],
+                            font_size,
+                            [0.0, 0.0, 0.0],
+                        )?;
+                    }
+
+                    for (i, line) in val_lines
+                        .iter()
+                        .skip(line_offset)
+                        .take(chunk_lines)
+                        .enumerate()
+                    {
+                        let y = row_top_y - cell_pad - font_size - i as f32 * line_h;
+                        page.add_text(line, font, [x_val, y], font_size, [0.0, 0.0, 0.0])?;
+                    }
+
+                    page.add_line(
+                        [x_divider, row_top_y],
+                        [x_divider, row_bot_y],
+                        border_color,
+                        border_lw,
+                        1.0,
+                    )?;
+
+                    if idx == last_idx && final_chunk {
+                        page.add_line(
+                            [x_left, row_bot_y],
+                            [x_right, row_bot_y],
+                            border_color,
+                            border_lw,
+                            1.0,
+                        )?;
+                    }
                 }
+                line_offset += chunk_lines;
             }
         }
 
@@ -717,12 +783,13 @@ impl FlowDocument {
         }
 
         let font_size = self.options.body_font_size;
-        let line_h = font_size * self.options.line_height_factor;
+        let geometry = self.geometry();
+        let line_h = geometry.line_height(font_size);
         let font_bytes = self
             .code_font_bytes
             .as_deref()
             .unwrap_or(&self.body_font_bytes);
-        let lines = self.measure_lines(text, font_size, self.content_width(), font_bytes);
+        let lines = self.measure_lines(text, font_size, geometry.content_width(), font_bytes);
 
         let block_h = lines.len() as f32 * line_h;
         let pre_spacing = if self.content_y > 0.0 {
@@ -738,7 +805,7 @@ impl FlowDocument {
         let x = self.options.margins.left;
         let font = self.code_font.unwrap_or(self.body_font);
         let current_page = self.current_page;
-        let y_top = self.pdf_top_y(self.content_y);
+        let y_top = geometry.top_y(self.content_y);
         let y_bottom = y_top - block_h;
 
         // Draw background rectangle if configured (requires draw feature, which flow implies)
@@ -759,7 +826,7 @@ impl FlowDocument {
 
         // Render the text lines
         for line in &lines {
-            let y = self.pdf_baseline_y(self.content_y, font_size);
+            let y = geometry.baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(
                 line,
                 font,
@@ -848,12 +915,14 @@ fn hf_subst(tmpl: &str, page: u32, total: u32) -> String {
 }
 
 /// Measure the rendered width of `text` in PDF points given a parsed face.
-fn hf_measure(face: Option<&Face<'_>>, text: &str, font_size: f32) -> f32 {
+fn hf_measure(
+    geometry: GeometryPlanner,
+    face: Option<&Face<'_>>,
+    text: &str,
+    font_size: f32,
+) -> f32 {
     match face {
-        Some(f) => text
-            .chars()
-            .map(|ch| glyph_advance_pt(f, ch, font_size).unwrap_or(font_size * 0.5))
-            .sum(),
+        Some(f) => geometry.text_width(text, f, font_size),
         // Fallback: use character count (not byte length) so CJK multi-byte chars don't
         // over-estimate the width and mis-position right-aligned / centered text.
         None => text.chars().count() as f32 * font_size * 0.5,
@@ -879,9 +948,14 @@ fn render_hf_on_page(
         9.0
     };
     let color = hf.color;
-    let margin_left = margins.left;
-    let margin_right = margins.right;
-    let content_w = page_size.0 - margin_left - margin_right;
+    let geometry = GeometryPlanner {
+        page_size,
+        margins,
+        line_height_factor: 1.0,
+    };
+    let margin_left = geometry.margins.left;
+    let margin_right = geometry.margins.right;
+    let content_w = geometry.content_width();
 
     // Vertical position: centered in the top/bottom margin band.
     let y = if is_header {
@@ -898,7 +972,7 @@ fn render_hf_on_page(
     }
     if let Some(ref tmpl) = hf.center {
         let text = hf_subst(tmpl, page_num, total_pages);
-        let w = hf_measure(face, &text, fs);
+        let w = hf_measure(geometry, face, &text, fs);
         let x = margin_left + (content_w - w) / 2.0;
         inner
             .page(page_num)?
@@ -906,7 +980,7 @@ fn render_hf_on_page(
     }
     if let Some(ref tmpl) = hf.right {
         let text = hf_subst(tmpl, page_num, total_pages);
-        let w = hf_measure(face, &text, fs);
+        let w = hf_measure(geometry, face, &text, fs);
         let x = page_size.0 - margin_right - w;
         inner
             .page(page_num)?
@@ -914,4 +988,31 @@ fn render_hf_on_page(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn geometry_planner_is_single_source_for_page_coordinates() {
+        let options = FlowOptions {
+            page_size: (200.0, 300.0),
+            margins: Margins {
+                top: 10.0,
+                right: 20.0,
+                bottom: 30.0,
+                left: 40.0,
+            },
+            line_height_factor: 1.5,
+            ..FlowOptions::default()
+        };
+        let geometry = GeometryPlanner::new(&options);
+
+        assert_eq!(geometry.content_width(), 140.0);
+        assert_eq!(geometry.content_height(), 260.0);
+        assert_eq!(geometry.line_height(10.0), 15.0);
+        assert_eq!(geometry.top_y(12.0), 278.0);
+        assert_eq!(geometry.baseline_y(12.0, 10.0), 268.0);
+    }
 }

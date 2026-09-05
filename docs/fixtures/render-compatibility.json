@@ -1,0 +1,29 @@
+{
+  "contract": "render-compatibility-v1",
+  "fixture": "examples/fixtures/scanned_sample.pdf",
+  "expected_pages": 1,
+  "comparison": {
+    "command": "python3 scripts/compare-render-artifacts.py",
+    "schema": "render-comparison-v1",
+    "reference": "poppler",
+    "classification_policy": "A raster difference is a diagnostic signal only; it is not by itself evidence that harumi or a renderer is defective."
+  },
+  "poppler": {
+    "command": "pdftoppm",
+    "dpi": 144,
+    "output_format": "png",
+    "artifact_report": "report.json",
+    "golden_policy": "The Poppler render is a deterministic smoke contract for page count and raster output. Pixel goldens must be generated per pinned renderer/version; do not treat Poppler pixels as Pdfium, Chrome, or Acrobat parity."
+  },
+  "pdfium": {
+    "command": "scripts/check-pdfium-render-fixture.sh",
+    "target_width": 1600,
+    "golden": null,
+    "golden_policy": "Run only when a pinned Pdfium runtime is available. Compare dimensions and pixels within the same Pdfium build."
+  },
+  "required_checks": [
+    "page_count",
+    "non_empty_png",
+    "png_signature"
+  ]
+}

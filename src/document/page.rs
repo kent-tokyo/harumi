@@ -305,6 +305,43 @@ impl<'doc> PageHandle<'doc> {
         Ok(())
     }
 
+    /// Like [`add_text_styled_with_char_spacing`](Self::add_text_styled_with_char_spacing)
+    /// but applies a uniform fill opacity through an ExtGState.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_text_styled_with_char_spacing_and_opacity(
+        &mut self,
+        text: &str,
+        font: FontHandle,
+        position: [f32; 2],
+        font_size: f32,
+        color: impl Into<Color>,
+        bold: bool,
+        italic: bool,
+        char_spacing: f32,
+        opacity: f32,
+    ) -> Result<()> {
+        let color = color.into();
+        check_finite(
+            &[position[0], position[1], font_size, char_spacing, opacity],
+            "add_text_styled_with_char_spacing_and_opacity",
+        )?;
+        self.push_text(PendingText {
+            font,
+            text: text.to_owned(),
+            x: position[0],
+            y: position[1],
+            font_size,
+            render_mode: 0,
+            color,
+            opacity,
+            rotation_degrees: 0.0,
+            bold,
+            italic,
+            char_spacing,
+        });
+        Ok(())
+    }
+
     /// Queues multiple text placements in one call.
     ///
     /// All runs across the entire document are collected before subsetting,

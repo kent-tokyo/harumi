@@ -3,6 +3,12 @@
   "page_index": 0,
   "target_width": 1600,
   "output_format": "png",
+  "artifact_report": "report.json",
+  "runtime": {
+    "library_env": "PDFIUM_LIBRARY_PATH",
+    "required": true,
+    "pin_policy": "The runner must receive an explicit fixed Pdfium shared library; system-library discovery is not accepted for a golden artifact."
+  },
   "golden": null,
   "golden_policy": "Add a Pdfium-rendered PNG only after the Pdfium runtime/API build is pinned in CI. Compare dimensions and pixels at the same target width; do not compare Pdfium output against a Poppler golden as if they were pixel-identical."
 }

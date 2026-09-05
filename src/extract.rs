@@ -55,6 +55,9 @@ pub struct TextFragment {
     /// RGB fill color at this position, each component in `0.0..=1.0`.
     /// Defaults to black `[0.0, 0.0, 0.0]` when no color operator precedes the text.
     pub color: [f32; 3],
+    /// Effective non-stroking opacity from the active `/ExtGState` (`/ca`).
+    /// Defaults to `1.0` when no opacity graphics state is active.
+    pub opacity: f32,
     /// `true` if the text render mode is 3 (invisible / OCR search layer).
     pub invisible: bool,
     /// `true` when the font name indicates a bold weight
@@ -191,6 +194,12 @@ pub enum WarningKind {
     /// A Type0/CIDFont had no usable `/ToUnicode` CMap. Text may have been
     /// decoded with the Identity-H/V best-effort fallback instead.
     MissingToUnicodeCMap,
+    /// A font resource used a missing or unsupported `/Subtype` and was skipped.
+    /// Text that references the font is therefore not represented in the result.
+    UnsupportedFontSubtype,
+    /// A Type0 font uses `/Identity-V`; extraction may recover text, but vertical
+    /// writing metrics and full vertical reflow are not supported by this API.
+    UnsupportedVerticalWriting,
 }
 
 /// A non-fatal issue encountered while extracting text from a page.
@@ -1737,6 +1746,7 @@ pub(crate) fn extract_text_runs_from_page(
 ) -> Result<Vec<TextFragment>> {
     let streams = page_content_streams(doc, page_id);
     let fonts = collect_fonts(doc, page_id);
+    let extgstates = collect_extgstates(doc, page_id);
 
     let mut fragments = Vec::new();
     // Carry graphics state (colour, render-mode) across streams on the same page.
@@ -1745,6 +1755,7 @@ pub(crate) fn extract_text_runs_from_page(
         parse_content_stream(
             stream_bytes,
             &fonts,
+            &extgstates,
             &mut carry,
             &mut fragments,
             Some(stream_idx),
@@ -1929,6 +1940,7 @@ fn extract_text_from_xobjects(
     out: &mut Vec<TextFragment>,
     _depth: u8,
 ) {
+    let extgstates = collect_extgstates(doc, page_id);
     let saved_ctm = carry.ctm;
     // Save the page-level CTM stack: each XObject gets its own fresh stack starting
     // at its combined Do-time CTM × XObject matrix, independent of the page's state.
@@ -1949,7 +1961,15 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
+                parse_content_stream(
+                    &content,
+                    &xobj_fonts,
+                    &extgstates,
+                    carry,
+                    out,
+                    None,
+                    Some(xobj_id),
+                );
             }
         }
 
@@ -1964,7 +1984,15 @@ fn extract_text_from_xobjects(
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
-                parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
+                parse_content_stream(
+                    &content,
+                    &xobj_fonts,
+                    &extgstates,
+                    carry,
+                    out,
+                    None,
+                    Some(xobj_id),
+                );
             }
         }
     }
@@ -2217,6 +2245,7 @@ pub(crate) fn extract_text_runs_from_page_verbose(
 ) -> Result<(Vec<TextFragment>, Vec<ExtractionWarning>)> {
     let (streams, mut warnings) = page_content_streams_verbose(doc, page_id);
     let fonts = collect_fonts_verbose(doc, page_id, &mut warnings);
+    let extgstates = collect_extgstates(doc, page_id);
 
     let mut fragments = Vec::new();
     let mut carry = ParseCarryState::default();
@@ -2224,6 +2253,7 @@ pub(crate) fn extract_text_runs_from_page_verbose(
         parse_content_stream(
             stream_bytes,
             &fonts,
+            &extgstates,
             &mut carry,
             &mut fragments,
             Some(stream_idx),
@@ -2245,6 +2275,7 @@ fn extract_text_from_xobjects_verbose(
     _depth: u8,
     warnings: &mut Vec<ExtractionWarning>,
 ) {
+    let extgstates = collect_extgstates(doc, page_id);
     let saved_ctm = carry.ctm;
     let saved_ctm_stack = carry.ctm_stack.clone();
 
@@ -2262,7 +2293,15 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
+                    parse_content_stream(
+                        &content,
+                        &xobj_fonts,
+                        &extgstates,
+                        carry,
+                        out,
+                        None,
+                        Some(xobj_id),
+                    );
                 }
                 Err(warn) => {
                     warnings.push(warn);
@@ -2279,7 +2318,15 @@ fn extract_text_from_xobjects_verbose(
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
-                    parse_content_stream(&content, &xobj_fonts, carry, out, None, Some(xobj_id));
+                    parse_content_stream(
+                        &content,
+                        &xobj_fonts,
+                        &extgstates,
+                        carry,
+                        out,
+                        None,
+                        Some(xobj_id),
+                    );
                 }
                 Err(warn) => {
                     warnings.push(warn);
@@ -2352,6 +2399,61 @@ pub(crate) fn collect_fonts(
     page_id: ObjectId,
 ) -> HashMap<Vec<u8>, FontInfo> {
     collect_fonts_inner(doc, page_id).unwrap_or_default()
+}
+
+/// Collect non-stroking opacity values from the inherited page `/ExtGState`
+/// resources. Values outside the PDF alpha range are ignored defensively.
+fn collect_extgstates(doc: &lopdf::Document, page_id: ObjectId) -> HashMap<Vec<u8>, f32> {
+    let mut current_id = page_id;
+    loop {
+        let Ok(obj) = doc.get_object(current_id) else {
+            return HashMap::new();
+        };
+        let Ok(dict) = obj.as_dict() else {
+            return HashMap::new();
+        };
+        if let Ok(resources_obj) = dict.get(b"Resources") {
+            let Some(resources_dict) = resolve_dict(doc, resources_obj) else {
+                return HashMap::new();
+            };
+            return collect_extgstates_from_resources(doc, resources_dict);
+        }
+        let Ok(parent_ref) = dict.get(b"Parent") else {
+            return HashMap::new();
+        };
+        let Object::Reference(parent_id) = parent_ref else {
+            return HashMap::new();
+        };
+        current_id = *parent_id;
+    }
+}
+
+fn collect_extgstates_from_resources(
+    doc: &lopdf::Document,
+    resources_dict: &Dictionary,
+) -> HashMap<Vec<u8>, f32> {
+    let mut result = HashMap::new();
+    let Ok(ext_obj) = resources_dict.get(b"ExtGState") else {
+        return result;
+    };
+    let Some(ext_dict) = resolve_dict(doc, ext_obj) else {
+        return result;
+    };
+    for (name, value) in ext_dict.iter() {
+        let Some(gs) = resolve_dict(doc, value) else {
+            continue;
+        };
+        let Some(opacity) = gs
+            .get(b"ca")
+            .ok()
+            .and_then(object_number)
+            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        else {
+            continue;
+        };
+        result.insert(name.to_vec(), opacity);
+    }
+    result
 }
 
 fn collect_fonts_verbose(
@@ -2588,6 +2690,51 @@ fn collect_font_dict_entries_verbose(
     fonts: &mut HashMap<Vec<u8>, FontInfo>,
     warnings: &mut Vec<ExtractionWarning>,
 ) {
+    for (name, font_ref) in font_dict.iter() {
+        let font_dict = match font_ref {
+            Object::Reference(font_id) => doc
+                .get_object(*font_id)
+                .ok()
+                .and_then(|object| object.as_dict().ok()),
+            _ => None,
+        };
+        let subtype = font_dict
+            .and_then(|dict| dict.get(b"Subtype").ok())
+            .and_then(|object| match object {
+                Object::Name(value) => Some(String::from_utf8_lossy(value).into_owned()),
+                _ => None,
+            });
+        let supported = subtype.as_deref().is_some_and(|value| {
+            matches!(value, "Type0" | "Type1" | "MMType1" | "TrueType" | "Type3")
+        });
+        if !supported {
+            let detail = subtype
+                .as_deref()
+                .map_or_else(|| "missing or malformed".to_owned(), str::to_owned);
+            warnings.push(ExtractionWarning {
+                kind: WarningKind::UnsupportedFontSubtype,
+                stream_id: None,
+                message: format!(
+                    "font /{} has unsupported {} /Subtype; referenced text was skipped",
+                    String::from_utf8_lossy(name),
+                    detail
+                ),
+            });
+        }
+        let identity_v = font_dict.is_some_and(|dict| {
+            dict.get(b"Encoding").ok() == Some(&Object::Name(b"Identity-V".to_vec()))
+        });
+        if subtype.as_deref() == Some("Type0") && identity_v {
+            warnings.push(ExtractionWarning {
+                kind: WarningKind::UnsupportedVerticalWriting,
+                stream_id: None,
+                message: format!(
+                    "font /{} uses /Identity-V; vertical writing metrics and reflow remain best-effort",
+                    String::from_utf8_lossy(name)
+                ),
+            });
+        }
+    }
     collect_font_dict_entries(doc, font_dict, fonts);
     for (name, font_info) in fonts.iter() {
         if font_info.identity_fallback {
@@ -3752,7 +3899,9 @@ fn hex_to_unicode_string(hex: &str) -> Option<String> {
     }
     let units = hex
         .as_bytes()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|chunk| u16::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok())
         .collect::<Option<Vec<_>>>()?;
     String::from_utf16(&units).ok()
@@ -4220,6 +4369,7 @@ fn read_matrix(dict: &lopdf::Dictionary) -> [f32; 6] {
 /// survive stream transitions too.
 struct ParseCarryState {
     cur_color: [f32; 3],
+    cur_opacity: f32,
     cur_render_mode: u8,
     /// CTM at the most recent `Do` invocation (used as fallback by XObject extraction).
     ctm: [f32; 6],
@@ -4231,6 +4381,8 @@ struct ParseCarryState {
     /// Per the PDF spec, multiple streams in a Contents array share the same graphics
     /// state — so q/Q depth and cm transformations must persist across stream calls.
     ctm_stack: Vec<[f32; 6]>,
+    /// Non-stroking opacity stack paired with `q`/`Q` graphics-state saves.
+    opacity_stack: Vec<f32>,
     /// Whether we are inside an open BT…ET block that was not closed before the
     /// stream ended.  Distiller/PScript5 PDFs occasionally split one logical BT block
     /// across several stream objects; carrying this flag lets following streams treat
@@ -4286,10 +4438,12 @@ impl Default for ParseCarryState {
     fn default() -> Self {
         Self {
             cur_color: [0.0, 0.0, 0.0],
+            cur_opacity: 1.0,
             cur_render_mode: 0,
             ctm: IDENTITY_CTM,
             do_ctm_map: Vec::new(),
             ctm_stack: vec![IDENTITY_CTM],
+            opacity_stack: vec![1.0],
             in_bt: false,
             font_name: Vec::new(),
             tf_font_size: 12.0,
@@ -4316,6 +4470,7 @@ impl Default for ParseCarryState {
 fn parse_content_stream(
     bytes: &[u8],
     fonts: &HashMap<Vec<u8>, FontInfo>,
+    extgstates: &HashMap<Vec<u8>, f32>,
     state: &mut ParseCarryState,
     out: &mut Vec<TextFragment>,
     stream_idx: Option<usize>,
@@ -4538,11 +4693,23 @@ fn parse_content_stream(
                     state
                         .ctm_stack
                         .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+                    state.opacity_stack.push(state.cur_opacity);
                     stack.clear();
                 }
                 b"Q" => {
                     if state.ctm_stack.len() > 1 {
                         state.ctm_stack.pop();
+                    }
+                    if let Some(opacity) = state.opacity_stack.pop() {
+                        state.cur_opacity = opacity;
+                    }
+                    stack.clear();
+                }
+                b"gs" => {
+                    if let Some((Token::Name(name), _)) = stack.pop()
+                        && let Some(opacity) = extgstates.get(&name)
+                    {
+                        state.cur_opacity = *opacity;
                     }
                     stack.clear();
                 }
@@ -4624,6 +4791,7 @@ fn parse_content_stream(
                             horizontal_scale,
                             fonts,
                             state.cur_color,
+                            state.cur_opacity,
                             state.cur_render_mode,
                             tf_font_size,
                             tm_y_scale,
@@ -4696,6 +4864,7 @@ fn parse_content_stream(
                                         horizontal_scale,
                                         fonts,
                                         state.cur_color,
+                                        state.cur_opacity,
                                         state.cur_render_mode,
                                         tf_font_size,
                                         tm_y_scale,
@@ -4788,6 +4957,7 @@ fn decode_chars_to_fragment(
     horizontal_scale: f32,
     fonts: &HashMap<Vec<u8>, FontInfo>,
     color: [f32; 3],
+    opacity: f32,
     render_mode: u8,
     tf_font_size: f32,
     tm_y_scale: f32,
@@ -4888,6 +5058,7 @@ fn decode_chars_to_fragment(
         font_size,
         font_name: String::from_utf8_lossy(font_name).into_owned(),
         color,
+        opacity,
         invisible: render_mode == 3,
         is_bold: font_info.is_bold,
         is_italic: font_info.is_italic,

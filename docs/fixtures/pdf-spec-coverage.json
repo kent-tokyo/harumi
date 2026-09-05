@@ -1,0 +1,53 @@
+{
+  "contract": "pdf-spec-coverage-v1",
+  "stages": [
+    "extract",
+    "write_back",
+    "save_reload",
+    "external_renderer"
+  ],
+  "cases": [
+    {
+      "id": "page_tree_inheritance",
+      "scope": "page tree MediaBox inheritance and page operations",
+      "tests": [
+        "page_ops::nested_pages_remove_page_preserves_mediabox",
+        "page_ops::nested_pages_insert_blank_preserves_mediabox",
+        "page_ops::nested_pages_reorder_preserves_mediabox"
+      ],
+      "external_renderer": "required"
+    },
+    {
+      "id": "resources_and_contents_forms",
+      "scope": "inline/indirect Resources, Contents arrays, and Form XObject resources",
+      "tests": [
+        "smoke::smoke_contents_array",
+        "smoke::smoke_indirect_resources",
+        "replace::replace_text_in_form_xobject_inherited_resources"
+      ],
+      "external_renderer": "required"
+    },
+    {
+      "id": "font_and_cmap",
+      "scope": "Type0/CIDFont, ToUnicode, and saved CJK text",
+      "tests": [
+        "extract_text::extracts_type0_font_with_indirect_descendant_fonts",
+        "extract_text::roundtrip_cjk_text",
+        "extract_text::simple_font_encoding_fallback_no_tounicode"
+      ],
+      "external_renderer": "required"
+    },
+    {
+      "id": "image_filters",
+      "scope": "JPEG/PNG image XObjects and extraction after save/reload",
+      "tests": [
+        "extract_image::extract_jpeg_roundtrip",
+        "extract_image::extract_png_roundtrip",
+        "draw_smoke::smoke_add_jpeg_image",
+        "draw_smoke::smoke_add_png_image"
+      ],
+      "external_renderer": "required"
+    }
+  ],
+  "policy": "A case is not fully supported until extraction, write-back or save/reload, and an external renderer check all pass. Unit tests alone do not establish arbitrary-PDF compatibility."
+}

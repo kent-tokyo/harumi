@@ -42,7 +42,5 @@ fn generate_test_rsa_keys() {
     fs::write(cert_path, &cert_der).expect("Failed to write certificate");
     fs::write(key_path, &key_der).expect("Failed to write private key");
 
-    println!("✓ Generated {} ({} bytes)", cert_path, cert_der.len());
-    println!("✓ Generated {} ({} bytes)", key_path, key_der.len());
-    println!("\nFixtures generated successfully!");
+    println!("Test RSA fixtures generated successfully.");
 }

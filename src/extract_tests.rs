@@ -237,6 +237,7 @@ fn detect_text_columns_single() {
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
+        opacity: 1.0,
         invisible: false,
         is_bold: false,
         is_italic: false,
@@ -275,6 +276,7 @@ fn detect_text_columns_two_columns() {
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
+        opacity: 1.0,
         invisible: false,
         is_bold: false,
         is_italic: false,
@@ -303,6 +305,7 @@ fn detect_text_columns_two_columns() {
         font_size: 12.0,
         font_name: "F1".into(),
         color: [0.0; 3],
+        opacity: 1.0,
         invisible: false,
         is_bold: false,
         is_italic: false,
@@ -337,6 +340,7 @@ fn make_frag(text: &str, x: f32, y: f32, w: f32, fs: f32) -> TextFragment {
         font_size: fs,
         font_name: "F1".into(),
         color: [0.0; 3],
+        opacity: 1.0,
         invisible: false,
         is_bold: false,
         is_italic: false,
@@ -722,6 +726,50 @@ fn extract_cid_xobject_inherited_resources() {
     );
 }
 
+#[test]
+fn verbose_extraction_reports_unsupported_font_subtype() {
+    let mut doc = lopdf::Document::new();
+    let mut font = lopdf::Dictionary::new();
+    font.set("Type", Object::Name(b"Font".to_vec()));
+    font.set("Subtype", Object::Name(b"Type9".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font));
+
+    let mut resources = lopdf::Dictionary::new();
+    resources.set("F9", Object::Reference(font_id));
+    let mut fonts = HashMap::new();
+    let mut warnings = Vec::new();
+    collect_font_dict_entries_verbose(&doc, &resources, &mut fonts, &mut warnings);
+
+    assert!(fonts.is_empty());
+    assert!(warnings.iter().any(|warning| {
+        matches!(warning.kind, WarningKind::UnsupportedFontSubtype)
+            && warning.message.contains("/F9")
+            && warning.message.contains("Type9")
+    }));
+}
+
+#[test]
+fn verbose_extraction_reports_identity_v_boundary() {
+    let mut doc = lopdf::Document::new();
+    let mut font = lopdf::Dictionary::new();
+    font.set("Type", Object::Name(b"Font".to_vec()));
+    font.set("Subtype", Object::Name(b"Type0".to_vec()));
+    font.set("Encoding", Object::Name(b"Identity-V".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font));
+
+    let mut resources = lopdf::Dictionary::new();
+    resources.set("FV", Object::Reference(font_id));
+    let mut fonts = HashMap::new();
+    let mut warnings = Vec::new();
+    collect_font_dict_entries_verbose(&doc, &resources, &mut fonts, &mut warnings);
+
+    assert!(warnings.iter().any(|warning| {
+        matches!(warning.kind, WarningKind::UnsupportedVerticalWriting)
+            && warning.message.contains("/FV")
+            && warning.message.contains("Identity-V")
+    }));
+}
+
 // Verify that a non-identity CTM established by q/cm/Q is correctly applied to
 // TextFragment coordinates.  Chrome/Skia PDFs use this pattern:
 //
@@ -769,7 +817,15 @@ fn ctm_transforms_coordinates_to_page_space() {
 
     let mut state = ParseCarryState::default();
     let mut frags: Vec<TextFragment> = Vec::new();
-    parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0), None);
+    parse_content_stream(
+        stream,
+        &fonts,
+        &HashMap::new(),
+        &mut state,
+        &mut frags,
+        Some(0),
+        None,
+    );
 
     assert_eq!(frags.len(), 1, "expected one TextFragment");
     let f = &frags[0];
@@ -804,7 +860,15 @@ fn ctm_at_do_captured_in_state() {
     let stream = b"q\n0.24 0 0 -0.24 0 841 cm\n/Fm0 Do\nQ\n";
     let mut state = ParseCarryState::default();
     let mut frags: Vec<TextFragment> = Vec::new();
-    parse_content_stream(stream, &fonts, &mut state, &mut frags, Some(0), None);
+    parse_content_stream(
+        stream,
+        &fonts,
+        &HashMap::new(),
+        &mut state,
+        &mut frags,
+        Some(0),
+        None,
+    );
 
     let eps = 1e-5f32;
     assert!(
@@ -1696,6 +1760,7 @@ fn merge_short_cjk_tails_basic() {
         font_size: fs,
         font_name: "F1".into(),
         color: [0.0; 3],
+        opacity: 1.0,
         invisible: false,
         is_bold: false,
         is_italic: false,

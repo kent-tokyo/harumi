@@ -14,7 +14,7 @@ Update the snapshot date and rerun the comparison before using it as a benchmark
 | Screen display, rendering, editing | `pdfium-render` | 0.9.3 / Pdfium API 7881 | host-side Pdfium wrapper; native Pdfium runtime is part of the deployment boundary |
 | New forms and reports | `printpdf` | 0.12.6 | document generation and serialization |
 | High-level report generation | `genpdf` | 0.2.0 | document tree, pagination, and text alignment; built on the printpdf ecosystem |
-| Direct PDF object manipulation | `lopdf` | 0.40.0 in this repository | low-level object graph and content-stream access |
+| Direct PDF object manipulation | `lopdf` | 0.42.0 in this repository | low-level object graph and content-stream access |
 | Bulk extraction and Markdown | `unpdf` | 0.17.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.77 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
@@ -25,7 +25,7 @@ The external references are the package documentation pages:
 - [`pdfium-render 0.9.3`](https://docs.rs/crate/pdfium-render/0.9.3)
 - [`printpdf 0.12.6`](https://docs.rs/crate/printpdf/0.12.6)
 - [`genpdf 0.2.0`](https://docs.rs/crate/genpdf/0.2.0)
-- [`lopdf 0.40.0`](https://docs.rs/crate/lopdf/0.40.0)
+- [`lopdf 0.42.0`](https://docs.rs/crate/lopdf/0.42.0)
 - [`unpdf 0.17.0`](https://docs.rs/crate/unpdf/0.17.0)
 - [`pdf_oxide 0.3.77`](https://docs.rs/crate/pdf_oxide/0.3.77)
 - [`pdf-writer 0.15.0`](https://docs.rs/crate/pdf-writer/0.15.0)
@@ -72,14 +72,33 @@ new optional native dependencies must be added to the reviewed list.
 
 The optional host-side renderer probe is
 [`tools/pdfium-render-check`](../tools/pdfium-render-check/Cargo.toml). It pins
-`pdfium-render` to `0.9.3`, accepts `PDFIUM_LIBRARY_PATH`, and writes one selected
-page to PNG. It is deliberately outside the main workspace, so using the probe
+`pdfium-render` to `0.9.3`, requires an explicit `PDFIUM_LIBRARY_PATH`, and writes
+one selected page to PNG. The runner rejects an unpinned or missing runtime before
+starting Cargo. It is deliberately outside the main workspace, so using the probe
 does not add Pdfium or a C++ runtime to harumi's normal dependency graph.
 
 The reproducible runner is [`scripts/check-pdfium-render-fixture.sh`](../scripts/check-pdfium-render-fixture.sh),
 with its input and target-width contract in
-[`docs/fixtures/pdfium-render.json`](fixtures/pdfium-render.json). The golden
-image is intentionally unset until a Pdfium runtime is pinned for the host CI.
+[`docs/fixtures/pdfium-render.json`](fixtures/pdfium-render.json). It emits an
+artifact report with page count, page dimensions, raster dimensions, and SHA-256.
+The golden image is intentionally unset until a Pdfium runtime is pinned for the
+host CI.
+
+The renderer-independent smoke contract is
+[`docs/fixtures/render-compatibility.json`](fixtures/render-compatibility.json).
+[`scripts/check-poppler-render-fixture.sh`](../scripts/check-poppler-render-fixture.sh)
+uses a fixed DPI and checks page count, non-empty PNG output, and the PNG signature.
+It also writes a renderer artifact report containing PDF page size, raster dimensions,
+and per-page SHA-256. This is an execution contract, not pixel parity: Poppler output
+must not be used as a Pdfium, Chrome, or Acrobat golden. Phase 48 extends this
+contract with the same input PDF and renderer-specific artifacts once those runtimes
+are pinned.
+
+Reports can be compared with
+[`scripts/compare-render-artifacts.py`](../scripts/compare-render-artifacts.py).
+The comparison records metadata mismatches, raster-dimension differences, identical
+SHA-256 values, and pixel differences. A pixel difference is deliberately diagnostic
+only; it is not sufficient to attribute a defect to harumi or to a renderer.
 
 The new-document comparison fixture is
 [`docs/fixtures/report-generation.json`](fixtures/report-generation.json). The
@@ -97,6 +116,8 @@ markers because `/DescendantFonts` was serialized in both direct-array and
 indirect-reference forms; extraction now accepts both forms and the probe passes.
 The same probe also checks page-boundary overflow, writes a `harumi-writeback`
 marker with harumi, saves the PDF, and re-extracts the marker successfully.
+The full four-backend run, including fixed-DPI Poppler artifacts, is available
+through [`scripts/check-report-generation-fixture.sh`](../scripts/check-report-generation-fixture.sh).
 
 Phase 45B freezes the bulk-extraction corpus contract in
 [`docs/fixtures/bulk-extraction.json`](fixtures/bulk-extraction.json). It
@@ -114,6 +135,19 @@ marker recall, coordinate coverage, Markdown block count, image/OCR counts, and
 elapsed time, and leaves the PDFs available for Poppler or another extractor.
 The current baseline is 100% marker recall and coordinate coverage for all five
 inputs; this is a correctness/contract baseline, not a throughput benchmark.
+
+Phase 49 freezes the first high-impact PDF specification corpus for the v1.21.0
+candidate in
+[`docs/fixtures/pdf-spec-coverage.json`](fixtures/pdf-spec-coverage.json). It
+separates page-tree inheritance, Resources/Contents/Form XObjects, font/CMap,
+and image filters. The repeatable unit/save-reload runner is
+[`scripts/check-pdf-spec-coverage.sh`](../scripts/check-pdf-spec-coverage.sh).
+It does not mark a case fully supported by unit tests alone: the contract still
+requires an external renderer check for each case.
+The corpus generator and Poppler renderer runner are
+[`tools/pdf-spec-coverage-check`](../tools/pdf-spec-coverage-check) and
+[`scripts/check-pdf-spec-coverage-render.sh`](../scripts/check-pdf-spec-coverage-render.sh).
+They generate four one-page PDFs and save one renderer artifact report per case.
 
 The external adapter is [`tools/bulk-extraction-compare`](../tools/bulk-extraction-compare).
 It pins `unpdf 0.17.0` and `pdf_oxide 0.3.77` outside the main workspace and

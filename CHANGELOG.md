@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **PDF specification corpus**: added reproducible page-tree, Resources/Contents,
+  font/CMap, and image-XObject probes with Poppler render artifacts.
+- **Flow layout safety**: multi-line paragraphs avoid a single orphan line at a
+  page bottom, and oversized table rows split into bounded page chunks instead
+  of rendering outside the content area.
+- **Renderer contract**: Poppler reports now include page dimensions, raster
+  dimensions, and per-page SHA-256; Pdfium runs require an explicitly pinned
+  `PDFIUM_LIBRARY_PATH`.
+- **CI compatibility**: updated `lopdf` and `crossbeam-epoch` to patched
+  releases, migrated password loading to lopdf's options API, and adapted
+  image/text chunk iteration to the current Clippy lint.
+- **Workflow security**: restricted CI, publishing, and dependency-audit jobs
+  to `contents: read`; test fixture generation no longer logs key-related
+  paths or byte counts.
+- **Flow geometry planner**: centralized page bounds, baselines, line heights,
+  and text-width calculations used by pagination and rendering.
+- **Pdfium artifact contract**: the host-side Pdfium runner now reports page
+  dimensions, raster dimensions, and SHA-256 alongside its PNG output.
+- **Renderer comparison**: added a report comparator that keeps metadata and
+  pixel differences diagnostic instead of mislabeling renderer differences as
+  harumi defects.
+- **Extraction boundary**: verbose extraction now reports unsupported or
+  malformed font subtypes instead of silently treating skipped text as success.
+- **Generator comparison**: reran the fixed report contract across harumi
+  Flow/HTML, printpdf, and genpdf with extraction, write-back, and Poppler checks.
+- **Report-generation runner**: added one reproducible command for the four
+  backend comparison and fixed-DPI Poppler artifacts.
+- **Flow header/footer regression**: added a multi-page save/reload test for
+  repeated header/footer text and `{{page}}`/`{{total}}` substitution.
+- **Missing-glyph safety**: overlay and in-place translation now fail fast with
+  the unavailable code points when no configured font or fallback can render a
+  translated character.
+- **Image-overlap policy**: documented the conservative default of preserving
+  Image XObjects, skipping source cover rectangles, overlaying translated text,
+  and reporting a Major `image_overlap` diagnostic.
+- Added an integration fixture that verifies image preservation and the Major
+  `ImageOverlap` quality issue for overlapping digital text.
+- Added regression coverage for Flow heading/code font embedding and reconciled
+  the legacy roadmap entries for multi-image extraction and multi-font Flow.
+- **Vertical-writing boundary**: verbose extraction now reports
+  `UnsupportedVerticalWriting` for `/Identity-V` fonts instead of implying full
+  vertical metrics or reflow support.
+- **Overlay text styles**: translated runs now retain the extracted source RGB
+  color and synthetic italic/bold styling, with a save/reload color regression.
+- **Overlay opacity**: translated runs now retain page-level `/ExtGState /ca`
+  values, including graphics-state `q/Q` restoration, with a save/reload regression.
+- **Dependency snapshot**: updated the ecosystem comparison to the repository's
+  current `lopdf 0.42.0` dependency.
+
 ---
 
 ## [1.20.0] — 2026-09-05

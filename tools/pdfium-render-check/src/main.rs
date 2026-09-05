@@ -46,5 +46,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         image.width(),
         image.height()
     );
+    println!("page_count={}", document.pages().len());
+    println!(
+        "page_size_points={}x{}",
+        page.width().value,
+        page.height().value
+    );
+    println!("raster_size_pixels={}x{}", image.width(), image.height());
     Ok(())
 }

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use harumi::Document;
+use harumi::{Document, LayoutIssueKind};
 use harumi_ai::{
     InputTextSource, LayoutOptions, QualityGate, QualityProfile, TranslateOptions,
     TranslationCache, TranslationMode, Translator, providers::EchoTranslator, translate_pdf,
@@ -45,6 +45,7 @@ impl Translator for LongerTranslator {
 }
 
 const FONT: &[u8] = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+const RED_PIXEL: &[u8] = include_bytes!("../../tests/fixtures/red_1x1.png");
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
 
 fn make_test_pdf() -> Vec<u8> {
@@ -53,6 +54,41 @@ fn make_test_pdf() -> Vec<u8> {
     doc.page(1)
         .unwrap()
         .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
+    doc.save_to_bytes().unwrap()
+}
+
+fn make_styled_test_pdf() -> Vec<u8> {
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text_styled(
+            "Styled source",
+            font,
+            [72.0, 700.0],
+            14.0,
+            [0.8, 0.1, 0.2],
+            false,
+            true,
+        )
+        .unwrap();
+    doc.save_to_bytes().unwrap()
+}
+
+fn make_transparent_test_pdf() -> Vec<u8> {
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text_with_opacity(
+            "Transparent source",
+            font,
+            [72.0, 700.0],
+            14.0,
+            [0.2, 0.3, 0.8],
+            0.4,
+        )
         .unwrap();
     doc.save_to_bytes().unwrap()
 }
@@ -68,6 +104,20 @@ fn make_multipage_pdf() -> Vec<u8> {
     doc.page(2)
         .unwrap()
         .add_text("Page Two Text", font, [72.0, 700.0], 14.0, BLACK)
+        .unwrap();
+    doc.save_to_bytes().unwrap()
+}
+
+fn make_image_overlap_pdf() -> Vec<u8> {
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(FONT).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_image(RED_PIXEL, [60.0, 680.0, 180.0, 50.0])
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("Hello World", font, [72.0, 700.0], 14.0, BLACK)
         .unwrap();
     doc.save_to_bytes().unwrap()
 }
@@ -154,6 +204,42 @@ async fn echo_translator_single_page() {
 }
 
 #[tokio::test]
+async fn overlay_preserves_source_text_color() {
+    let pdf = make_styled_test_pdf();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    let check = Document::from_bytes(&output.pdf_bytes).unwrap();
+    let styled_runs: Vec<_> = check
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .filter(|run| run.text.contains("Styled"))
+        .collect();
+    assert!(!styled_runs.is_empty());
+    assert!(styled_runs.iter().all(|run| {
+        (run.color[0] - 0.8).abs() < 0.02
+            && (run.color[1] - 0.1).abs() < 0.02
+            && (run.color[2] - 0.2).abs() < 0.02
+    }));
+}
+
+#[tokio::test]
+async fn overlay_preserves_source_text_opacity() {
+    let pdf = make_transparent_test_pdf();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    let check = Document::from_bytes(&output.pdf_bytes).unwrap();
+    let runs: Vec<_> = check
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .filter(|run| run.text.contains("Transparent"))
+        .collect();
+    assert!(!runs.is_empty());
+    assert!(runs.iter().any(|run| (run.opacity - 0.4).abs() < 0.02));
+}
+
+#[tokio::test]
 async fn echo_translator_multipage() {
     let pdf = make_multipage_pdf();
     let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
@@ -227,6 +313,21 @@ async fn builder_api() {
         .build();
     let result = translate_pdf(&pdf, opts).await;
     assert!(result.is_ok(), "builder_api failed: {:?}", result.err());
+}
+
+#[tokio::test]
+async fn image_overlap_preserves_image_and_reports_major_issue() {
+    let pdf = make_image_overlap_pdf();
+    let opts = TranslateOptions::new("en", EchoTranslator, FONT.to_vec());
+    let output = translate_pdf(&pdf, opts).await.unwrap();
+    let reloaded = Document::from_bytes(&output.pdf_bytes).unwrap();
+
+    assert!(!reloaded.page_image_bboxes(1).unwrap().is_empty());
+    assert!(output.quality.pages.iter().any(|page| {
+        page.issues
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::ImageOverlap)
+    }));
 }
 
 #[tokio::test]

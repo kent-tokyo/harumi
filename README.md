@@ -293,7 +293,7 @@ numbers are not advanced until a release is cut.
 | Layout regions, collision detection, quality gate | v1.9–v1.16 ✓ |
 | harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.10 ✓ |
 | Automated publish CI | v1.20 ✓ |
-| PDF ecosystem fixtures and pinned adapter checks | in progress / see `docs/PDF_ECOSYSTEM.md` |
+| PDF ecosystem fixtures, spec corpus, and pinned adapter checks | v1.21 candidate / see `docs/PDF_ECOSYSTEM.md` |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
 | Multi-page OcrJson translation | planned |
 

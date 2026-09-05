@@ -95,6 +95,19 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 continue;
             }
 
+            let missing = overlay::uncovered_chars(text, all_faces.as_slice());
+            if !missing.is_empty() {
+                let codepoints = missing
+                    .iter()
+                    .map(|ch| format!("U+{:04X}", *ch as u32))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(harumi::Error::InvalidInput(format!(
+                    "translated text contains characters unavailable in the configured fonts: {codepoints}; add a font fallback"
+                ))
+                .into());
+            }
+
             stats.total_lines += 1;
 
             // Compute normalized desired size and Tc using the same Tc-before-shrink

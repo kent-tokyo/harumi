@@ -3,7 +3,7 @@
 
 #![cfg(feature = "flow")]
 
-use harumi::{Document, FlowDocument, FlowOptions, InlineSpan, Margins};
+use harumi::{Document, FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -33,6 +33,77 @@ fn auto_pagination() {
         reloaded.page_count() >= 2,
         "should have paginated to at least 2 pages"
     );
+}
+
+#[test]
+fn header_footer_repeat_and_page_placeholders_survive_reload() {
+    let opts = FlowOptions {
+        header: Some(HeaderFooter {
+            left: Some("Harumi report".into()),
+            right: Some("{{page}}/{{total}}".into()),
+            ..HeaderFooter::default()
+        }),
+        footer: Some(HeaderFooter::page_number()),
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    doc.push_paragraph("Page one body").unwrap();
+    doc.push_page_break().unwrap();
+    doc.push_paragraph("Page two body").unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+
+    let page_text = |page| {
+        reloaded
+            .extract_text_runs(page)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.text)
+            .collect::<String>()
+    };
+    let first = page_text(1);
+    let second = page_text(2);
+    assert!(first.contains("Harumi report"));
+    assert!(second.contains("Harumi report"));
+    assert!(first.contains("1/2") && first.contains("1 / 2"));
+    assert!(second.contains("2/2") && second.contains("2 / 2"));
+}
+
+#[test]
+fn multi_line_paragraph_avoids_single_line_orphan() {
+    let opts = FlowOptions {
+        page_size: (200.0, 200.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    for _ in 0..15 {
+        doc.push_paragraph("filler").unwrap();
+    }
+    doc.push_paragraph("first line\nsecond line").unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+    let first_page: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    let second_page: String = reloaded
+        .extract_text_runs(2)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(!first_page.contains("first line"));
+    assert!(second_page.contains("first line") && second_page.contains("second line"));
 }
 
 #[test]
@@ -100,6 +171,26 @@ fn custom_margins() {
 }
 
 #[test]
+fn flow_can_embed_distinct_heading_and_code_fonts() {
+    let opts = FlowOptions {
+        heading_font_bytes: Some(NOTO.to_vec()),
+        code_font_bytes: Some(NOTO.to_vec()),
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    doc.push_heading("Heading font", 1).unwrap();
+    doc.push_code_block("code font").unwrap();
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 1);
+    assert!(
+        bytes
+            .windows(b"/FontFile2".len())
+            .any(|w| w == b"/FontFile2")
+    );
+}
+
+#[test]
 fn cjk_paragraph_e2e() {
     let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
     doc.push_heading("日本語の見出し", 1).unwrap();
@@ -149,6 +240,28 @@ fn many_table_rows_paginate() {
         reloaded.page_count() >= 2,
         "50 rows should span at least 2 pages"
     );
+}
+
+#[test]
+fn oversized_table_row_splits_across_pages() {
+    let opts = FlowOptions {
+        page_size: (200.0, 100.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    let value = "line\n".repeat(8);
+    doc.push_key_value_table(&[("key", &value)]).unwrap();
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() >= 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    assert_eq!(text.matches("line").count(), 8);
 }
 
 /// Shared report-generation contract used when comparing harumi FlowDocument

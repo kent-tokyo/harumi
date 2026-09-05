@@ -47,6 +47,22 @@ pub(crate) fn split_by_font(text: &str, faces: &[&Face]) -> Vec<(String, usize)>
     runs
 }
 
+/// Return the distinct characters that no configured font can render.
+///
+/// `split_by_font` keeps its historical primary-font fallback for callers that
+/// only need run partitioning. Translation paths must call this check first so
+/// an unavailable glyph cannot silently become a zero-width measurement or a
+/// `.notdef` glyph in the output PDF.
+pub(crate) fn uncovered_chars(text: &str, faces: &[&Face]) -> Vec<char> {
+    let mut missing = Vec::new();
+    for ch in text.chars() {
+        if !faces.iter().any(|face| face.glyph_index(ch).is_some()) && !missing.contains(&ch) {
+            missing.push(ch);
+        }
+    }
+    missing
+}
+
 // ── Internal types ────────────────────────────────────────────────────────────
 
 pub(crate) struct OverlayLine {
@@ -62,6 +78,12 @@ pub(crate) struct OverlayLine {
     pub(crate) is_heading: bool,
     #[allow(dead_code)]
     pub(crate) is_bold: bool,
+    /// Source RGB fill color used for the translated run.
+    pub(crate) color: [f32; 3],
+    /// Source non-stroking opacity from the active PDF ExtGState.
+    pub(crate) opacity: f32,
+    /// Source italic/oblique style propagated to the translated run.
+    pub(crate) is_italic: bool,
     #[allow(dead_code)]
     pub(crate) page_width: f32,
     pub(crate) text: String,
@@ -110,6 +132,9 @@ struct RawLine {
     fragments: Vec<String>,
     /// True if any fragment on this line is bold.
     is_bold: bool,
+    color: [f32; 3],
+    opacity: f32,
+    is_italic: bool,
     /// Max font_size across fragments on this line (PDF points).
     font_size: f32,
     rotation_degrees: f32,
@@ -209,6 +234,10 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             last.right = last.right.max(frag_right);
             last.fragments.push(frag.text.clone());
             last.is_bold = last.is_bold || frag.is_bold;
+            last.is_italic = last.is_italic || frag.is_italic;
+            // A line is rendered as one translated run. Preserve the first
+            // fragment's opacity rather than accidentally making a mixed line
+            // more transparent or more opaque.
             last.font_size = last.font_size.max(frag.font_size);
             let x0 = last.source_rect[0].min(frag.x);
             let y0 = last.source_rect[1].min(frag.y);
@@ -226,6 +255,9 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             text: frag.text.clone(),
             fragments: vec![frag.text.clone()],
             is_bold: frag.is_bold,
+            color: frag.color,
+            opacity: frag.opacity,
+            is_italic: frag.is_italic,
             font_size: frag.font_size,
             rotation_degrees: frag.rotation_degrees,
             source_rect: [frag.x, frag.y, frag.width, frag.height],
@@ -392,6 +424,9 @@ pub(crate) fn extract_overlay_pages(
                     line_height: lh,
                     is_heading,
                     is_bold: rl.is_bold,
+                    color: rl.color,
+                    opacity: rl.opacity,
+                    is_italic: rl.is_italic,
                     page_width,
                     text: rl.text.clone(),
                     fragment_texts: rl.fragments.clone(),
@@ -1817,6 +1852,18 @@ fn apply_overlay(
                 if text.is_empty() {
                     continue;
                 }
+                let missing = uncovered_chars(text, all_faces);
+                if !missing.is_empty() {
+                    let codepoints = missing
+                        .iter()
+                        .map(|ch| format!("U+{:04X}", *ch as u32))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(harumi::Error::InvalidInput(format!(
+                        "translated text contains characters unavailable in the configured fonts: {codepoints}; add a font fallback"
+                    ))
+                    .into());
+                }
                 let max_fs = line.line_height * 0.85;
                 let fs = if line.normalized_font_size > 0.0 {
                     line.normalized_font_size
@@ -1884,21 +1931,36 @@ fn apply_overlay(
                             fh,
                             [run_x, run_y],
                             display_fs,
-                            [0.0f32, 0.0, 0.0],
-                            1.0,
+                            line.color,
+                            line.opacity,
                             line.rotation_degrees,
                         )?;
                     } else {
-                        doc.page(page_num)?.add_text_styled_with_char_spacing(
-                            &run_text,
-                            fh,
-                            [run_x, line.y],
-                            display_fs,
-                            [0.0f32, 0.0, 0.0],
-                            bold,
-                            false,
-                            char_spacing,
-                        )?;
+                        if (line.opacity - 1.0).abs() < f32::EPSILON {
+                            doc.page(page_num)?.add_text_styled_with_char_spacing(
+                                &run_text,
+                                fh,
+                                [run_x, line.y],
+                                display_fs,
+                                line.color,
+                                bold,
+                                line.is_italic,
+                                char_spacing,
+                            )?;
+                        } else {
+                            doc.page(page_num)?
+                                .add_text_styled_with_char_spacing_and_opacity(
+                                    &run_text,
+                                    fh,
+                                    [run_x, line.y],
+                                    display_fs,
+                                    line.color,
+                                    bold,
+                                    line.is_italic,
+                                    char_spacing,
+                                    line.opacity,
+                                )?;
+                        }
                     }
                     let char_count_run = run_text.chars().count() as f32;
                     let run_advance = measure_text_width(&run_text, run_face, display_fs)
@@ -1973,6 +2035,9 @@ mod tests {
             line_height: 10.0,
             is_heading: false,
             is_bold: false,
+            color: [0.0; 3],
+            opacity: 1.0,
+            is_italic: false,
             page_width: 100.0,
             text: "x".to_owned(),
             fragment_texts: vec!["x".to_owned()],
@@ -2004,5 +2069,16 @@ mod tests {
         assert!(!has_translation(Some(&translations), 1));
         assert!(has_translation(Some(&translations), 2));
         assert!(!has_translation(None, 0));
+    }
+
+    #[test]
+    fn uncovered_chars_are_distinct_and_preserve_order() {
+        let face = Face::parse(
+            include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf"),
+            0,
+        )
+        .unwrap();
+        let missing = uncovered_chars("🙂🙂؟", &[&face]);
+        assert_eq!(missing, vec!['🙂', '؟']);
     }
 }

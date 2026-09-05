@@ -18,7 +18,7 @@ use std::{
     path::Path,
 };
 
-use lopdf::{Dictionary, Object, ObjectId, Stream, StringFormat};
+use lopdf::{Dictionary, LoadOptions, Object, ObjectId, Stream, StringFormat};
 use ttf_parser::Face;
 
 use crate::{
@@ -93,8 +93,9 @@ impl Document {
     /// Returns [`Error::WrongPassword`] if the password is incorrect, or [`Error::Pdf`] for
     /// other failures.
     pub fn from_bytes_with_password(bytes: &[u8], password: &str) -> Result<Self> {
-        let inner = lopdf::Document::load_from_with_password(bytes, password)
-            .map_err(map_lopdf_password_err)?;
+        let inner =
+            lopdf::Document::load_from_with_options(bytes, LoadOptions::with_password(password))
+                .map_err(map_lopdf_password_err)?;
         Ok(Self::from_inner(inner))
     }
 

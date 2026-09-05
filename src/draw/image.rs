@@ -77,7 +77,7 @@ pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
             let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
             let mut alpha = Vec::with_capacity(pixel_count as usize);
             let mut any_alpha_less_than_255 = false;
-            for chunk in rgba.chunks_exact(4) {
+            for chunk in rgba.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&chunk[..3]);
                 alpha.push(chunk[3]);
                 if chunk[3] < 255 {
@@ -108,7 +108,7 @@ pub(crate) fn prepare(bytes: &[u8]) -> Result<PreparedImage> {
             let mut rgb = Vec::with_capacity((pixel_count * 3) as usize);
             let mut alpha = Vec::with_capacity(pixel_count as usize);
             let mut any_alpha_less_than_255 = false;
-            for chunk in ga.chunks_exact(2) {
+            for chunk in ga.as_chunks::<2>().0 {
                 let g = chunk[0];
                 rgb.extend_from_slice(&[g, g, g]);
                 alpha.push(chunk[1]);

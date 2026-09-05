@@ -142,13 +142,19 @@ pub struct TranslateOptions {
     /// In overlay mode, a filled rectangle is drawn over the original text before
     /// placing the translation. Set this when the source PDF has a non-white background
     /// (e.g. safety signs, coloured headers) so the cover matches the background.
+    /// When a translated line intersects an Image XObject, harumi preserves the image
+    /// by skipping that source cover and still overlays the translation; the layout
+    /// report records this as a Major `image_overlap` issue. This is not background
+    /// restoration or automatic relocation of the translation.
     pub cover_color: Option<[f32; 3]>,
     /// Additional TTF/OTF fonts tried in order when the primary `font` does not
     /// contain a glyph for a character (default: empty — no fallback).
     ///
     /// harumi-ai partitions each translated text run into sub-runs by font,
     /// embeds only the fonts that are actually used, and renders each sub-run
-    /// with the appropriate font.  The primary font is always tried first.
+    /// with the appropriate font. The primary font is always tried first. If
+    /// no configured font contains a translated character, translation fails
+    /// with an explicit error instead of silently emitting a missing glyph.
     pub font_fallbacks: Vec<Vec<u8>>,
     /// What to do when translated text overflows its bounding box (default: `Shrink { 6.0 }`).
     pub overflow: OverflowStrategy,

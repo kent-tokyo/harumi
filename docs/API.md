@@ -46,6 +46,7 @@ doc.save_to_bytes()?;   // in-memory variant
 // Extract text from existing PDFs (CID + standard simple fonts)
 let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // `run.rotation_degrees` preserves common 90°/270° text direction.
+// `run.color` and `run.opacity` expose the active fill style when present.
 
 // Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
 let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
@@ -117,7 +118,7 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 |---|---|
 | *(default)* | Text overlay, font embedding, `add_text_box`, metadata, annotations, AcroForm, page ops |
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
-| `image` | `add_image`, `add_image_with_opacity`, `extract_page_image` (enables `draw`) |
+| `image` | `add_image`, `add_image_with_opacity`, `extract_page_image`, `extract_page_images` (enables `draw`) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, headers/footers, inline styling |
 | `html` | `render_html_to_pdf` — HTML → PDF (enables `flow`) |
@@ -148,10 +149,16 @@ NotoSansCJKkr-Regular.ttf  (Korean)
 
 ```
 harumi
-├── lopdf v0.40          — parse and modify existing PDF object graph
+├── lopdf v0.42          — parse and modify existing PDF object graph
 ├── ttf-parser           — font metadata (bbox, units_per_em, ascender)
 └── [internal TTF subsetter] — pure-Rust TrueType subsetting (no external crates)
 ```
+
+Flow/HTML generation is a new-document typesetting path. It does not promise
+pixel-identical reproduction of an existing PDF. For translation overlays,
+text that intersects an image preserves the image and is reported as a Major
+`image_overlap` issue; background restoration and automatic relocation are not
+performed.
 
 Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
 collects all characters used across every page, subsets once per font, and writes everything
@@ -160,5 +167,13 @@ in one pass.
 Extraction is best-effort for malformed or underspecified PDFs. In particular, a Type0/CIDFont
 without a usable `/ToUnicode` CMap may use an Identity-H/V fallback. Use
 `extract_text_runs_verbose()` when the distinction between decoded text and inferred text matters.
-The `TextFragment` bounding box is axis-aligned; complex vertical writing and mixed styles remain
-best-effort and may require visual verification.
+The verbose API also reports `WarningKind::UnsupportedFontSubtype` when a font resource has a
+missing or unsupported `/Subtype`; text using that font is skipped rather than reported as
+successfully decoded. It reports `WarningKind::UnsupportedVerticalWriting` for Type0 fonts using
+`/Identity-V`; text recovery may succeed, but vertical metrics and reflow remain best-effort.
+The `TextFragment` bounding box is axis-aligned; complex vertical writing and mixed styles may
+require visual verification.
+
+`TextFragment::opacity` is the effective non-stroking alpha from page-level `/ExtGState /ca`.
+Opacity from nested Form XObjects with private resources and mixed per-glyph styles remains
+best-effort and should be checked with a renderer.

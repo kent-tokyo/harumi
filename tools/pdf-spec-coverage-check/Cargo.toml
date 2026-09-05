@@ -1,0 +1,11 @@
+[workspace]
+
+[package]
+name = "harumi-pdf-spec-coverage-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+harumi = { path = "../..", features = ["image"] }
+lopdf = "0.42"
