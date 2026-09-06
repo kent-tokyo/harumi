@@ -1,16 +1,25 @@
 {
   "name": "shared-report-generation",
-  "version": 1,
+  "version": 2,
   "backends": ["harumi-flow", "harumi-html", "printpdf", "genpdf"],
   "requirements": {
     "cjk_heading": "四半期レポート",
-    "table_rows": 3,
+    "table_rows": 4,
     "table_representation": true,
     "explicit_page_break": true,
     "html_page_break": true,
     "expected_pages": 2,
-    "extractable_markers": ["四半期レポート", "売上", "¥12,345,678", "明細"],
+    "extractable_markers": ["四半期レポート", "組版契約", "混在スタイル", "売上", "¥12,345,678", "顧客数", "1,234", "地域", "東京・大阪・福岡", "長大セル", "明細"],
+    "marker_order": true,
+    "mixed_cjk_latin_paragraph": true,
+    "long_cell": true,
     "embedded_font": true
+  },
+  "metrics": {
+    "generation_elapsed_ms": "number",
+    "runner_elapsed_ms": "number",
+    "peak_rss_bytes": "number or null when the host does not expose it",
+    "peak_rss_scope": "standalone prebuilt report runner process"
   },
   "comparison_policy": "Compare page count, marker extraction, font embedding, rendered dimensions, dimension deltas, and per-page raster classifications per backend. Classify sub-point A4 dimension differences as rounding differences before investigating layout. Do not treat these checks as pixel-identical rendering or replacement evidence.",
   "comparison_report": "renderer-comparison.json"

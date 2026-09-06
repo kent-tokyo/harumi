@@ -18,7 +18,7 @@ Update the snapshot date and rerun the comparison before using it as a benchmark
 | Bulk extraction and Markdown | `unpdf` | 0.17.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.77 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
-| Existing-PDF CJK write-back | `harumi` | 1.21.0 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
+| Existing-PDF CJK write-back | `harumi` | 1.22.0 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
 
 The external references are the package documentation pages:
 
@@ -103,7 +103,7 @@ only; it is not sufficient to attribute a defect to harumi or to a renderer.
 The new-document comparison fixture is
 [`docs/fixtures/report-generation.json`](fixtures/report-generation.json). The
 harumi side is covered by `tests/flow.rs::report_generation_fixture_contract`:
-it fixes a CJK heading, three-row table, explicit page break, extraction markers,
+it fixes a CJK heading, four-row table, explicit page break, extraction markers,
 and embedded-font evidence. The probe exercises both `harumi-flow` and
 `harumi-html`, while `printpdf` draws an explicit grid and `genpdf` uses its
 table layout element. These are separate comparison artifacts; passing the
@@ -118,6 +118,30 @@ The same probe also checks page-boundary overflow, writes a `harumi-writeback`
 marker with harumi, saves the PDF, and re-extracts the marker successfully.
 The full four-backend run, including fixed-DPI Poppler artifacts, is available
 through [`scripts/check-report-generation-fixture.sh`](../scripts/check-report-generation-fixture.sh).
+
+## New-document typesetting roadmap
+
+The v2 report-generation fixture is a smoke contract, not evidence that harumi already exceeds
+`printpdf` or `genpdf` for general composition. The next track targets measurable
+quality in this order:
+
+1. Freeze a larger paragraph/table fixture with overflow, marker order, cell
+   structure, repeated headers, raster dimensions, time, and peak-memory metrics.
+2. Build one measured paragraph model for Flow and HTML, including Unicode/CJK
+   line breaking, mixed-font fallback, keep constraints, and stronger widow/orphan
+   handling.
+3. Add deterministic table sizing, spans, nested blocks, repeated headers, and
+   continuation borders.
+4. Add page-template reservations, section changes, footnotes, and TOC anchors.
+5. Map supported HTML/CSS semantics onto the shared model and rerun all four
+   backends on every compatibility change.
+
+Competitor comparisons remain axis-specific: extraction and overflow correctness,
+table structure, page geometry, renderer artifacts, and performance are reported
+separately. A pixel difference is diagnostic and is never treated as proof that
+one backend is generally superior. The v1.22.0 release must pass the expanded
+paragraph/table fixtures and retain Poppler artifacts; Pdfium, Chrome, and Acrobat
+remain optional external-runtime evidence gates.
 
 Phase 45B freezes the bulk-extraction corpus contract in
 [`docs/fixtures/bulk-extraction.json`](fixtures/bulk-extraction.json). It
@@ -136,7 +160,7 @@ elapsed time, and leaves the PDFs available for Poppler or another extractor.
 The current baseline is 100% marker recall and coordinate coverage for all five
 inputs; this is a correctness/contract baseline, not a throughput benchmark.
 
-Phase 49 freezes the first high-impact PDF specification corpus for v1.21.0 in
+Phase 49 freezes the first high-impact PDF specification corpus, introduced in v1.21.0, in
 [`docs/fixtures/pdf-spec-coverage.json`](fixtures/pdf-spec-coverage.json). It
 separates page-tree inheritance, Resources/Contents/Form XObjects, font/CMap,
 and image filters. The repeatable unit/save-reload runner is

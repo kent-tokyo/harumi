@@ -118,7 +118,7 @@ harumi는 OCR 엔진이 아닙니다. 번역 경로에는 임의의 LLM 위에 �
 | 요구 사항 | harumi의 해결책 |
 |---|---|
 | CJK 폰트 서브셋팅이 복잡하다 | `embed_font()` 한 번 — 실제 사용된 글리프만 포함, GID 정확히 재번호 지정 |
-| 기존 PDF 구조를 손상시키고 싶지 않다 | 추가 전용: harumi는 원본 객체 그래프에 절대 손대지 않음 |
+| 기존 페이지 내용을 보존하고 싶다 | Overlay는 새 내용을 추가하고, 교체 모드는 대상 콘텐츠 스트림만 다시 씀 |
 | WASM / Lambda에서 실행해야 한다 | 순수 Rust — C/C++ 의존성 없음 |
 | OCR 텍스트를 좌표와 함께 삽입해야 한다 | `add_invisible_text` / 배치 버전 `add_invisible_text_runs` |
 | 기존 PDF의 텍스트를 교체해야 한다 | `replace_text` / `replace_text_preserve_font` / `replace_text_resubset` |

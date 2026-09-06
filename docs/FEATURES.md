@@ -3,7 +3,7 @@
 | Challenge | harumi's answer |
 |---|---|
 | CJK font subsetting is complex | One `embed_font()` call — only used glyphs are included, GIDs correctly remapped; GSUB/GPOS/variable-font tables stripped for macOS Preview and PSPDFKit compatibility |
-| Don't want to corrupt existing PDF structure | Append-only: harumi never touches the original object graph |
+| Need to preserve existing page content | Overlay mode appends new content; replacement modes rewrite only targeted content streams |
 | Need to run in WASM / Lambda / cross-compile | Pure Rust — zero C/C++ dependencies |
 | Need OCR text at specific coordinates | `add_invisible_text` / batch `add_invisible_text_runs` |
 | Need to stamp a watermark on PDFs | `add_text(color)` overlays visible text in any RGB color |
@@ -34,6 +34,11 @@
 | Need a bookmarks / navigation outline | `add_bookmark(title, page, y)` — flat PDF outline entries; CJK titles stored as UTF-16BE automatically |
 | Need page numbers / running headers–footers on every page | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` with `HeaderFooter` (`flow` feature); `{{page}}` / `{{total}}` substituted at render |
 | Need headings to auto-generate outline entries | `FlowOptions { auto_bookmarks: true, .. }` (default) — every `push_heading` creates a bookmark |
+| Need mixed Latin/CJK or symbol-heavy body text | `FlowOptions { fallback_font_bytes: Some(bytes), .. }` selects the fallback per missing glyph while preserving run advances |
+| Need stronger paragraph page-boundary control | `FlowOptions { paragraph_min_lines: 3, .. }` keeps at least three lines together at widow/orphan boundaries |
+| Need headings to avoid page-bottom isolation | `FlowOptions { keep_headings_with_next: true, .. }` reserves the first following body line when it fits |
+| Need tables to avoid page-bottom isolation | `TableOptions { keep_with_next: true, .. }` reserves the complete one-page table and first following body line |
+| Need stable paragraph alignment | `FlowOptions { body_alignment: FlowTextAlignment::Center, .. }` aligns measured normal and styled lines |
 | Need to load a password-protected PDF | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — decrypts on load; both user and owner passwords accepted |
 | Need to save a PDF with password protection | `doc.set_encryption(user_pw, owner_pw)` — encrypts at `save()` time with 128-bit RC4 |
 | Need to check if a PDF was originally encrypted | `doc.is_encrypted()` — `true` even after successful decryption |

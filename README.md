@@ -131,7 +131,7 @@ harumi is not an OCR engine. For the translation path, use `harumi-ai` on top of
 | Challenge | harumi's answer |
 |---|---|
 | CJK font subsetting is complex | One `embed_font()` call — only used glyphs are included, GIDs correctly remapped |
-| Don't want to corrupt existing PDF structure | Append-only: harumi never touches the original object graph |
+| Need to preserve existing page content | Overlay mode appends new content; replacement modes rewrite only targeted content streams |
 | Need to run in WASM / Lambda / cross-compile | Pure Rust — zero C/C++ dependencies |
 | Need OCR text at specific coordinates | `add_invisible_text` / batch `add_invisible_text_runs` |
 | Need to replace text in an existing PDF | `replace_text` / `replace_text_preserve_font` / `replace_text_resubset` |
@@ -282,9 +282,9 @@ doc.page(1)?.add_text(
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current release versions: **v1.21.0** (harumi) / **v0.10.1** (harumi-ai).
-This release includes the fixed PDF specification corpus, renderer comparison
-diagnostics, safer Flow pagination, and opt-in pinned Pdfium CI support.
+Current release versions: **v1.22.0** (harumi) / **v0.10.1** (harumi-ai).
+This release adds shared measured paragraph/table layout, HTML break semantics,
+renderer comparison diagnostics, and bounded large-report verification.
 
 | Milestone | Status |
 |---|---|
@@ -294,6 +294,7 @@ diagnostics, safer Flow pagination, and opt-in pinned Pdfium CI support.
 | harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.10 ✓ |
 | Automated publish CI | v1.21 ✓ |
 | PDF ecosystem fixtures, spec corpus, and pinned adapter checks | v1.21 ✓ / see `docs/PDF_ECOSYSTEM.md` |
+| Competitive new-document typesetting (paragraphs/tables) | v1.22 ✓ for the published contract; nested tables and split rowspans remain planned / see `tasks/todo.md` |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
 | Multi-page OcrJson translation | v0.10 ✓ |
 

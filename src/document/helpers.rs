@@ -5,6 +5,65 @@ use crate::error::{Error, Result};
 
 use super::types::{Color, FieldType, FormField};
 
+/// The font selected for a character by [`diagnose_font_fallback`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlyphResolution {
+    /// The primary font contains a glyph for the character.
+    Primary,
+    /// The fallback font contains a glyph while the primary font does not.
+    Fallback,
+    /// Neither configured font contains a glyph.
+    Missing,
+}
+
+/// Resolution of one distinct character in a primary/fallback font chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlyphFallbackDiagnostic {
+    pub character: char,
+    pub resolution: GlyphResolution,
+}
+
+/// Reports how each distinct Unicode scalar in `text` resolves across the
+/// primary font and one optional fallback font.
+///
+/// Results preserve first-seen order. This is a diagnostic only; it does not
+/// shape text or apply script-specific fallback rules.
+pub fn diagnose_font_fallback(
+    text: &str,
+    primary_font_bytes: &[u8],
+    fallback_font_bytes: Option<&[u8]>,
+) -> Vec<GlyphFallbackDiagnostic> {
+    let primary = Face::parse(primary_font_bytes, 0).ok();
+    let fallback = fallback_font_bytes.and_then(|bytes| Face::parse(bytes, 0).ok());
+    let mut diagnostics = Vec::new();
+    for character in text.chars() {
+        if diagnostics
+            .iter()
+            .any(|item: &GlyphFallbackDiagnostic| item.character == character)
+        {
+            continue;
+        }
+        let resolution = if primary
+            .as_ref()
+            .is_some_and(|face| face.glyph_index(character).is_some())
+        {
+            GlyphResolution::Primary
+        } else if fallback
+            .as_ref()
+            .is_some_and(|face| face.glyph_index(character).is_some())
+        {
+            GlyphResolution::Fallback
+        } else {
+            GlyphResolution::Missing
+        };
+        diagnostics.push(GlyphFallbackDiagnostic {
+            character,
+            resolution,
+        });
+    }
+    diagnostics
+}
+
 pub(super) fn lopdf_string_to_rust(obj: &lopdf::Object) -> Option<String> {
     match obj {
         lopdf::Object::String(bytes, _) => {
@@ -558,6 +617,111 @@ pub(crate) fn is_cjk(ch: char) -> bool {
     )
 }
 
+/// Returns true for punctuation that should not begin a line in CJK layout.
+///
+/// This is the small, deterministic subset shared by Flow, HTML, and text-box
+/// fitting. Full Unicode Line Breaking / language-specific kinsoku remains a
+/// future opt-in feature.
+fn is_line_start_prohibited(ch: char) -> bool {
+    matches!(
+        ch,
+        '、' | '。'
+            | '，'
+            | '．'
+            | '：'
+            | '；'
+            | '！'
+            | '？'
+            | '・'
+            | '〜'
+            | '～'
+            | '…'
+            | '‥'
+            | '〃'
+            | '々'
+            | 'ヽ'
+            | 'ヾ'
+            | 'ゝ'
+            | 'ゞ'
+            | '」'
+            | '』'
+            | '】'
+            | '〕'
+            | '〉'
+            | '》'
+            | '］'
+            | '）'
+            | '｝'
+            | '”'
+            | '’'
+            | '»'
+            | '›'
+            | '!'
+            | '?'
+            | ','
+            | '.'
+            | ':'
+            | ';'
+    ) || is_non_spacing_or_joining_mark(ch)
+        || is_non_breaking_character(ch)
+}
+
+/// Returns true for opening punctuation that should not end a line in CJK layout.
+fn is_line_end_prohibited(ch: char) -> bool {
+    matches!(
+        ch,
+        '(' | '['
+            | '{'
+            | '「'
+            | '『'
+            | '【'
+            | '〔'
+            | '〈'
+            | '《'
+            | '（'
+            | '［'
+            | '｛'
+            | '｟'
+            | '＜'
+            | '“'
+            | '‘'
+            | '«'
+            | '‹'
+            | '﹁'
+            | '﹃'
+            | '﹙'
+            | '﹝'
+            | '﹤'
+            | '〝'
+            | '〖'
+            | '〘'
+    )
+}
+
+/// Unicode marks that must stay attached to the preceding grapheme cluster.
+/// This is deliberately narrower than full UAX #14/#29 support, but prevents
+/// the most damaging breaks for combining accents, variation selectors, and
+/// emoji ZWJ sequences without adding a runtime dependency.
+fn is_non_spacing_or_joining_mark(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0300}'..='\u{036f}'
+            | '\u{1ab0}'..='\u{1aff}'
+            | '\u{1dc0}'..='\u{1dff}'
+            | '\u{20d0}'..='\u{20ff}'
+            | '\u{fe00}'..='\u{fe0f}'
+            | '\u{fe20}'..='\u{fe2f}'
+            | '\u{200d}'
+            | '\u{e0100}'..='\u{e01ef}'
+    )
+}
+
+/// Characters that must not become a line boundary. This covers the common
+/// Unicode no-break spaces and Word Joiner without claiming full UAX #14.
+fn is_non_breaking_character(ch: char) -> bool {
+    matches!(ch, '\u{00a0}' | '\u{202f}' | '\u{2060}' | '\u{feff}')
+}
+
 /// Width of one character in PDF points given the font face and font size.
 /// Returns None if the character is not present in the font (no glyph mapping).
 pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
@@ -604,7 +768,22 @@ pub(super) fn text_width_with_face(text: &str, face: &ttf_parser::Face<'_>, font
 }
 
 /// Greedy line-breaking for a single paragraph (no embedded newlines).
+///
+/// CJK text can break between characters, Latin text prefers ASCII-space word
+/// boundaries, and a small kinsoku subset prevents closing punctuation from
+/// becoming the first character of a line.
 pub fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f32) -> Vec<String> {
+    wrap_paragraph_with_fallback(paragraph, face, None, font_size, box_width)
+}
+
+/// Greedy line-breaking with an optional fallback face for missing glyphs.
+pub(crate) fn wrap_paragraph_with_fallback(
+    paragraph: &str,
+    face: &Face,
+    fallback: Option<&Face>,
+    font_size: f32,
+    box_width: f32,
+) -> Vec<String> {
     // Validate inputs.
     // If font_size or box_width is invalid, return the paragraph as a single line.
     if !font_size.is_finite() || font_size <= 0.0 || !box_width.is_finite() || box_width <= 0.0 {
@@ -623,19 +802,59 @@ pub fn wrap_paragraph(paragraph: &str, face: &Face, font_size: f32, box_width: f
     let mut width_at_word_start: f32 = 0.0;
 
     for ch in paragraph.chars() {
-        let ch_w = glyph_advance_pt(face, ch, font_size).unwrap_or(font_size * 0.5);
+        let ch_w = glyph_advance_pt(face, ch, font_size)
+            .or_else(|| fallback.and_then(|fallback| glyph_advance_pt(fallback, ch, font_size)))
+            .unwrap_or(font_size * 0.5);
 
         if current_w + ch_w > box_width && !current.is_empty() {
+            if current
+                .chars()
+                .last()
+                .is_some_and(is_non_breaking_character)
+            {
+                // Keep the token following a no-break character attached. It is
+                // better to exceed the nominal width than to create a semantic
+                // break inside a protected boundary.
+                current.push(ch);
+                current_w += ch_w;
+                continue;
+            }
+            if current.chars().count() > 1
+                && current.chars().last().is_some_and(is_line_end_prohibited)
+            {
+                let last = current.pop().expect("last character was checked");
+                let last_w = glyph_advance_pt(face, last, font_size)
+                    .or_else(|| {
+                        fallback.and_then(|fallback| glyph_advance_pt(fallback, last, font_size))
+                    })
+                    .unwrap_or(font_size * 0.5);
+                lines.push(std::mem::take(&mut current));
+                current.push(last);
+                current_w = last_w;
+                last_space_byte = None;
+            }
             if is_cjk(ch) || last_space_byte.is_none() {
                 // CJK or no word boundary found → break at the current character
-                lines.push(std::mem::take(&mut current));
-                current_w = 0.0;
-                last_space_byte = None;
+                if is_line_start_prohibited(ch) {
+                    // Keep closing punctuation with the preceding glyph. This
+                    // may exceed the nominal width by one glyph, but avoids the
+                    // more visible and semantically incorrect line-start mark.
+                    current.push(ch);
+                    current_w += ch_w;
+                    continue;
+                } else {
+                    lines.push(std::mem::take(&mut current));
+                    current_w = 0.0;
+                    last_space_byte = None;
+                }
             } else {
                 // Break at the last space: emit everything before it, keep the word after
                 let sp = last_space_byte.unwrap();
                 let word = current[sp + 1..].to_owned(); // sp+1 safe: space is ASCII (1 byte)
-                current.truncate(sp);
+                // Keep the boundary space in the emitted line. It remains visually
+                // equivalent to trimming it at a line break, while preserving the
+                // source text for extraction and downstream layout consumers.
+                current.truncate(sp + 1);
                 lines.push(std::mem::take(&mut current));
                 current = word;
                 current_w = (current_w - width_at_word_start).max(0.0);
@@ -1375,5 +1594,109 @@ mod tests {
         assert!(!is_cjk('1'));
         assert!(!is_cjk(' '));
         assert!(!is_cjk('é')); // Latin Extended
+    }
+
+    #[test]
+    fn unicode_marks_are_not_line_starts() {
+        for mark in ['\u{0301}', '\u{FE0F}', '\u{200D}', '\u{E0100}'] {
+            assert!(
+                is_line_start_prohibited(mark),
+                "mark {mark:?} must stay attached"
+            );
+        }
+        assert!(!is_line_start_prohibited('A'));
+        assert!(is_line_end_prohibited('('));
+        assert!(is_line_end_prohibited('「'));
+        assert!(!is_line_end_prohibited('A'));
+        for no_break in ['\u{00a0}', '\u{202f}', '\u{2060}', '\u{feff}'] {
+            assert!(is_line_start_prohibited(no_break));
+        }
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_cjk_closing_punctuation_off_line_start() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("あいうえお。", &face, 10.0, 40.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(
+            lines.iter().all(|line| !line.starts_with('。')),
+            "closing punctuation must not start a line: {lines:?}"
+        );
+        assert_eq!(
+            lines.concat(),
+            "あいうえお。",
+            "wrapping must preserve text"
+        );
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_iteration_and_ellipsis_marks_off_boundaries() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("あいう…々", &face, 10.0, 28.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines.iter().all(|line| {
+            !line.starts_with('…') && !line.starts_with('々') && !line.ends_with('…')
+        }));
+        assert_eq!(lines.concat(), "あいう…々");
+    }
+
+    #[test]
+    fn wrap_paragraph_preserves_ascii_boundary_space() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let prefix = "alpha ";
+        let width = super::text_width_with_face(prefix, &face, 10.0) + 1.0;
+        let lines = wrap_paragraph("alpha beta", &face, 10.0, width);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert_eq!(lines.concat(), "alpha beta");
+        assert!(
+            lines[0].ends_with(' '),
+            "boundary space was lost: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_opening_punctuation_with_following_text() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("あいう（えお）", &face, 10.0, 50.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(
+            lines.iter().all(|line| !line.ends_with('（')),
+            "opening punctuation must not end a line: {lines:?}"
+        );
+        assert_eq!(lines.concat(), "あいう（えお）");
+    }
+
+    #[test]
+    fn wrap_paragraph_preserves_unicode_no_break_boundaries() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("left\u{00a0}right", &face, 10.0, 20.0);
+
+        assert!(
+            !lines.iter().any(|line| line.ends_with('\u{00a0}'))
+                && !lines.iter().skip(1).any(|line| line.starts_with("right")),
+            "NBSP boundary must stay intact: {lines:?}"
+        );
+        assert_eq!(lines.concat(), "left\u{00a0}right");
+    }
+
+    #[test]
+    fn fallback_diagnostic_preserves_order_and_deduplicates() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let diagnostics = diagnose_font_fallback("A😀A", bytes, Some(bytes));
+
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].character, 'A');
+        assert_eq!(diagnostics[0].resolution, GlyphResolution::Primary);
+        assert_eq!(diagnostics[1].character, '😀');
+        assert_eq!(diagnostics[1].resolution, GlyphResolution::Missing);
     }
 }

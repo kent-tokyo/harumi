@@ -3,7 +3,7 @@
 
 #![cfg(feature = "html")]
 
-use harumi::{Document, HtmlRenderOptions, render_html_to_pdf};
+use harumi::{Document, FlowTextAlignment, HtmlRenderOptions, render_html_to_pdf};
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -28,6 +28,57 @@ fn basic_html() {
 }
 
 #[test]
+fn html_options_share_flow_paragraph_controls() {
+    let opts = HtmlRenderOptions {
+        font_bytes: NOTO.to_vec(),
+        fallback_font_bytes: Some(NOTO.to_vec()),
+        body_alignment: FlowTextAlignment::Center,
+        paragraph_spacing: 0.0,
+        paragraph_min_lines: 3,
+        keep_headings_with_next: true,
+        ..HtmlRenderOptions::default()
+    };
+    let bytes = render_html_to_pdf("<h1>Title</h1><p>日本語 mixed text</p>", opts).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let text: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(text.contains("Title"));
+    assert!(text.contains("日本語"));
+}
+
+#[test]
+fn paragraph_text_align_style_uses_shared_flow_alignment() {
+    let bytes =
+        render_html_to_pdf("<p style=\"text-align: right\">Aligned body</p>", opts()).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let run = doc.extract_text_runs(1).unwrap().remove(0);
+    assert!(
+        run.x > 300.0,
+        "right-aligned text should move inward: {run:?}"
+    );
+}
+
+#[test]
+fn br_inside_paragraph_preserves_line_break() {
+    let bytes = render_html_to_pdf("<p>Before<br>After</p>", opts()).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let runs = doc.extract_text_runs(1).unwrap();
+    let before = runs
+        .iter()
+        .find(|run| run.text.contains("Before"))
+        .expect("Before should be extracted");
+    let after = runs
+        .iter()
+        .find(|run| run.text.contains("After"))
+        .expect("After should be extracted");
+    assert!(before.y > after.y, "<br> should move the next run down");
+}
+
+#[test]
 fn full_html_document() {
     let html = "<!DOCTYPE html><html><head><title>Test</title></head>\
                 <body><h1>Report</h1><p>Introduction.</p></body></html>";
@@ -47,6 +98,17 @@ fn page_break_style_attribute() {
 }
 
 #[test]
+fn page_break_before_style_attribute() {
+    let html = r#"<h1>Page One</h1><h1 style="page-break-before: always">Page Two</h1>"#;
+    let bytes = render_html_to_pdf(html, opts()).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    assert!(
+        doc.page_count() >= 2,
+        "page-break-before should create a new page"
+    );
+}
+
+#[test]
 fn page_break_class() {
     let html = r#"<p>First</p><hr class="page-break"><p>Second</p>"#;
     let bytes = render_html_to_pdf(html, opts()).unwrap();
@@ -62,6 +124,26 @@ fn table_two_columns() {
                 </table>";
     let bytes = render_html_to_pdf(html, opts()).unwrap();
     assert!(bytes.starts_with(b"%PDF"));
+}
+
+#[test]
+fn table_spans_map_to_flow_cells() {
+    let html = "<table>\
+                  <tr><th rowspan='2' style='padding: 6pt'>Group</th><td colspan='2' style='text-align: center'>Top</td></tr>\
+                  <tr><td>Left</td><td style='text-align: right; padding: 4px'>Right</td></tr>\
+                </table>";
+    let bytes = render_html_to_pdf(html, opts()).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let text: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(text.contains("Group"));
+    assert!(text.contains("Top"));
+    assert!(text.contains("Left"));
+    assert!(text.contains("Right"));
 }
 
 #[test]

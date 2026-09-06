@@ -3,7 +3,7 @@ members = [".", "harumi-mcp", "harumi-ai"]
 
 [package]
 name = "harumi"
-version = "1.21.0"
+version = "1.22.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["kent-tokyo <kent-tokyo@users.noreply.github.com>"]
@@ -36,7 +36,7 @@ default = []
 draw = []
 image = ["dep:png", "draw"]
 ocr = []
-flow = ["draw"]
+flow = ["draw", "image"]
 html = ["flow"]
 digital-signature = ["dep:sha2", "dep:rsa", "dep:num-bigint", "dep:pkcs1", "dep:pkcs8", "dep:x509-cert", "dep:der", "dep:cms", "dep:rand", "dep:zeroize"]
 

@@ -115,7 +115,7 @@ harumi 不是 OCR 引擎。翻译路径请使用构建在任意 LLM 之上的 `h
 | 需求 | harumi 的解决方案 |
 |---|---|
 | CJK 字体子集化复杂 | 一次 `embed_font()` 调用——仅包含已用字形，GID 正确重新编号 |
-| 不想破坏现有 PDF 结构 | 仅追加：harumi 从不触碰原始对象图 |
+| 需要保留现有页面内容 | Overlay 追加新内容；替换模式只改写目标内容流 |
 | 需要在 WASM / Lambda 中运行 | 纯 Rust——零 C/C++ 依赖 |
 | 需要带坐标的 OCR 文本 | `add_invisible_text` / 批量版 `add_invisible_text_runs` |
 | 需要替换现有 PDF 中的文本 | `replace_text` / `replace_text_preserve_font` / `replace_text_resubset` |

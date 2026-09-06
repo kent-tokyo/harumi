@@ -1,0 +1,30 @@
+{
+  "name": "flow-pagination-benchmark",
+  "version": 1,
+  "cases": [100, 1000],
+  "warmup_policy": "3 pages before each measured run",
+  "metrics": [
+    "requested_pages",
+    "actual_pages",
+    "warmup_elapsed_ms",
+    "elapsed_ms",
+    "pdf_bytes",
+    "peak_rss_bytes"
+  ],
+  "peak_rss_scope": "standalone prebuilt benchmark process",
+  "interpretation": "Host-dependent diagnostic evidence; not a cross-machine performance claim.",
+  "last_verified_local": {
+    "100": {
+      "actual_pages": 100,
+      "elapsed_ms": 349.449,
+      "pdf_bytes": 93437,
+      "peak_rss_bytes": 51642368
+    },
+    "1000": {
+      "actual_pages": 1000,
+      "elapsed_ms": 33349.391,
+      "pdf_bytes": 896065,
+      "peak_rss_bytes": 53952512
+    }
+  }
+}

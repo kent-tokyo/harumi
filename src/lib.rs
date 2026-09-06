@@ -105,9 +105,10 @@ pub(crate) mod pdf_incremental;
 pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
-    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PageHandle,
-    PdfMetadata, PlacementStatus, ReplaceOptions, TextFieldOptions, TextRun, VerticalAlign,
-    calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph,
+    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, GlyphFallbackDiagnostic,
+    GlyphResolution, OverflowPolicy, PageHandle, PdfMetadata, PlacementStatus, ReplaceOptions,
+    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, diagnose_font_fallback,
+    font_covers_char, glyph_advance_pt, wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{
@@ -130,7 +131,10 @@ pub use document::DebugOverlayOptions;
 pub use extract_image::{PageImage, PageImageFormat};
 
 #[cfg(feature = "flow")]
-pub use flow::{FlowDocument, FlowOptions, HeaderFooter, InlineSpan, Margins};
+pub use flow::{
+    FlowDocument, FlowOptions, FlowTableCell, FlowTextAlignment, HeaderFooter, InlineSpan, Margins,
+    TableCellAlignment, TableColumnWidths, TableOptions, TableWidthAllocation,
+};
 
 #[cfg(feature = "html")]
 pub use flow::html::{HtmlRenderOptions, render_html_to_pdf};

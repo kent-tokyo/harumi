@@ -7,12 +7,13 @@
 //! | Element | Mapping |
 //! |---------|---------|
 //! | `<h1>`–`<h6>` | Heading at the corresponding level |
-//! | `<p>` | Body paragraph |
-//! | `<table><tr><th/td>` | Two-column key/value table |
+//! | `<p>` | Body paragraph; inline `text-align` is supported |
+//! | `<table><tr><th/td>` | Table cells with `colspan`/`rowspan` |
 //! | `<ul><li>` | Bulleted list |
 //! | `<ol><li>` | Numbered list |
-//! | `<br>` | (ignored; use paragraph breaks instead) |
-//! | `style="page-break-after: always"` / `class="page-break"` | Page break |
+//! | `<br>` | Explicit line break inside a paragraph |
+//! | `style="page-break-before: always"` / `class="page-break-before"` | Page break before element |
+//! | `style="page-break-after: always"` / `class="page-break"` | Page break after element |
 //! | `<div>`, `<section>`, `<article>`, … | Block container; children are processed |
 //! | `<strong>`, `<em>`, … | Text content extracted; styling ignored in v1 |
 //! | `<head>`, `<script>`, `<style>`, … | Skipped entirely |
@@ -20,7 +21,8 @@
 use crate::{Error, Result};
 
 use super::{
-    FlowDocument, FlowOptions, InlineSpan, Margins,
+    FlowDocument, FlowOptions, FlowTableCell, FlowTextAlignment, InlineSpan, Margins,
+    TableCellAlignment, TableOptions,
     html_tokenizer::{HtmlNode, parse_html},
 };
 
@@ -36,6 +38,23 @@ pub struct HtmlRenderOptions {
     pub body_font_size: f32,
     /// Line height multiplier relative to font size. Default: 1.4.
     pub line_height_factor: f32,
+    /// Baseline offset in PDF points. Positive values move the baseline upward.
+    /// Default: `0.0`.
+    pub baseline_offset: f32,
+    /// Default trailing spacing for block paragraphs in PDF points. Default: 6.0.
+    pub paragraph_spacing: f32,
+    /// Optional fallback font for body characters missing from `font_bytes`.
+    pub fallback_font_bytes: Option<Vec<u8>>,
+    /// Minimum paragraph lines kept at page boundaries. Default: 2.
+    pub paragraph_min_lines: usize,
+    /// Keep headings with the first following body line when possible.
+    /// Default: `false`.
+    pub keep_headings_with_next: bool,
+    /// Keep image figures with the first following body line when possible.
+    /// Default: `false`.
+    pub keep_figures_with_next: bool,
+    /// Horizontal alignment for body paragraphs. Default: left.
+    pub body_alignment: FlowTextAlignment,
     /// Maximum number of pages that may be generated.
     ///
     /// Prevents DoS from very large HTML inputs. Default: 2000.
@@ -50,6 +69,13 @@ impl Default for HtmlRenderOptions {
             margins: Margins::a4_standard(),
             body_font_size: 11.0,
             line_height_factor: 1.4,
+            baseline_offset: 0.0,
+            paragraph_spacing: 6.0,
+            fallback_font_bytes: None,
+            paragraph_min_lines: 2,
+            keep_headings_with_next: false,
+            keep_figures_with_next: false,
+            body_alignment: FlowTextAlignment::Left,
             max_pages: 2000,
         }
     }
@@ -78,6 +104,13 @@ pub fn render_html_to_pdf(html: &str, options: HtmlRenderOptions) -> Result<Vec<
         margins: options.margins,
         body_font_size: options.body_font_size,
         line_height_factor: options.line_height_factor,
+        baseline_offset: options.baseline_offset,
+        paragraph_spacing: options.paragraph_spacing,
+        fallback_font_bytes: options.fallback_font_bytes,
+        paragraph_min_lines: options.paragraph_min_lines,
+        keep_headings_with_next: options.keep_headings_with_next,
+        keep_figures_with_next: options.keep_figures_with_next,
+        body_alignment: options.body_alignment,
         max_pages: options.max_pages,
         ..FlowOptions::default()
     };
@@ -121,6 +154,10 @@ fn process_one<'a>(
         None => return Ok(()), // Skip text nodes
     };
 
+    if has_page_break_before(elem) {
+        flow.push_page_break()?;
+    }
+
     match tag {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             let level: u8 = tag[1..].parse().unwrap_or(1);
@@ -134,7 +171,9 @@ fn process_one<'a>(
             let spans = collect_inline_spans(elem);
             let has_content = spans.iter().any(|s| !s.text.trim().is_empty());
             if has_content {
-                flow.push_paragraph_styled(&spans)?;
+                let alignment = parse_css_text_alignment(elem.attr("style").as_deref())
+                    .unwrap_or_else(|| flow.default_body_alignment());
+                flow.push_paragraph_styled_with_alignment(&spans, alignment)?;
             }
         }
 
@@ -230,6 +269,16 @@ fn collect_inline_spans_inner(
     let italic = parent_italic || matches!(tag, "em" | "i");
     let color = inherited_color(elem, tag, parent_color);
 
+    if tag == "br" {
+        out.push(InlineSpan {
+            text: "\n".to_owned(),
+            bold: parent_bold,
+            italic: parent_italic,
+            color: parent_color.into(),
+        });
+        return;
+    }
+
     for child in elem.children() {
         let child_tag = child.tag_name();
         // Skip non-content elements.
@@ -255,6 +304,17 @@ fn inherited_color(elem: &HtmlNode, tag: &str, parent_color: [f32; 3]) -> [f32; 
         return c;
     }
     parent_color
+}
+
+fn parse_css_text_alignment(style: Option<&str>) -> Option<FlowTextAlignment> {
+    let style = style?.to_ascii_lowercase();
+    let start = style.find("text-align:")? + "text-align:".len();
+    match style[start..].split(';').next().unwrap_or_default().trim() {
+        "left" => Some(FlowTextAlignment::Left),
+        "center" => Some(FlowTextAlignment::Center),
+        "right" => Some(FlowTextAlignment::Right),
+        _ => None,
+    }
 }
 
 /// Parse `color: #RRGGBB`, `color: #RGB`, or `color: rgb(r, g, b)` from a CSS style string.
@@ -304,6 +364,14 @@ fn has_page_break(elem: &HtmlNode) -> bool {
         || class.split_whitespace().any(|c| c == "page-break")
 }
 
+fn has_page_break_before(elem: &HtmlNode) -> bool {
+    let style = elem.attr("style").unwrap_or_default().to_ascii_lowercase();
+    let class = elem.attr("class").unwrap_or_default();
+    style.contains("page-break-before: always")
+        || style.contains("page-break-before:always")
+        || class.split_whitespace().any(|c| c == "page-break-before")
+}
+
 /// Collects `<tr>` elements that are direct or `<tbody>`/`<thead>`/`<tfoot>`-wrapped
 /// children of `table` — without descending into nested `<table>` elements.
 fn table_rows(table: &HtmlNode) -> Vec<&HtmlNode> {
@@ -327,20 +395,34 @@ fn table_rows(table: &HtmlNode) -> Vec<&HtmlNode> {
 }
 
 fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
-    let mut rows: Vec<(String, String)> = Vec::new();
+    let mut rows: Vec<Vec<FlowTableCell>> = Vec::new();
 
     for tr in table_rows(table) {
         // Collect only direct <th>/<td> children of this <tr>.
-        let cells: Vec<String> = tr
+        let cells: Vec<FlowTableCell> = tr
             .children()
             .filter(|e| matches!(e.tag_name(), Some("th") | Some("td")))
-            .map(|e| collect_text(e).trim().to_owned())
-            .collect();
-
-        match cells.len() {
-            0 => {}
-            1 => rows.push((cells[0].clone(), String::new())),
-            _ => rows.push((cells[0].clone(), cells[1].clone())),
+            .map(|e| {
+                let colspan = parse_span_attribute(e, "colspan")?;
+                let rowspan = parse_span_attribute(e, "rowspan")?;
+                let mut cell = FlowTableCell::new(collect_text(e).trim().to_owned())
+                    .with_colspan(colspan)
+                    .with_rowspan(rowspan);
+                if let Some(alignment) = parse_css_text_alignment(e.attr("style").as_deref()) {
+                    cell = cell.with_alignment(match alignment {
+                        FlowTextAlignment::Left => TableCellAlignment::Left,
+                        FlowTextAlignment::Center => TableCellAlignment::Center,
+                        FlowTextAlignment::Right => TableCellAlignment::Right,
+                    });
+                }
+                if let Some(padding) = parse_css_padding(e.attr("style").as_deref()) {
+                    cell = cell.with_padding(padding);
+                }
+                Ok(cell)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if !cells.is_empty() {
+            rows.push(cells);
         }
     }
 
@@ -348,8 +430,30 @@ fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
         return Ok(());
     }
 
-    let rows_ref: Vec<(&str, &str)> = rows.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    flow.push_key_value_table(&rows_ref)
+    flow.push_table_cells(&rows, TableOptions::default())
+}
+
+fn parse_span_attribute(elem: &HtmlNode, name: &str) -> Result<usize> {
+    elem.attr(name)
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .map_err(|_| Error::InvalidInput(format!("HTML {name} must be a positive integer")))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(1))
+}
+
+fn parse_css_padding(style: Option<&str>) -> Option<f32> {
+    let style = style?.to_ascii_lowercase();
+    let start = style.find("padding:")? + "padding:".len();
+    let value = style[start..].split(';').next()?.trim();
+    let (number, scale) = value
+        .strip_suffix("pt")
+        .map(|value| (value.trim(), 1.0))
+        .or_else(|| value.strip_suffix("px").map(|value| (value.trim(), 0.75)))?;
+    let padding = number.parse::<f32>().ok()? * scale;
+    (padding.is_finite() && padding >= 0.0).then_some(padding)
 }
 
 fn process_list(list: &HtmlNode, flow: &mut FlowDocument, ordered: bool) -> Result<()> {

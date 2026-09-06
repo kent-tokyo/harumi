@@ -1,8 +1,20 @@
-use std::{env, fs, path::Path};
+use std::{env, fs, path::Path, time::Instant};
 
 use harumi::Document;
 
-const MARKERS: [&str; 4] = ["四半期レポート", "売上", "¥12,345,678", "明細"];
+const MARKERS: [&str; 11] = [
+    "四半期レポート",
+    "組版契約",
+    "混在スタイル",
+    "売上",
+    "¥12,345,678",
+    "顧客数",
+    "1,234",
+    "地域",
+    "東京・大阪・福岡",
+    "長大セル",
+    "明細",
+];
 
 fn usage() -> ! {
     eprintln!(
@@ -17,6 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let font_path = args.next().unwrap_or_else(|| usage());
     let output_path = args.next().unwrap_or_else(|| usage());
     let font = fs::read(&font_path)?;
+    let started = Instant::now();
+    let generation_started = Instant::now();
 
     let bytes = match backend.as_str() {
         "harumi-flow" => generate_harumi(&font)?,
@@ -25,12 +39,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "genpdf" => generate_genpdf(Path::new(&font_path), Path::new(&output_path))?,
         _ => usage(),
     };
+    let generation_elapsed_ms = generation_started.elapsed().as_secs_f64() * 1000.0;
 
     if backend != "genpdf" {
         fs::write(&output_path, &bytes)?;
     }
     verify_output(&backend, &bytes)?;
     let writeback_path = verify_quality_and_write_back(&bytes, &font, Path::new(&output_path))?;
+    if let Some(metrics_path) = env::var_os("HARUMI_METRICS_PATH") {
+        let metrics = format!(
+            "{{\n  \"generation_elapsed_ms\": {:.3},\n  \"runner_elapsed_ms\": {:.3},\n  \"peak_rss_bytes\": null,\n  \"peak_rss_scope\": \"standalone prebuilt report runner process\"\n}}\n",
+            generation_elapsed_ms,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        fs::write(metrics_path, metrics)?;
+    }
     println!(
         "generated, extracted, quality-checked, and wrote back {backend}: {output_path} -> {}",
         writeback_path.display()
@@ -43,11 +66,19 @@ fn generate_harumi(font: &[u8]) -> harumi::Result<Vec<u8>> {
 
     let mut doc = FlowDocument::new(font.to_vec(), FlowOptions::default())?;
     doc.push_heading("四半期レポート", 1)?;
-    doc.push_paragraph("同一帳票比較用の固定フィクスチャです。")?;
+    doc.push_paragraph(
+        "段落組版契約: CJK/Latin mixed paragraph with enough text to exercise deterministic wrapping.",
+    )?;
+    doc.push_paragraph_styled(&[
+        harumi::InlineSpan::plain("混在スタイル: "),
+        harumi::InlineSpan::bold("bold"),
+        harumi::InlineSpan::italic(" italic"),
+    ])?;
     doc.push_key_value_table(&[
         ("売上", "¥12,345,678"),
         ("顧客数", "1,234"),
         ("地域", "東京・大阪・福岡"),
+        ("長大セル", "CJK/Latin long cell content for wrapping"),
     ])?;
     doc.push_page_break()?;
     doc.push_heading("明細", 2)?;
@@ -60,11 +91,13 @@ fn generate_harumi_html(font: &[u8]) -> harumi::Result<Vec<u8>> {
 
     let html = r#"
         <h1>四半期レポート</h1>
-        <p>同一帳票比較用のHTML fixtureです。</p>
+        <p>段落組版契約: CJK/Latin mixed paragraph with enough text to exercise deterministic wrapping.</p>
+        <p><strong>混在スタイル</strong>: bold and inline text.</p>
         <table>
           <tr><th>売上</th><td>¥12,345,678</td></tr>
           <tr><th>顧客数</th><td>1,234</td></tr>
           <tr><th>地域</th><td>東京・大阪・福岡</td></tr>
+          <tr><th>長大セル</th><td>CJK/Latin long cell content for wrapping</td></tr>
         </table>
         <div class="page-break"></div>
         <h2>明細</h2>
@@ -92,6 +125,8 @@ fn generate_printpdf(font: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>>
         &font_id,
         &[
             "四半期レポート",
+            "段落組版契約: CJK/Latin mixed paragraph with wrapping.",
+            "混在スタイル: bold and inline text.",
             "売上: ¥12,345,678",
             "顧客数: 1,234",
             "地域: 東京・大阪・福岡",
@@ -138,6 +173,7 @@ fn text_page(font_id: &printpdf::FontId, lines: &[&str], with_table: bool) -> pr
             (212.0, "売上", "¥12,345,678"),
             (194.0, "顧客数", "1,234"),
             (176.0, "地域", "東京・大阪・福岡"),
+            (158.0, "長大セル", "CJK/Latin long cell"),
         ] {
             for (x, text) in [(22.0, key), (78.0, value)] {
                 ops.push(Op::StartTextSection);
@@ -154,7 +190,7 @@ fn text_page(font_id: &printpdf::FontId, lines: &[&str], with_table: bool) -> pr
                 ops.push(Op::EndTextSection);
             }
         }
-        for y in [224.0, 206.0, 188.0, 170.0] {
+        for y in [224.0, 206.0, 188.0, 170.0, 152.0] {
             ops.push(Op::DrawLine {
                 line: printpdf::Line {
                     points: vec![
@@ -180,7 +216,7 @@ fn text_page(font_id: &printpdf::FontId, lines: &[&str], with_table: bool) -> pr
                             bezier: false,
                         },
                         printpdf::LinePoint {
-                            p: Point::new(Mm(x), Mm(170.0)),
+                            p: Point::new(Mm(x), Mm(152.0)),
                             bezier: false,
                         },
                     ],
@@ -208,11 +244,18 @@ fn generate_genpdf(
     let mut doc = genpdf::Document::new(family);
     doc.set_title("shared-report-generation");
     doc.push(genpdf::elements::Paragraph::new("四半期レポート"));
+    doc.push(genpdf::elements::Paragraph::new(
+        "段落組版契約: CJK/Latin mixed paragraph with enough text to exercise deterministic wrapping.",
+    ));
+    doc.push(genpdf::elements::Paragraph::new(
+        "混在スタイル: bold and inline text.",
+    ));
     let mut table = genpdf::elements::TableLayout::new(vec![1, 2]);
     for (key, value) in [
         ("売上", "¥12,345,678"),
         ("顧客数", "1,234"),
         ("地域", "東京・大阪・福岡"),
+        ("長大セル", "CJK/Latin long cell content for wrapping"),
     ] {
         table
             .row()
@@ -239,13 +282,18 @@ fn verify_output(backend: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::
         .flat_map(|page| doc.extract_text_runs(page).unwrap_or_default())
         .map(|run| run.text)
         .collect();
+    let mut marker_offset = 0usize;
     for marker in MARKERS {
-        if !text.contains(marker) {
+        let Some(relative) = text[marker_offset..].find(marker) else {
             if text.is_empty() {
                 dump_extraction_inputs(bytes, backend)?;
             }
-            return Err(format!("{backend}: missing marker {marker:?} in {text:?}").into());
-        }
+            return Err(format!(
+                "{backend}: missing or out-of-order marker {marker:?} in {text:?}"
+            )
+            .into());
+        };
+        marker_offset += relative + marker.len();
     }
     if !bytes.windows(b"/FontFile".len()).any(|w| w == b"/FontFile") {
         return Err(format!("{backend}: no embedded font evidence").into());

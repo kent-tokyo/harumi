@@ -6,6 +6,7 @@ output_dir="${2:-/tmp/harumi-poppler-render-fixture}"
 dpi="${3:-144}"
 expected_pages="${4:-1}"
 report_path="${5:-$output_dir/report.json}"
+metrics_path="${6:-}"
 
 if [[ ! -f "$input" ]]; then
     printf 'fixture not found: %s\n' "$input" >&2
@@ -58,6 +59,11 @@ for image in "$output_dir"/page-*.png; do
 done
 
 page_size="$(printf '%s\n' "$pdf_info" | awk -F': ' '/^Page size:/ { print $2; exit }')"
+if [[ -n "$metrics_path" && -f "$metrics_path" ]]; then
+    backend_metrics="$(tr -d '\n' < "$metrics_path")"
+else
+    backend_metrics='null'
+fi
 pages_json=""
 for ((page = 1; page <= expected_pages; page++)); do
     image="$output_dir/page-$page.png"
@@ -85,6 +91,7 @@ cat > "$report_path" <<EOF
   "dpi": $dpi,
   "page_count": $page_count,
   "page_size_points": "${page_size}",
+  "backend_metrics": ${backend_metrics},
   "pages": [
 ${pages_json}
   ]

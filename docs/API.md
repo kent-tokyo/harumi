@@ -120,8 +120,8 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
 | `image` | `add_image`, `add_image_with_opacity`, `extract_page_image`, `extract_page_images` (enables `draw`) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
-| `flow` | `FlowDocument` builder with auto-pagination, headers/footers, inline styling |
-| `html` | `render_html_to_pdf` — HTML → PDF (enables `flow`) |
+| `flow` | `FlowDocument` builder with auto-pagination, tables, headers/footers, inline styling, fallback fonts, and widow/orphan controls |
+| `html` | `render_html_to_pdf` — HTML → PDF with shared Flow paragraph controls (enables `flow`) |
 | `digital-signature` | `verify_signatures`, `add_signature_field`, `sign_document` |
 
 ---

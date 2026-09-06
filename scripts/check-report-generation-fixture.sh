@@ -21,14 +21,69 @@ if ! [[ "$expected_pages" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 mkdir -p "$output_dir"
+time_mode="none"
+if /usr/bin/time -f '%M' -o /dev/null true 2>/dev/null; then
+    time_mode="gnu"
+elif /usr/bin/time -l -o /dev/null true 2>/dev/null; then
+    time_mode="darwin"
+fi
+
+# Build before starting the resource probe so peak RSS excludes cargo and
+# compiler processes. The measured command below is the standalone runner.
+cargo build --manifest-path "$repo_root/tools/report-generation-check/Cargo.toml" --quiet
+target_dir="${CARGO_TARGET_DIR:-$repo_root/tools/report-generation-check/target}"
+if [[ "$target_dir" != /* ]]; then
+    target_dir="$repo_root/$target_dir"
+fi
+runner_path="$target_dir/debug/harumi-report-generation-check"
+if [[ ! -x "$runner_path" ]]; then
+    printf 'report-generation runner not found after build: %s\n' "$runner_path" >&2
+    exit 1
+fi
+
 for backend in harumi-flow harumi-html printpdf genpdf; do
     pdf_path="$output_dir/$backend.pdf"
     backend_dir="$output_dir/$backend-poppler"
     report_path="$backend_dir/report.json"
-    cargo run --manifest-path "$repo_root/tools/report-generation-check/Cargo.toml" --quiet -- \
-        "$backend" "$font_path" "$pdf_path"
+    metrics_path="$backend_dir/backend-metrics.json"
+    time_path="$backend_dir/process-time.txt"
+    mkdir -p "$backend_dir"
+    if [[ "$time_mode" == "gnu" ]]; then
+        /usr/bin/time -f '%e %M' -o "$time_path" \
+            env HARUMI_METRICS_PATH="$metrics_path" \
+            "$runner_path" \
+            "$backend" "$font_path" "$pdf_path"
+    elif [[ "$time_mode" == "darwin" ]]; then
+        /usr/bin/time -l -o "$time_path" \
+            env HARUMI_METRICS_PATH="$metrics_path" \
+            "$runner_path" \
+            "$backend" "$font_path" "$pdf_path"
+    else
+        HARUMI_METRICS_PATH="$metrics_path" "$runner_path" \
+            "$backend" "$font_path" "$pdf_path"
+    fi
+    peak_rss_bytes=""
+    if [[ "$time_mode" == "gnu" ]]; then
+        peak_rss_kb="$(awk '{print $2}' "$time_path")"
+        [[ "$peak_rss_kb" =~ ^[0-9]+$ ]] && peak_rss_bytes=$((peak_rss_kb * 1024))
+    elif [[ "$time_mode" == "darwin" ]]; then
+        peak_rss_bytes="$(awk '/maximum resident set size/ { print $1; exit }' "$time_path")"
+        [[ "$peak_rss_bytes" =~ ^[0-9]+$ ]] || peak_rss_bytes=""
+    fi
+    if [[ -n "$peak_rss_bytes" ]]; then
+        python3 - "$metrics_path" "$peak_rss_bytes" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+data["peak_rss_bytes"] = int(sys.argv[2])
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+    fi
     bash "$repo_root/scripts/check-poppler-render-fixture.sh" \
-        "$pdf_path" "$backend_dir" "$dpi" "$expected_pages" "$report_path"
+        "$pdf_path" "$backend_dir" "$dpi" "$expected_pages" "$report_path" "$metrics_path"
 done
 
 comparison_args=(

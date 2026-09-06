@@ -25,6 +25,7 @@ is not guaranteed for complex, rotated, vertical, or image-backed pages.
 | **Draw shapes** (rect, line, ellipse, polygon, path) | `add_rect` · `add_line` · `add_ellipse` · `add_polygon` |
 | **Embed JPEG/PNG images** with transparency | `add_image` · `add_image_with_opacity` |
 | **Convert HTML to PDF** | `render_html_to_pdf` (`html` feature) |
+| **Create paginated reports** | `FlowDocument` tables, mixed-font fallback, and configurable widow/orphan protection (`flow` feature) |
 | **Use in WASM / Lambda / Edge** (no C/C++ deps) | All APIs work cross-platform |
 | **Layout planning for translated PDFs** | `fit_text_to_box` + `FitResult::status` (`PlacementStatus`) · `detect_collisions` + `overlap_area` · `extract_layout_regions` + `plan_text_for_regions_with_policy` · `classify_collisions` (`CollisionKind` + `CollisionSeverity`) · `collision_severity()` · `extract_label_value_pairs` (`LabelValuePair`) · `PageFitSummary::from_plans` · `add_fit_debug_overlay` (`draw`) |
 
@@ -80,7 +81,7 @@ for run in runs {
 | `draw` | Shapes: rect, line, ellipse, polygon, polyline | none |
 | `image` | JPEG/PNG embed, extract from scanned PDFs | `png` crate |
 | `ocr` | Tesseract coordinate conversion helpers | none |
-| `flow` | FlowDocument: auto-pagination, headers/footers | none |
+| `flow` | FlowDocument: auto-pagination, tables, headers/footers, inline styling | none |
 | `html` | HTML→PDF conversion (h1–h6, p, table, ul/ol) | none |
 
 ---

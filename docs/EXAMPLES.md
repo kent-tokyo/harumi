@@ -225,6 +225,33 @@ doc.push_key_value_table(&[
 let pdf_bytes = doc.render()?;
 ```
 
+For arbitrary-column reports, use `push_table`. Column widths may be
+intrinsic, fixed points, or fractional weights; long cells wrap and continue
+onto later pages.
+
+```rust,no_run
+use harumi::{FlowDocument, FlowOptions, TableColumnWidths, TableOptions};
+
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+let rows = vec![
+    vec!["Region".into(), "Revenue".into(), "Notes".into()],
+    vec!["Tokyo".into(), "¥12,345,678".into(), "Long CJK/Latin cell".into()],
+];
+doc.push_table(
+    &rows,
+    TableOptions {
+        column_widths: TableColumnWidths::Fractions(vec![1.0, 1.0, 2.0]),
+        ..Default::default()
+    },
+)?;
+```
+
+Horizontal cell spans, repeated headers, per-cell padding/alignment, and border
+styles are supported. Vertical spans and nested blocks remain planned table-engine work.
+
+Use `doc.measure_table_widths(&rows, &options)` to inspect the resolved column
+widths before rendering.
+
 ## Inline text styling in FlowDocument (`flow` feature)
 
 ```rust
@@ -238,6 +265,18 @@ doc.push_paragraph_styled(&[
     InlineSpan::colored("red.", [0.8, 0.0, 0.0]),
 ])?;
 let pdf = doc.render()?;
+```
+
+For mixed scripts, provide an optional fallback font. It is used only for
+characters missing from the primary body font:
+
+```rust
+let opts = FlowOptions {
+    fallback_font_bytes: Some(cjk_font_bytes.to_vec()),
+    ..FlowOptions::default()
+};
+let mut doc = FlowDocument::new(latin_font_bytes, opts)?;
+doc.push_paragraph("Latin 日本語 symbols ✓")?;
 ```
 
 ## Header / footer with page numbers (`flow` feature)

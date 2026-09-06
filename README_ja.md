@@ -117,7 +117,7 @@ harumi は OCR エンジンではありません。翻訳パスには、LLM の�
 | 課題 | harumi の答え |
 |---|---|
 | CJKフォントのサブセット化が難しい | `embed_font()` 1回で完結。使用文字だけ自動的に間引き、GIDも正しく再採番 |
-| 既存PDFの構造を壊したくない | 追記のみ。元のオブジェクトグラフには触れない |
+| 既存ページを保持したい | Overlay は新しい内容を追記し、置換モードは対象のコンテンツストリームだけを書き換える |
 | WASM / Lambda / クロスコンパイル環境でビルドしたい | 純Rust。C依存ゼロ |
 | OCRテキストを座標付きで埋め込みたい | `add_invisible_text` / バッチ版 `add_invisible_text_runs` |
 | 既存PDFのテキストを置換したい | `replace_text` / `replace_text_preserve_font` / `replace_text_resubset` |

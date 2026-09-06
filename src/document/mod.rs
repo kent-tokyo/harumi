@@ -1,8 +1,11 @@
-mod helpers;
+pub(crate) mod helpers;
 mod page;
 mod types;
 
-pub use helpers::{calculate_text_width, font_covers_char, glyph_advance_pt, wrap_paragraph};
+pub use helpers::{
+    GlyphFallbackDiagnostic, GlyphResolution, calculate_text_width, diagnose_font_fallback,
+    font_covers_char, glyph_advance_pt, wrap_paragraph,
+};
 pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,

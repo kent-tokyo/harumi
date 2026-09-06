@@ -9,6 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-09-06
+
+- **Typesetting fixture v2**: expanded the fixed Flow/HTML/printpdf/genpdf report
+  contract with mixed CJK/Latin paragraphs, styled spans, long cells, marker-order
+  checks, and page-boundary validation. Repeated table headers remain future work.
+- **Paragraph line breaking**: the shared Flow/HTML/text-box greedy breaker now
+  prevents a supported set of CJK closing punctuation from starting a line.
+- **HTML paragraph breaks**: `<br>` now becomes an explicit newline in the shared
+  styled paragraph model, preserving the break during measurement and extraction.
+- **HTML page-break-before**: `page-break-before: always` and the
+  `page-break-before` class now start the element on a new Flow page.
+- **Measured paragraph layout**: Flow and HTML paragraph entry points now reuse
+  one measured line collection and line-height model for pagination and drawing.
+- **Whitespace-preserving wrapping**: ASCII word-boundary spaces are retained in
+  the measured line stream so extraction can reconstruct the source paragraph.
+- **Unicode cluster safety**: combining marks, variation selectors, and ZWJ
+  joining marks are prevented from becoming the first character of a line.
+- **Mixed-font fallback**: `FlowOptions::fallback_font_bytes` can now supply an
+  opt-in fallback font for body characters missing from the primary font,
+  preserving per-run advances during normal and styled paragraph drawing.
+- **Configurable widow/orphan protection**: `FlowOptions::paragraph_min_lines`
+  controls the minimum number of lines kept at page boundaries, defaulting to
+  the existing two-line behavior.
+- **Kinsoku boundary safety**: the shared greedy breaker now keeps a broader
+  deterministic set of CJK opening/closing punctuation and Unicode marks from
+  invalid line boundaries.
+- **Measured paragraph alignment**: `FlowOptions::body_alignment` supports
+  deterministic left, center, and right alignment for normal and styled paragraphs.
+- **Per-paragraph spacing**: Flow exposes explicit trailing spacing for normal and
+  styled paragraphs, and HTML exposes the same default spacing through
+  `HtmlRenderOptions::paragraph_spacing`.
+- **Stable baselines**: `FlowOptions::baseline_offset` and the matching HTML
+  option apply one finite, deterministic baseline adjustment to flow text.
+- **Unicode no-break boundaries**: the shared line breaker keeps common Unicode
+  no-break spaces and Word Joiner boundaries intact during overflow handling.
+- **Fallback diagnostics**: `diagnose_font_fallback` reports primary, fallback,
+  and missing resolution for each distinct character in the current two-font chain.
+- **Expanded CJK line boundaries**: the shared breaker now protects common
+  iteration marks, middle dots, wave dashes, and ellipsis marks in addition to
+  the existing punctuation and Unicode mark rules.
+- **Flow figures**: `FlowDocument::push_figure` adds centered PNG/JPEG blocks;
+  `FlowOptions::keep_figures_with_next` can reserve the first following body line.
+- **Vertical table spans**: `FlowTableCell::with_rowspan` supports deterministic
+  row-spanning cells with combined row-height negotiation and border geometry on
+  single-page tables; repeated headers and page-split rowspan tables remain bounded.
+- **Large-report benchmark**: added a 100/1,000-page Flow benchmark with a
+  three-page warm-up, wall time, PDF size, standalone-process peak RSS, and
+  post-render page-count verification.
+- **HTML table parity**: HTML tables now map `colspan` and `rowspan` into the
+  shared Flow table-cell layout instead of the legacy two-column-only path.
+- **HTML cell styles**: table-cell `text-align` and simple `padding` values in
+  `pt` or `px` now map to the shared Flow cell alignment and padding model.
+- **HTML/Flow parity**: `HtmlRenderOptions` now exposes the shared fallback font,
+  paragraph boundary, heading keep-with-next, and body alignment controls.
+- **HTML text alignment**: paragraph `text-align: left|center|right` now uses
+  the same measured alignment path as Flow paragraphs.
+- **Report metrics**: the fixed four-backend report runner now records generation
+  and end-to-end runner time in each backend artifact; peak RSS is measured on the
+  standalone prebuilt runner process when the host exposes the supported probe.
+- **Heading keep-with-next**: opt-in `FlowOptions::keep_headings_with_next`
+  reserves the first following body line when a heading is near a page boundary.
+- **Table keep-with-next**: opt-in `TableOptions::keep_with_next` keeps a
+  one-page table with the first following body line when the combined block fits.
+- **Generic table layout**: `FlowDocument::push_table` now supports arbitrary
+  column counts, intrinsic/fixed/fractional widths, shared wrapping, and bounded
+  continuation across pages, with opt-in repeated header rows. Spans and nested
+  blocks remain planned follow-up work. Horizontal cell spans, per-cell padding
+  and alignment, optional per-column min/max constraints, and
+  `measure_table_widths` are supported. Table border color and width are
+  configurable.
+
 ## [1.21.0] — 2026-09-06
 
 - **Flow pagination safety**: oversized headings and code blocks now split at page
