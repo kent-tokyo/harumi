@@ -170,10 +170,10 @@ without a usable `/ToUnicode` CMap may use an Identity-H/V fallback. Use
 The verbose API also reports `WarningKind::UnsupportedFontSubtype` when a font resource has a
 missing or unsupported `/Subtype`; text using that font is skipped rather than reported as
 successfully decoded. It reports `WarningKind::UnsupportedVerticalWriting` for Type0 fonts using
-`/Identity-V`; text recovery may succeed, but vertical metrics and reflow remain best-effort.
-The `TextFragment` bounding box is axis-aligned; complex vertical writing and mixed styles may
-require visual verification.
+`/Identity-V` as a boundary diagnostic. Basic `/DW2`/`/W2` vertical metrics and common 90°/270°
+placement are supported; complex vertical reflow and mixed composition remain best-effort.
+The `TextFragment` bounding box is axis-aligned and may require visual verification.
 
-`TextFragment::opacity` is the effective non-stroking alpha from page-level `/ExtGState /ca`.
-Opacity from nested Form XObjects with private resources and mixed per-glyph styles remains
+`TextFragment::opacity` is the effective non-stroking alpha from `/ExtGState /ca` at the page or
+directly processed Form XObject level. Deeply nested XObjects and mixed per-glyph styles remain
 best-effort and should be checked with a renderer.

@@ -38,6 +38,15 @@
       "external_renderer": "required"
     },
     {
+      "id": "identity_v_vertical_metrics",
+      "scope": "Identity-V Type0 encoding with DW2/W2 vertical CID metrics",
+      "tests": [
+        "extract::identity_v_metrics_drive_vertical_bbox_and_rotation",
+        "extract::verbose_extraction_reports_identity_v_boundary"
+      ],
+      "external_renderer": "required"
+    },
+    {
       "id": "image_filters",
       "scope": "JPEG/PNG image XObjects and extraction after save/reload",
       "tests": [

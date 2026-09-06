@@ -2,6 +2,15 @@
 
 ---
 
+## [Unreleased]
+
+## [0.10.1] — 2026-09-06
+
+- Preserved source run color, opacity, bold, and italic boundaries in overlay rendering.
+- Added basic `Identity-V` vertical-metrics placement and rotated/sheared image collision
+  handling through the harumi core APIs.
+- Updated multi-page OCR, layout-quality, and renderer-boundary documentation.
+
 ## [0.10.0] — 2026-09-05
 
 ### Added
@@ -9,7 +18,7 @@
 - Rotation-aware overlay placement for common 90°/270° text lines.
 - Multi-page OCR JSON validation and page-specific coordinate conversion.
 - Safer blank-translation handling and expanded page-level layout diagnostics.
-- Synchronized dependency requirement with `harumi` 1.20.
+- Synchronized dependency requirement with `harumi` 1.21.
 
 Complex vertical writing, mixed styles, and pixel-identical output remain best-effort
 and should be visually reviewed.

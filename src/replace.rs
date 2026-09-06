@@ -2633,6 +2633,9 @@ mod tests {
             is_bold: false,
             is_italic: false,
             font_family: String::new(),
+            vertical: false,
+            vertical_default: -880,
+            vertical_runs: vec![],
         }
     }
 

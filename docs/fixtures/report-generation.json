@@ -12,5 +12,6 @@
     "extractable_markers": ["四半期レポート", "売上", "¥12,345,678", "明細"],
     "embedded_font": true
   },
-  "comparison_policy": "Compare page count, marker extraction, font embedding, and rendered dimensions per backend. Do not treat these checks as pixel-identical rendering or replacement evidence."
+  "comparison_policy": "Compare page count, marker extraction, font embedding, rendered dimensions, dimension deltas, and per-page raster classifications per backend. Classify sub-point A4 dimension differences as rounding differences before investigating layout. Do not treat these checks as pixel-identical rendering or replacement evidence.",
+  "comparison_report": "renderer-comparison.json"
 }

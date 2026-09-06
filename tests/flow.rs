@@ -264,6 +264,38 @@ fn oversized_table_row_splits_across_pages() {
     assert_eq!(text.matches("line").count(), 8);
 }
 
+#[test]
+fn oversized_code_block_splits_without_losing_lines() {
+    let opts = FlowOptions {
+        page_size: (200.0, 100.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        code_background: Some([0.95, 0.95, 0.95]),
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    let code = (0..8)
+        .map(|i| format!("code line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    doc.push_code_block(&code).unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() >= 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for i in 0..8 {
+        assert!(
+            text.contains(&format!("code line {i}")),
+            "missing line {i}: {text:?}"
+        );
+    }
+}
+
 /// Shared report-generation contract used when comparing harumi FlowDocument
 /// with printpdf/genpdf: a CJK heading, a table, an explicit page break, and
 /// extractable text must survive serialization.

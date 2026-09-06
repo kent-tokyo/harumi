@@ -282,9 +282,9 @@ doc.page(1)?.add_text(
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current release versions: **v1.20.0** (harumi) / **v0.10.0** (harumi-ai).
-The repository also contains unreleased extraction and comparison work; version
-numbers are not advanced until a release is cut.
+Current release versions: **v1.21.0** (harumi) / **v0.10.1** (harumi-ai).
+This release includes the fixed PDF specification corpus, renderer comparison
+diagnostics, safer Flow pagination, and opt-in pinned Pdfium CI support.
 
 | Milestone | Status |
 |---|---|
@@ -292,10 +292,10 @@ numbers are not advanced until a release is cut.
 | Text extraction, replace, FlowDocument, HTML→PDF | v0.4–v0.8 ✓ |
 | Layout regions, collision detection, quality gate | v1.9–v1.16 ✓ |
 | harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.10 ✓ |
-| Automated publish CI | v1.20 ✓ |
-| PDF ecosystem fixtures, spec corpus, and pinned adapter checks | v1.21 candidate / see `docs/PDF_ECOSYSTEM.md` |
+| Automated publish CI | v1.21 ✓ |
+| PDF ecosystem fixtures, spec corpus, and pinned adapter checks | v1.21 ✓ / see `docs/PDF_ECOSYSTEM.md` |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
-| Multi-page OcrJson translation | planned |
+| Multi-page OcrJson translation | v0.10 ✓ |
 
 ---
 

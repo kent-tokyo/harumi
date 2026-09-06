@@ -90,6 +90,9 @@ pub(crate) struct OverlayLine {
     /// Original fragment texts (individual Tj runs) for text-layer blanking.
     #[allow(dead_code)]
     pub(crate) fragment_texts: Vec<String>,
+    /// Source style spans, retained so mixed-style source lines can be rendered
+    /// as proportionally corresponding translated runs.
+    pub(crate) style_spans: Vec<StyleSpan>,
     /// Font size of the original text (PDF points), derived from TextFragment.font_size.
     pub(crate) font_size: f32,
     /// Normalized font size after applying [`FontSizePolicy`]. Populated in
@@ -107,6 +110,20 @@ pub(crate) struct OverlayLine {
     /// True when this line must not be covered or translated.
     /// Set in `extract_and_translate` based on `skip_header_footer` / `auto_skip_math`.
     pub(crate) is_skip: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TextStyle {
+    pub(crate) color: [f32; 3],
+    pub(crate) opacity: f32,
+    pub(crate) is_bold: bool,
+    pub(crate) is_italic: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StyleSpan {
+    pub(crate) source_len: usize,
+    pub(crate) style: TextStyle,
 }
 
 pub(crate) struct OverlayPage {
@@ -130,6 +147,7 @@ struct RawLine {
     col_right: f32,
     text: String,
     fragments: Vec<String>,
+    style_spans: Vec<StyleSpan>,
     /// True if any fragment on this line is bold.
     is_bold: bool,
     color: [f32; 3],
@@ -213,6 +231,53 @@ fn has_translation(translations: Option<&Vec<String>>, line_index: usize) -> boo
         .is_some_and(|text| !text.trim().is_empty())
 }
 
+/// Map translated characters onto source style spans by cumulative character
+/// proportion. Translation cannot provide a character-for-character mapping,
+/// so this deterministic fallback preserves mixed styles approximately while
+/// keeping the existing line-based translation contract.
+fn translation_style_runs(
+    text: &str,
+    spans: &[StyleSpan],
+    fallback: TextStyle,
+) -> Vec<(String, TextStyle)> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let total_source: usize = spans.iter().map(|span| span.source_len).sum();
+    if total_source == 0 || spans.is_empty() {
+        return vec![(text.to_owned(), fallback)];
+    }
+
+    let mut runs = Vec::new();
+    let mut source_start = 0usize;
+    let mut translated_start = 0usize;
+    for (index, span) in spans.iter().enumerate() {
+        let source_end = source_start + span.source_len;
+        let translated_end = if index + 1 == spans.len() {
+            chars.len()
+        } else {
+            ((source_end as f32 / total_source as f32) * chars.len() as f32).round() as usize
+        }
+        .clamp(translated_start, chars.len());
+        if translated_end > translated_start {
+            runs.push((
+                chars[translated_start..translated_end].iter().collect(),
+                span.style,
+            ));
+        }
+        source_start = source_end;
+        translated_start = translated_end;
+    }
+    if translated_start < chars.len() {
+        runs.push((
+            chars[translated_start..].iter().collect(),
+            spans.last().map(|span| span.style).unwrap_or(fallback),
+        ));
+    }
+    runs
+}
+
 /// Group a slice of fragments (already sorted top-to-bottom within a column)
 /// into text lines using a Y-tolerance merge, then return `RawLine`s.
 fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine> {
@@ -233,11 +298,19 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             last.x = last.x.min(frag.x);
             last.right = last.right.max(frag_right);
             last.fragments.push(frag.text.clone());
+            last.style_spans.push(StyleSpan {
+                source_len: frag.text.chars().count(),
+                style: TextStyle {
+                    color: frag.color,
+                    opacity: frag.opacity,
+                    is_bold: frag.is_bold,
+                    is_italic: frag.is_italic,
+                },
+            });
             last.is_bold = last.is_bold || frag.is_bold;
             last.is_italic = last.is_italic || frag.is_italic;
-            // A line is rendered as one translated run. Preserve the first
-            // fragment's opacity rather than accidentally making a mixed line
-            // more transparent or more opaque.
+            // Keep the legacy line-level values as a fallback; mixed source
+            // styles are rendered from style_spans below.
             last.font_size = last.font_size.max(frag.font_size);
             let x0 = last.source_rect[0].min(frag.x);
             let y0 = last.source_rect[1].min(frag.y);
@@ -254,6 +327,15 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
             col_right,
             text: frag.text.clone(),
             fragments: vec![frag.text.clone()],
+            style_spans: vec![StyleSpan {
+                source_len: frag.text.chars().count(),
+                style: TextStyle {
+                    color: frag.color,
+                    opacity: frag.opacity,
+                    is_bold: frag.is_bold,
+                    is_italic: frag.is_italic,
+                },
+            }],
             is_bold: frag.is_bold,
             color: frag.color,
             opacity: frag.opacity,
@@ -430,6 +512,7 @@ pub(crate) fn extract_overlay_pages(
                     page_width,
                     text: rl.text.clone(),
                     fragment_texts: rl.fragments.clone(),
+                    style_spans: rl.style_spans.clone(),
                     font_size: rl.font_size,
                     normalized_font_size: 0.0,
                     region_usable_right,
@@ -1909,42 +1992,47 @@ fn apply_overlay(
                     }
                     _ => text.into(),
                 };
-                // Synthetic bold for headings and originally-bold lines.
-                let bold = line.is_heading || line.is_bold;
-
-                // Split text into font-specific runs and render each sub-run.
-                // Character spacing (Tc) is distributed evenly across all runs.
-                let runs = split_by_font(&display_text, all_faces);
+                // Split the translation proportionally at source style boundaries,
+                // then split each style run into font-specific runs.
+                let fallback_style = TextStyle {
+                    color: line.color,
+                    opacity: line.opacity,
+                    is_bold: line.is_bold,
+                    is_italic: line.is_italic,
+                };
+                let style_runs =
+                    translation_style_runs(&display_text, &line.style_spans, fallback_style);
                 let mut run_x = line.x;
                 let mut run_y = line.y;
-                for (run_text, fidx) in runs {
-                    // Embed fallback font on first use.
-                    if font_handles[fidx].is_none() {
-                        let fb = &options.font_fallbacks[fidx - 1];
-                        font_handles[fidx] = Some(doc.embed_font(fb)?);
-                    }
-                    let fh = font_handles[fidx].unwrap();
-                    let run_face = all_faces[fidx];
-                    if rotation_is_vertical(line.rotation_degrees) {
-                        doc.page(page_num)?.add_text_with_rotation(
-                            &run_text,
-                            fh,
-                            [run_x, run_y],
-                            display_fs,
-                            line.color,
-                            line.opacity,
-                            line.rotation_degrees,
-                        )?;
-                    } else {
-                        if (line.opacity - 1.0).abs() < f32::EPSILON {
+                for (style_text, style) in style_runs {
+                    let bold = line.is_heading || style.is_bold;
+                    for (run_text, fidx) in split_by_font(&style_text, all_faces) {
+                        // Embed fallback font on first use.
+                        if font_handles[fidx].is_none() {
+                            let fb = &options.font_fallbacks[fidx - 1];
+                            font_handles[fidx] = Some(doc.embed_font(fb)?);
+                        }
+                        let fh = font_handles[fidx].unwrap();
+                        let run_face = all_faces[fidx];
+                        if rotation_is_vertical(line.rotation_degrees) {
+                            doc.page(page_num)?.add_text_with_rotation(
+                                &run_text,
+                                fh,
+                                [run_x, run_y],
+                                display_fs,
+                                style.color,
+                                style.opacity,
+                                line.rotation_degrees,
+                            )?;
+                        } else if (style.opacity - 1.0).abs() < f32::EPSILON {
                             doc.page(page_num)?.add_text_styled_with_char_spacing(
                                 &run_text,
                                 fh,
                                 [run_x, line.y],
                                 display_fs,
-                                line.color,
+                                style.color,
                                 bold,
-                                line.is_italic,
+                                style.is_italic,
                                 char_spacing,
                             )?;
                         } else {
@@ -1954,22 +2042,23 @@ fn apply_overlay(
                                     fh,
                                     [run_x, line.y],
                                     display_fs,
-                                    line.color,
+                                    style.color,
                                     bold,
-                                    line.is_italic,
+                                    style.is_italic,
                                     char_spacing,
-                                    line.opacity,
+                                    style.opacity,
                                 )?;
                         }
-                    }
-                    let char_count_run = run_text.chars().count() as f32;
-                    let run_advance = measure_text_width(&run_text, run_face, display_fs)
-                        + char_spacing * char_count_run;
-                    if rotation_is_vertical(line.rotation_degrees) && line.rotation_degrees < 180.0
-                    {
-                        run_y += run_advance;
-                    } else {
-                        run_x += run_advance;
+                        let char_count_run = run_text.chars().count() as f32;
+                        let run_advance = measure_text_width(&run_text, run_face, display_fs)
+                            + char_spacing * char_count_run;
+                        if rotation_is_vertical(line.rotation_degrees)
+                            && line.rotation_degrees < 180.0
+                        {
+                            run_y += run_advance;
+                        } else {
+                            run_x += run_advance;
+                        }
                     }
                 }
             }
@@ -2041,6 +2130,7 @@ mod tests {
             page_width: 100.0,
             text: "x".to_owned(),
             fragment_texts: vec!["x".to_owned()],
+            style_spans: vec![],
             font_size: 10.0,
             normalized_font_size: 10.0,
             region_usable_right: 22.0,
@@ -2060,6 +2150,39 @@ mod tests {
     fn adjacent_cjk_fragments_do_not_gain_space() {
         assert!(!needs_space_between('日', '本', 0.1, 10.0));
         assert!(needs_space_between('日', '本', 9.0, 10.0));
+    }
+
+    #[test]
+    fn translated_text_keeps_proportional_mixed_styles() {
+        let plain = TextStyle {
+            color: [0.0, 0.0, 0.0],
+            opacity: 1.0,
+            is_bold: false,
+            is_italic: false,
+        };
+        let bold = TextStyle {
+            is_bold: true,
+            color: [1.0, 0.0, 0.0],
+            ..plain
+        };
+        let runs = translation_style_runs(
+            "abcdef",
+            &[
+                StyleSpan {
+                    source_len: 2,
+                    style: plain,
+                },
+                StyleSpan {
+                    source_len: 4,
+                    style: bold,
+                },
+            ],
+            plain,
+        );
+        assert_eq!(
+            runs,
+            vec![("ab".to_owned(), plain), ("cdef".to_owned(), bold)]
+        );
     }
 
     #[test]

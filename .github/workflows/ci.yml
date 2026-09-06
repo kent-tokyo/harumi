@@ -101,3 +101,93 @@ jobs:
         run: cargo semver-checks
       - name: Check semver (all features)
         run: cargo semver-checks --all-features
+
+  pdf-spec-coverage:
+    name: PDF specification coverage (Poppler)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Poppler utilities
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - name: Render specification corpus with Poppler
+        run: bash scripts/check-pdf-spec-coverage-render.sh
+      - name: Upload specification corpus artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-spec-coverage-poppler
+          path: /tmp/harumi-pdf-spec-coverage
+          if-no-files-found: error
+
+  report-generation-contract:
+    name: Report generation renderer artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Poppler utilities
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - name: Generate fixed backend comparison artifacts
+        run: bash scripts/check-report-generation-fixture.sh
+      - name: Upload report generation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-generation-poppler
+          path: /tmp/harumi-report-generation-fixture
+          if-no-files-found: error
+
+  pdfium-contract:
+    name: Pdfium runner compile contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Pdfium runner without unpinned runtime
+        run: PDFIUM_COMPILE_ONLY=1 bash scripts/check-pdfium-render-fixture.sh
+
+  pdfium-runtime:
+    name: Pdfium pinned runtime artifact
+    if: ${{ vars.HARUMI_PDFIUM_LIBRARY_URL != '' && vars.HARUMI_PDFIUM_LIBRARY_SHA256 != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download pinned Pdfium library
+        env:
+          PDFIUM_URL: ${{ vars.HARUMI_PDFIUM_LIBRARY_URL }}
+          PDFIUM_SHA256: ${{ vars.HARUMI_PDFIUM_LIBRARY_SHA256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/harumi-pdfium-runtime
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$PDFIUM_URL" --output /tmp/harumi-pdfium-runtime/libpdfium.so
+          printf '%s  %s\n' "$PDFIUM_SHA256" /tmp/harumi-pdfium-runtime/libpdfium.so \
+            | sha256sum --check --status
+      - name: Render pinned Pdfium fixture
+        env:
+          PDFIUM_LIBRARY_PATH: /tmp/harumi-pdfium-runtime/libpdfium.so
+          PDFIUM_LIBRARY_SHA256: ${{ vars.HARUMI_PDFIUM_LIBRARY_SHA256 }}
+        run: |
+          bash scripts/check-pdfium-render-fixture.sh \
+            examples/fixtures/scanned_sample.pdf \
+            /tmp/harumi-pdfium-runtime/page-1.png \
+            0 1600 \
+            /tmp/harumi-pdfium-runtime/report.json
+      - name: Upload Pdfium runtime artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfium-pinned-runtime
+          path: /tmp/harumi-pdfium-runtime
+          if-no-files-found: ignore
+          retention-days: 14

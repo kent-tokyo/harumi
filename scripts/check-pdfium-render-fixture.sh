@@ -7,6 +7,12 @@ page_index="${3:-0}"
 target_width="${4:-1600}"
 report_path="${5:-${output%.png}.json}"
 
+if [[ "${PDFIUM_COMPILE_ONLY:-0}" == "1" ]]; then
+    cargo check --manifest-path tools/pdfium-render-check/Cargo.toml --quiet
+    printf 'Pdfium runner compile contract passed (runtime execution skipped)\n'
+    exit 0
+fi
+
 if [[ ! -f "$input" ]]; then
     printf 'fixture not found: %s\n' "$input" >&2
     exit 1
@@ -19,6 +25,19 @@ fi
 if [[ ! -f "$PDFIUM_LIBRARY_PATH" ]]; then
     printf 'PDFIUM_LIBRARY_PATH is not a file: %s\n' "$PDFIUM_LIBRARY_PATH" >&2
     exit 127
+fi
+if [[ -z "${PDFIUM_LIBRARY_SHA256:-}" ]]; then
+    printf 'Pdfium runtime is not hash-pinned. Set PDFIUM_LIBRARY_SHA256 to the expected SHA-256 before running this fixture.\n' >&2
+    exit 127
+fi
+if ! [[ "$PDFIUM_LIBRARY_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+    printf 'PDFIUM_LIBRARY_SHA256 must be a 64-digit hexadecimal SHA-256: %s\n' "$PDFIUM_LIBRARY_SHA256" >&2
+    exit 2
+fi
+actual_library_sha256="$(shasum -a 256 "$PDFIUM_LIBRARY_PATH" | awk '{ print $1 }')"
+if [[ "${actual_library_sha256,,}" != "${PDFIUM_LIBRARY_SHA256,,}" ]]; then
+    printf 'Pdfium runtime hash mismatch: expected %s, got %s\n' "$PDFIUM_LIBRARY_SHA256" "$actual_library_sha256" >&2
+    exit 1
 fi
 
 renderer_output="$(cargo run \
@@ -62,6 +81,7 @@ cat > "$report_path" <<EOF
   "input": "$(basename "$input")",
   "page_index": $page_index,
   "target_width": $target_width,
+  "pdfium_library_sha256": "$actual_library_sha256",
   "page_count": $page_count,
   "page_size_points": "$page_size",
   "raster_size_pixels": "$raster_size",

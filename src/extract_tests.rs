@@ -135,6 +135,9 @@ fn font_info_advance_width_fallback() {
         is_bold: false,
         is_italic: false,
         font_family: String::new(),
+        vertical: false,
+        vertical_default: -880,
+        vertical_runs: vec![],
     };
     assert_eq!(info.advance_width(5), 600);
     assert_eq!(info.advance_width(0), 1000);
@@ -626,12 +629,19 @@ fn extract_cid_xobject_inherited_resources() {
     font_d.set("ToUnicode", Object::Reference(cmap_id));
     let font_id = doc.add_object(Object::Dictionary(font_d));
 
-    // Form XObject: /Resources/Font has F1, content stream uses 2-byte CID hex.
+    // Form XObject: /Resources/Font has F1, and a private ExtGState controls
+    // the text fill opacity. Content uses 2-byte CID hex.
     // <00480069> encodes GID 0x0048 ('H') and GID 0x0069 ('i').
     let mut xobj_font_d = Dictionary::new();
     xobj_font_d.set("F1", Object::Reference(font_id));
     let mut xobj_res = Dictionary::new();
     xobj_res.set("Font", Object::Dictionary(xobj_font_d));
+    let mut xobj_gs = Dictionary::new();
+    let mut translucent = Dictionary::new();
+    translucent.set("Type", Object::Name(b"ExtGState".to_vec()));
+    translucent.set("ca", Object::Real(0.4));
+    xobj_gs.set("GS1", Object::Dictionary(translucent));
+    xobj_res.set("ExtGState", Object::Dictionary(xobj_gs));
     let mut xobj_d = Dictionary::new();
     xobj_d.set("Type", Object::Name(b"XObject".to_vec()));
     xobj_d.set("Subtype", Object::Name(b"Form".to_vec()));
@@ -647,7 +657,7 @@ fn extract_cid_xobject_inherited_resources() {
     xobj_d.set("Resources", Object::Dictionary(xobj_res));
     let xobj_id = doc.add_object(Object::Stream(Stream::new(
         xobj_d,
-        b"BT /F1 12 Tf <00480069> Tj ET".to_vec(),
+        b"/GS1 gs BT /F1 12 Tf <00480069> Tj ET".to_vec(),
     )));
 
     // Minimal page content stream.
@@ -695,6 +705,10 @@ fn extract_cid_xobject_inherited_resources() {
     let catalog_id = doc.add_object(Object::Dictionary(catalog));
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
+    assert_eq!(
+        xobject_extgstates(&doc, page_id, xobj_id).get(b"GS1".as_slice()),
+        Some(&0.4)
+    );
     let frags = extract_text_runs_from_page(&doc, page_id).unwrap();
     let text: String = frags
         .iter()
@@ -708,6 +722,16 @@ fn extract_cid_xobject_inherited_resources() {
     assert!(
         text.contains("Hi"),
         "expected 'Hi' from CID+hex decode, got: {text:?}"
+    );
+    assert!(
+        frags
+            .iter()
+            .all(|fragment| (fragment.opacity - 0.4).abs() < 0.01),
+        "expected private XObject ExtGState opacity, got: {:?}",
+        frags
+            .iter()
+            .map(|fragment| fragment.opacity)
+            .collect::<Vec<_>>()
     );
 
     // Without /ToUnicode, the Identity-H path remains best-effort for the
@@ -802,6 +826,9 @@ fn ctm_transforms_coordinates_to_page_space() {
             is_italic: false,
             font_family: String::new(),
             base_font: String::new(),
+            vertical: false,
+            vertical_default: -880,
+            vertical_runs: vec![],
         },
     );
 
@@ -2300,4 +2327,37 @@ fn page_layout_quality_reports_accepted_shrink_as_minor() {
             .any(|issue| issue.kind == LayoutIssueKind::AcceptedShrink
                 && issue.severity == LayoutIssueSeverity::Minor)
     );
+}
+
+#[test]
+fn transformed_image_unit_square_bbox_includes_rotation_and_shear() {
+    let rotated = transformed_unit_square_bbox([0.0, 2.0, -3.0, 0.0, 10.0, 20.0])
+        .expect("non-degenerate rotation should have a bbox");
+    assert_eq!(rotated, [7.0, 20.0, 3.0, 2.0]);
+
+    let sheared = transformed_unit_square_bbox([2.0, 0.5, 0.75, 3.0, 10.0, 20.0])
+        .expect("non-degenerate shear should have a bbox");
+    assert_eq!(sheared, [10.0, 20.0, 2.75, 3.5]);
+}
+
+#[test]
+fn identity_v_metrics_drive_vertical_bbox_and_rotation() {
+    let metrics = parse_w2_array(&[
+        Object::Integer(10),
+        Object::Array(vec![
+            Object::Integer(-900),
+            Object::Integer(500),
+            Object::Integer(880),
+        ]),
+    ]);
+    assert_eq!(metrics[0].start_gid, 10);
+    assert_eq!(metrics[0].widths, vec![-900]);
+
+    let (x, y, width, height, rotation) =
+        vertical_text_bbox(100.0, 200.0, -1.8, 1.0, IDENTITY_CTM, [1.0, 0.0, 0.0, 1.0]);
+    assert!((x - 100.0).abs() < 0.001);
+    assert!((y - 198.2).abs() < 0.001);
+    assert!((width - 1.0).abs() < 0.001);
+    assert!((height - 1.8).abs() < 0.001);
+    assert!((rotation - 270.0).abs() < 0.01);
 }

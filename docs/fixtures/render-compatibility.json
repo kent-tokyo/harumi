@@ -5,6 +5,7 @@
   "comparison": {
     "command": "python3 scripts/compare-render-artifacts.py",
     "schema": "render-comparison-v1",
+    "multi_page_policy": "Compare every page; output page_comparisons for non-reference renderers.",
     "reference": "poppler",
     "classification_policy": "A raster difference is a diagnostic signal only; it is not by itself evidence that harumi or a renderer is defective."
   },

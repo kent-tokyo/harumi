@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "harumi"
-version = "1.20.0"
+version = "1.21.0"
 dependencies = [
  "axum",
  "cms",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "harumi-ai"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "base64",

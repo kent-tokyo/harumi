@@ -136,6 +136,7 @@ mod tests {
             page_width: 595.0,
             text: String::new(),
             fragment_texts: vec![],
+            style_spans: vec![],
             font_size,
             normalized_font_size: 0.0,
             region_usable_right: 595.0,

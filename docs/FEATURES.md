@@ -62,3 +62,5 @@
 | Need to extract PDF table borders (vector rules) | `doc.extract_vector_rules(page) -> Vec<VectorRule>` |
 | Need font-size normalization for translation | `ReplaceOptions::font_size_override` / `char_spacing` |
 | Need to preserve 90°/270° text direction during overlay | `TextFragment::rotation_degrees` is propagated by `harumi-ai` for common vertical lines |
+| Need basic CJK vertical extraction | Type0 `/Identity-V` with `/DW2`/`/W2` metrics and common 90°/270° placement; complex mixed composition remains best-effort |
+| Need source text opacity in extraction | `TextFragment::opacity` from page or directly processed Form XObject `/ExtGState /ca` |

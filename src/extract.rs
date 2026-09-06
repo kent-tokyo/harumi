@@ -234,11 +234,20 @@ pub(crate) struct FontInfo {
     pub(crate) is_bold: bool,
     pub(crate) is_italic: bool,
     pub(crate) font_family: String,
+    /// True for Type0 fonts using the PDF vertical-writing encoding.
+    pub(crate) vertical: bool,
+    pub(crate) vertical_default: i32,
+    pub(crate) vertical_runs: Vec<VerticalWidthRun>,
 }
 
 pub(crate) struct WidthRun {
     pub(crate) start_gid: u16,
     pub(crate) widths: Vec<u32>,
+}
+
+pub(crate) struct VerticalWidthRun {
+    pub(crate) start_gid: u16,
+    pub(crate) widths: Vec<i32>,
 }
 
 impl FontInfo {
@@ -252,6 +261,18 @@ impl FontInfo {
             }
         }
         self.dw
+    }
+
+    pub(crate) fn vertical_advance(&self, gid: u16) -> i32 {
+        for run in &self.vertical_runs {
+            if gid >= run.start_gid {
+                let idx = (gid - run.start_gid) as usize;
+                if idx < run.widths.len() {
+                    return run.widths[idx];
+                }
+            }
+        }
+        self.vertical_default
     }
 }
 
@@ -1660,8 +1681,9 @@ fn collect_image_xobject_names(doc: &lopdf::Document, page_id: ObjectId) -> Vec<
 
 /// Returns `[x, y, width, height]` in PDF points for each Image XObject on the page.
 ///
-/// Uses the CTM at each `Do` invocation to compute placement.  Only axis-aligned
-/// images (shear ≈ 0) with non-degenerate dimensions are returned.
+/// Uses the CTM at each `Do` invocation to compute placement.  Rotated and
+/// sheared images are represented by the axis-aligned bounding box of their
+/// transformed unit square, which is conservative for collision detection.
 pub(crate) fn extract_image_bboxes_from_page(
     doc: &lopdf::Document,
     page_id: ObjectId,
@@ -1712,18 +1734,9 @@ pub(crate) fn extract_image_bboxes_from_page(
                         if i > 0
                             && let Token::Name(name) = &tokens[i - 1].0
                             && image_names.contains(name)
+                            && let Some(bbox) = transformed_unit_square_bbox(ctm)
                         {
-                            let [a, _b, _c, d, e, f] = ctm;
-                            let shear_b = ctm[1];
-                            let shear_c = ctm[2];
-                            // Only emit bbox for axis-aligned placements.
-                            if shear_b.abs() < 0.01
-                                && shear_c.abs() < 0.01
-                                && a.abs() > 1.0
-                                && d.abs() > 1.0
-                            {
-                                bboxes.push([e + a.min(0.0), f + d.min(0.0), a.abs(), d.abs()]);
-                            }
+                            bboxes.push(bbox);
                         }
                     }
                     _ => {}
@@ -1734,6 +1747,44 @@ pub(crate) fn extract_image_bboxes_from_page(
     }
 
     bboxes
+}
+
+/// Return the axis-aligned bounding box of a PDF unit square after applying a
+/// six-parameter affine transform `[a b c d e f]`.
+fn transformed_unit_square_bbox(ctm: [f32; 6]) -> Option<[f32; 4]> {
+    let [a, b, c, d, e, f] = ctm;
+    if !ctm.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    let points = [
+        (e, f),
+        (a + e, b + f),
+        (c + e, d + f),
+        (a + c + e, b + d + f),
+    ];
+    let min_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let width = max_x - min_x;
+    let height = max_y - min_y;
+    if width > f32::EPSILON && height > f32::EPSILON {
+        Some([min_x, min_y, width, height])
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1940,7 +1991,6 @@ fn extract_text_from_xobjects(
     out: &mut Vec<TextFragment>,
     _depth: u8,
 ) {
-    let extgstates = collect_extgstates(doc, page_id);
     let saved_ctm = carry.ctm;
     // Save the page-level CTM stack: each XObject gets its own fresh stack starting
     // at its combined Do-time CTM × XObject matrix, independent of the page's state.
@@ -1958,13 +2008,14 @@ fn extract_text_from_xobjects(
             };
             if let Some(content) = decode_form_xobject(doc, xobj_id) {
                 let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                let xobj_extgstates = xobject_extgstates(doc, page_id, xobj_id);
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
                 parse_content_stream(
                     &content,
                     &xobj_fonts,
-                    &extgstates,
+                    &xobj_extgstates,
                     carry,
                     out,
                     None,
@@ -1981,13 +2032,14 @@ fn extract_text_from_xobjects(
         for xobj_id in xobj_ids {
             if let Some(content) = decode_form_xobject(doc, xobj_id) {
                 let xobj_fonts = xobject_fonts(doc, page_id, xobj_id);
+                let xobj_extgstates = xobject_extgstates(doc, page_id, xobj_id);
                 let xobj_matrix = xobject_matrix(doc, xobj_id);
                 carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                 carry.ctm_stack = vec![carry.ctm];
                 parse_content_stream(
                     &content,
                     &xobj_fonts,
-                    &extgstates,
+                    &xobj_extgstates,
                     carry,
                     out,
                     None,
@@ -2057,6 +2109,27 @@ fn xobject_fonts(
         merged.extend(xobj_specific);
         merged
     }
+}
+
+/// Resolve ExtGState resources for a Form XObject, with inherited page-level
+/// entries as fallback. A private XObject entry wins on name collisions.
+fn xobject_extgstates(
+    doc: &lopdf::Document,
+    page_id: ObjectId,
+    xobj_id: ObjectId,
+) -> HashMap<Vec<u8>, f32> {
+    let mut result = collect_extgstates(doc, page_id);
+    let Some(resources_dict) = doc
+        .get_object(xobj_id)
+        .ok()
+        .and_then(|object| object.as_stream().ok())
+        .and_then(|stream| stream.dict.get(b"Resources").ok())
+        .and_then(|resources| resolve_dict(doc, resources))
+    else {
+        return result;
+    };
+    result.extend(collect_extgstates_from_resources(doc, resources_dict));
+    result
 }
 
 fn xobject_fonts_verbose(
@@ -2275,7 +2348,6 @@ fn extract_text_from_xobjects_verbose(
     _depth: u8,
     warnings: &mut Vec<ExtractionWarning>,
 ) {
-    let extgstates = collect_extgstates(doc, page_id);
     let saved_ctm = carry.ctm;
     let saved_ctm_stack = carry.ctm_stack.clone();
 
@@ -2290,13 +2362,14 @@ fn extract_text_from_xobjects_verbose(
             match decode_form_xobject_verbose(doc, xobj_id) {
                 Ok(content) => {
                     let xobj_fonts = xobject_fonts_verbose(doc, page_id, xobj_id, warnings);
+                    let xobj_extgstates = xobject_extgstates(doc, page_id, xobj_id);
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(*do_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
                     parse_content_stream(
                         &content,
                         &xobj_fonts,
-                        &extgstates,
+                        &xobj_extgstates,
                         carry,
                         out,
                         None,
@@ -2315,13 +2388,14 @@ fn extract_text_from_xobjects_verbose(
             match decode_form_xobject_verbose(doc, xobj_id) {
                 Ok(content) => {
                     let xobj_fonts = xobject_fonts_verbose(doc, page_id, xobj_id, warnings);
+                    let xobj_extgstates = xobject_extgstates(doc, page_id, xobj_id);
                     let xobj_matrix = xobject_matrix(doc, xobj_id);
                     carry.ctm = multiply_ctm(saved_ctm, xobj_matrix);
                     carry.ctm_stack = vec![carry.ctm];
                     parse_content_stream(
                         &content,
                         &xobj_fonts,
-                        &extgstates,
+                        &xobj_extgstates,
                         carry,
                         out,
                         None,
@@ -2797,6 +2871,26 @@ fn collect_type0_font(
         })
         .map(parse_w_array)
         .unwrap_or_default();
+    let vertical = matches!(
+        fd.get(b"Encoding").ok(),
+        Some(Object::Name(name)) if name.as_slice() == b"Identity-V"
+    );
+    let vertical_default = cid_dict
+        .get(b"DW2")
+        .ok()
+        .and_then(|object| resolve_object(doc, object))
+        .and_then(|object| object.as_array().ok())
+        .and_then(|array| array.first())
+        .and_then(object_number)
+        .map(|value| -value.round() as i32)
+        .unwrap_or(-880);
+    let vertical_runs = cid_dict
+        .get(b"W2")
+        .ok()
+        .and_then(|object| resolve_object(doc, object))
+        .and_then(|object| object.as_array().ok())
+        .map(|array| parse_w2_array(array))
+        .unwrap_or_default();
 
     Some(FontInfo {
         to_unicode,
@@ -2809,6 +2903,9 @@ fn collect_type0_font(
         is_bold,
         is_italic,
         font_family,
+        vertical,
+        vertical_default,
+        vertical_runs,
     })
 }
 
@@ -2864,6 +2961,9 @@ fn collect_simple_font(
         is_bold,
         is_italic,
         font_family,
+        vertical: false,
+        vertical_default: -880,
+        vertical_runs: Vec::new(),
     }
 }
 
@@ -3971,6 +4071,57 @@ fn parse_w_array(arr: &[Object]) -> Vec<WidthRun> {
     runs
 }
 
+/// Parse the vertical CID metrics in `/W2`. Each array entry is a triple
+/// `(w1y, v1x, v1y)`; only the vertical displacement is needed for extraction.
+fn parse_w2_array(arr: &[Object]) -> Vec<VerticalWidthRun> {
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < arr.len() {
+        let Ok(start) = arr[i].as_i64() else {
+            i += 1;
+            continue;
+        };
+        let start_gid = start as u16;
+        i += 1;
+        if i >= arr.len() {
+            break;
+        }
+        match &arr[i] {
+            Object::Array(values) => {
+                let widths = values
+                    .chunks(3)
+                    .filter_map(|triple| triple.first().and_then(|value| value.as_i64().ok()))
+                    .map(|value| value as i32)
+                    .collect::<Vec<_>>();
+                runs.push(VerticalWidthRun { start_gid, widths });
+                i += 1;
+            }
+            Object::Integer(_) | Object::Real(_) => {
+                let Ok(end) = arr[i].as_i64() else {
+                    i += 1;
+                    continue;
+                };
+                i += 1;
+                if i + 2 >= arr.len() {
+                    break;
+                }
+                let Some(w1y) = arr[i].as_i64().ok() else {
+                    i += 1;
+                    continue;
+                };
+                i += 3;
+                let count = (end as usize).saturating_sub(start_gid as usize) + 1;
+                runs.push(VerticalWidthRun {
+                    start_gid,
+                    widths: vec![w1y as i32; count],
+                });
+            }
+            _ => i += 1,
+        }
+    }
+    runs
+}
+
 // ---------------------------------------------------------------------------
 // Step 3: Tokenizer
 // ---------------------------------------------------------------------------
@@ -4978,6 +5129,7 @@ fn decode_chars_to_fragment(
 
     let mut text = String::new();
     let mut total_advance = 0.0f32;
+    let mut total_vertical_advance = 0.0f32;
 
     match font_info.bytes_per_char {
         2 => {
@@ -5004,6 +5156,7 @@ fn decode_chars_to_fragment(
                 text.push_str(&mapped);
                 let aw = font_info.advance_width(gid);
                 total_advance += aw as f32 / 1000.0;
+                total_vertical_advance += font_info.vertical_advance(gid) as f32 / 1000.0;
             }
         }
         _ => {
@@ -5032,16 +5185,25 @@ fn decode_chars_to_fragment(
     if total_advance == 0.0 {
         total_advance = text.chars().count() as f32 * 0.5;
     }
-    let (bbox_x, bbox_y, bbox_width, bbox_height) = text_bbox(
-        x,
-        y,
-        total_advance,
-        tf_font_size,
-        horizontal_scale,
-        ctm,
-        tm_matrix,
-    );
-    let rotation_degrees = text_rotation_degrees(ctm, tm_matrix);
+    let (bbox_x, bbox_y, bbox_width, bbox_height, rotation_degrees) = if font_info.vertical {
+        if total_vertical_advance == 0.0 {
+            total_vertical_advance = text.chars().count() as f32 * -0.88;
+        }
+        let (x, y, width, height, rotation) =
+            vertical_text_bbox(x, y, total_vertical_advance, tf_font_size, ctm, tm_matrix);
+        (x, y, width, height, rotation)
+    } else {
+        let (x, y, width, height) = text_bbox(
+            x,
+            y,
+            total_advance,
+            tf_font_size,
+            horizontal_scale,
+            ctm,
+            tm_matrix,
+        );
+        (x, y, width, height, text_rotation_degrees(ctm, tm_matrix))
+    };
     let space_advance = font_info
         .to_unicode_text
         .iter()
@@ -5088,6 +5250,54 @@ fn text_rotation_degrees(ctm: [f32; 6], tm_matrix: [f32; 4]) -> f32 {
     } else {
         normalize_rotation(y.atan2(x).to_degrees())
     }
+}
+
+/// Compute a conservative bbox for Identity-V text using the PDF vertical
+/// displacement from `/DW2` or `/W2`.
+fn vertical_text_bbox(
+    x: f32,
+    y: f32,
+    advance: f32,
+    tf_font_size: f32,
+    ctm: [f32; 6],
+    tm_matrix: [f32; 4],
+) -> (f32, f32, f32, f32, f32) {
+    let [a, b, c, d] = tm_matrix;
+    let glyph_axis = (
+        (ctm[0] * a + ctm[2] * b) * tf_font_size,
+        (ctm[1] * a + ctm[3] * b) * tf_font_size,
+    );
+    let vertical_axis = (
+        (ctm[0] * c + ctm[2] * d) * advance,
+        (ctm[1] * c + ctm[3] * d) * advance,
+    );
+    let corners = [
+        (x, y),
+        (x + glyph_axis.0, y + glyph_axis.1),
+        (x + vertical_axis.0, y + vertical_axis.1),
+        (
+            x + glyph_axis.0 + vertical_axis.0,
+            y + glyph_axis.1 + vertical_axis.1,
+        ),
+    ];
+    let min_x = corners
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let rotation = normalize_rotation(vertical_axis.1.atan2(vertical_axis.0).to_degrees());
+    (min_x, min_y, max_x - min_x, max_y - min_y, rotation)
 }
 
 /// Convert the text-space rectangle into an axis-aligned page-space bbox.

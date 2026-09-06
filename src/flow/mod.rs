@@ -426,7 +426,9 @@ impl FlowDocument {
             .unwrap_or(&self.body_font_bytes);
         let lines = self.measure_lines(text, font_size, geometry.content_width(), font_bytes);
 
-        // Keep pre-heading spacing + the full block together on one page.
+        // Keep pre-heading spacing + the full block together on one page when it fits.
+        // An unusually tall heading still needs to be split rather than overflowing
+        // below the page when its wrapped text exceeds the content area.
         // Compute spacing BEFORE ensure_space so that the heading is not orphaned at the
         // bottom of a page with only its spacing above it.
         let block_h = lines.len() as f32 * line_h;
@@ -435,7 +437,12 @@ impl FlowDocument {
         } else {
             0.0
         };
-        self.ensure_space(pre_spacing + block_h)?;
+        let keep_together = pre_spacing + block_h <= geometry.content_height() + 0.1;
+        if keep_together {
+            self.ensure_space(pre_spacing + block_h)?;
+        } else {
+            self.ensure_space(pre_spacing + line_h)?;
+        }
         // After a potential page break content_y resets to 0; only add spacing when still
         // on the same page (content_y > 0 means we didn't just start a fresh page).
         if self.content_y > 0.0 {
@@ -452,9 +459,9 @@ impl FlowDocument {
 
         let x = self.options.margins.left;
         let font = self.heading_font.unwrap_or(self.body_font);
-        let current_page = self.current_page;
-
         for line in &lines {
+            self.ensure_space(line_h)?;
+            let current_page = self.current_page;
             let y = geometry.baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(
                 line,
@@ -797,25 +804,28 @@ impl FlowDocument {
         } else {
             0.0
         };
-        self.ensure_space(pre_spacing + block_h)?;
+        // A code block may be taller than a page. Reserve the whole block only
+        // when it fits; otherwise each line participates in normal pagination.
+        let keep_together = pre_spacing + block_h <= geometry.content_height() + 0.1;
+        if keep_together {
+            self.ensure_space(pre_spacing + block_h)?;
+        } else {
+            self.ensure_space(pre_spacing + line_h)?;
+        }
         if self.content_y > 0.0 {
             self.content_y += pre_spacing;
         }
 
         let x = self.options.margins.left;
         let font = self.code_font.unwrap_or(self.body_font);
-        let current_page = self.current_page;
-        let y_top = geometry.top_y(self.content_y);
-        let y_bottom = y_top - block_h;
-
-        // Draw background rectangle if configured (requires draw feature, which flow implies)
-        if let Some(bg_color) = self.options.code_background {
+        if keep_together && let Some(bg_color) = self.options.code_background {
             let right_x = self.options.page_size.0 - self.options.margins.right;
             let padding = 2.0;
-            self.inner.page(current_page)?.add_rect(
+            let y_top = geometry.top_y(self.content_y);
+            self.inner.page(self.current_page)?.add_rect(
                 [
                     x - padding,
-                    y_bottom - padding,
+                    y_top - block_h - padding,
                     right_x - x + 2.0 * padding,
                     block_h + 2.0 * padding,
                 ],
@@ -824,8 +834,28 @@ impl FlowDocument {
             )?;
         }
 
-        // Render the text lines
+        // Render the text lines. For a split block, draw one background strip per
+        // line so the background remains bounded to the page it occupies.
         for line in &lines {
+            self.ensure_space(line_h)?;
+            let current_page = self.current_page;
+            let y_top = geometry.top_y(self.content_y);
+
+            if !keep_together && let Some(bg_color) = self.options.code_background {
+                let right_x = self.options.page_size.0 - self.options.margins.right;
+                let padding = 2.0;
+                self.inner.page(current_page)?.add_rect(
+                    [
+                        x - padding,
+                        y_top - line_h - padding,
+                        right_x - x + 2.0 * padding,
+                        line_h + 2.0 * padding,
+                    ],
+                    bg_color,
+                    1.0,
+                )?;
+            }
+
             let y = geometry.baseline_y(self.content_y, font_size);
             self.inner.page(current_page)?.add_text(
                 line,

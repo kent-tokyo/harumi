@@ -6,7 +6,7 @@ object editing, extraction, and layout-aware write-back are different jobs.
 
 ## Version snapshot
 
-The versions below are a reproducible documentation snapshot taken on 2026-09-05.
+The versions below are a reproducible documentation snapshot taken on 2026-09-06.
 Update the snapshot date and rerun the comparison before using it as a benchmark.
 
 | Role | Project | Pinned reference | Default boundary for this comparison |
@@ -18,7 +18,7 @@ Update the snapshot date and rerun the comparison before using it as a benchmark
 | Bulk extraction and Markdown | `unpdf` | 0.17.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.77 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
-| Existing-PDF CJK write-back | `harumi` | 1.20.0 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
+| Existing-PDF CJK write-back | `harumi` | 1.21.0 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
 
 The external references are the package documentation pages:
 
@@ -136,8 +136,7 @@ elapsed time, and leaves the PDFs available for Poppler or another extractor.
 The current baseline is 100% marker recall and coordinate coverage for all five
 inputs; this is a correctness/contract baseline, not a throughput benchmark.
 
-Phase 49 freezes the first high-impact PDF specification corpus for the v1.21.0
-candidate in
+Phase 49 freezes the first high-impact PDF specification corpus for v1.21.0 in
 [`docs/fixtures/pdf-spec-coverage.json`](fixtures/pdf-spec-coverage.json). It
 separates page-tree inheritance, Resources/Contents/Form XObjects, font/CMap,
 and image filters. The repeatable unit/save-reload runner is
@@ -147,7 +146,8 @@ requires an external renderer check for each case.
 The corpus generator and Poppler renderer runner are
 [`tools/pdf-spec-coverage-check`](../tools/pdf-spec-coverage-check) and
 [`scripts/check-pdf-spec-coverage-render.sh`](../scripts/check-pdf-spec-coverage-render.sh).
-They generate four one-page PDFs and save one renderer artifact report per case.
+They generate five one-page PDFs, including an `/Identity-V` vertical-metrics case,
+and save one renderer artifact report per case.
 
 The external adapter is [`tools/bulk-extraction-compare`](../tools/bulk-extraction-compare).
 It pins `unpdf 0.17.0` and `pdf_oxide 0.3.77` outside the main workspace and
@@ -168,5 +168,5 @@ not a production-scale throughput benchmark.
   dependency/WASM boundary checks.
 - Done: harumi, `unpdf`, and `pdf_oxide` bulk-extraction adapters with separate
   recall, coordinates, Markdown, timing, memory, and failure-class output.
-- Open: run the Pdfium fixture with a pinned host runtime and add a golden image;
-  this remains optional because Pdfium is not a default harumi dependency.
+- Open: configure the repository Pdfium URL/SHA-256 variables and add a golden
+  image; this remains optional because Pdfium is not a default harumi dependency.

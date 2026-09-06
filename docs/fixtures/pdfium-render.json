@@ -6,8 +6,11 @@
   "artifact_report": "report.json",
   "runtime": {
     "library_env": "PDFIUM_LIBRARY_PATH",
+    "library_sha256_env": "PDFIUM_LIBRARY_SHA256",
+    "ci_url_var": "HARUMI_PDFIUM_LIBRARY_URL",
+    "ci_sha256_var": "HARUMI_PDFIUM_LIBRARY_SHA256",
     "required": true,
-    "pin_policy": "The runner must receive an explicit fixed Pdfium shared library; system-library discovery is not accepted for a golden artifact."
+    "pin_policy": "The runner must receive an explicit Pdfium shared library and its SHA-256; system-library discovery or an unhash-pinned runtime is not accepted for a golden artifact. CI executes the runtime job only when both repository variables are configured."
   },
   "golden": null,
   "golden_policy": "Add a Pdfium-rendered PNG only after the Pdfium runtime/API build is pinned in CI. Compare dimensions and pixels at the same target width; do not compare Pdfium output against a Poppler golden as if they were pixel-identical."

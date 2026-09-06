@@ -31,5 +31,17 @@ for backend in harumi-flow harumi-html printpdf genpdf; do
         "$pdf_path" "$backend_dir" "$dpi" "$expected_pages" "$report_path"
 done
 
+comparison_args=(
+    --output "$output_dir/renderer-comparison.json"
+    --reference harumi-flow
+)
+for backend in harumi-flow harumi-html printpdf genpdf; do
+    comparison_args+=(
+        --renderer
+        "$backend=$output_dir/$backend-poppler/report.json"
+    )
+done
+python3 "$repo_root/scripts/compare-render-artifacts.py" "${comparison_args[@]}"
+
 printf 'report-generation fixture passed for %s backends: %s\n' \
     4 "$output_dir"

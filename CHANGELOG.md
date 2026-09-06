@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-09-06
+
+- **Flow pagination safety**: oversized headings and code blocks now split at page
+  boundaries, including bounded code-block backgrounds, instead of overflowing.
+- **Specification CI contracts**: the fixed Poppler corpus and Pdfium compile-only
+  runner contract now execute in CI with read-only workflow permissions.
+- **Renderer evidence retention**: Poppler specification and report-generation
+  PDFs, PNGs, and JSON reports are uploaded as CI artifacts for review.
+- **Backend comparison diagnostics**: the report-generation fixture now emits a
+  multi-page renderer comparison with per-page classifications for all four backends.
+- **Renderer dimension diagnostics**: sub-point page-size differences are classified
+  separately as physical-size rounding differences instead of layout mismatches.
+- Renderer comparison reports now include candidate-minus-reference page-size deltas
+  in points when dimensions are parseable.
+- **Pdfium runtime path**: CI now has an opt-in runtime job that downloads only a
+  repository-configured library URL and verifies its SHA-256 before rendering.
 - **PDF specification corpus**: added reproducible page-tree, Resources/Contents,
   font/CMap, and image-XObject probes with Poppler render artifacts.
 - **Flow layout safety**: multi-line paragraphs avoid a single orphan line at a
@@ -53,8 +69,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vertical metrics or reflow support.
 - **Overlay text styles**: translated runs now retain the extracted source RGB
   color and synthetic italic/bold styling, with a save/reload color regression.
-- **Overlay opacity**: translated runs now retain page-level `/ExtGState /ca`
-  values, including graphics-state `q/Q` restoration, with a save/reload regression.
+- **Overlay opacity**: translated runs now retain page-level and directly processed
+  Form XObject `/ExtGState /ca` values, including graphics-state `q/Q` restoration,
+  with a save/reload regression.
+- **Form XObject opacity**: private `/Resources /ExtGState /ca` values are now
+  resolved for directly processed Form XObjects and override inherited page values.
+- **Mixed-style overlays**: source line fragments now retain color, opacity, bold,
+  and italic boundaries; translated text is split proportionally across those
+  spans before font fallback rendering.
+- **Rotated/sheared image collision**: image placements now use the transformed
+  unit-square corners and a conservative axis-aligned bbox for layout diagnostics
+  and overlay cover decisions.
+- **Identity-V vertical text**: basic `/DW2` and `/W2` CID metrics are now used
+  for vertical advances, bounding boxes, and 90/270-degree overlay placement.
+  Complex tate-chu-yoko and mixed vertical/horizontal composition remain best effort.
+- **Multi-page renderer comparison**: render artifact reports now compare every
+  page and emit per-page diagnostics instead of inspecting only the first page.
+- **Pdfium runtime contract**: the optional renderer probe now supports an explicit
+  compile-only check and requires a SHA-256-pinned shared library for runtime artifacts.
+- **Identity-V specification fixture**: the PDF specification corpus now generates
+  a Type0 `/Identity-V` sample with `/DW2` and `/W2`, and verifies it with Poppler.
 - **Dependency snapshot**: updated the ecosystem comparison to the repository's
   current `lopdf 0.42.0` dependency.
 
