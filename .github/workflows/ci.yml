@@ -116,7 +116,7 @@ jobs:
         run: bash scripts/check-pdf-spec-coverage-render.sh
       - name: Upload specification corpus artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-spec-coverage-poppler
           path: /tmp/harumi-pdf-spec-coverage
@@ -136,7 +136,7 @@ jobs:
         run: bash scripts/check-report-generation-fixture.sh
       - name: Upload report generation artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: report-generation-poppler
           path: /tmp/harumi-report-generation-fixture
@@ -185,7 +185,7 @@ jobs:
             /tmp/harumi-pdfium-runtime/report.json
       - name: Upload Pdfium runtime artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdfium-pinned-runtime
           path: /tmp/harumi-pdfium-runtime
