@@ -8,12 +8,13 @@
 //! |---------|---------|
 //! | `<h1>`–`<h6>` | Heading at the corresponding level |
 //! | `<p>` | Body paragraph; inline `text-align` is supported |
-//! | `<table><tr><th/td>` | Table cells with `colspan`/`rowspan` |
+//! | `<table><tr><th/td>` | Table cells with `colspan`/`rowspan`; one-level nested tables are measured inside parent cells |
 //! | `<ul><li>` | Bulleted list |
 //! | `<ol><li>` | Numbered list |
 //! | `<br>` | Explicit line break inside a paragraph |
-//! | `style="page-break-before: always"` / `class="page-break-before"` | Page break before element |
-//! | `style="page-break-after: always"` / `class="page-break"` | Page break after element |
+//! | `style="page-break-before: always"` / `style="break-before: page"` / `class="page-break-before"` | Page break before element |
+//! | `style="page-break-after: always"` / `style="break-after: page"` / `class="page-break"` | Page break after element |
+//! | `style="break-inside: avoid"` | Keep a fitting paragraph together |
 //! | `<div>`, `<section>`, `<article>`, … | Block container; children are processed |
 //! | `<strong>`, `<em>`, … | Text content extracted; styling ignored in v1 |
 //! | `<head>`, `<script>`, `<style>`, … | Skipped entirely |
@@ -21,8 +22,8 @@
 use crate::{Error, Result};
 
 use super::{
-    FlowDocument, FlowOptions, FlowTableCell, FlowTextAlignment, InlineSpan, Margins,
-    TableCellAlignment, TableOptions,
+    FlowDocument, FlowOptions, FlowTableBlockCell, FlowTableCell, FlowTableCellBlock,
+    FlowTextAlignment, InlineSpan, Margins, TableCellAlignment, TableOptions,
     html_tokenizer::{HtmlNode, parse_html},
 };
 
@@ -173,7 +174,11 @@ fn process_one<'a>(
             if has_content {
                 let alignment = parse_css_text_alignment(elem.attr("style").as_deref())
                     .unwrap_or_else(|| flow.default_body_alignment());
-                flow.push_paragraph_styled_with_alignment(&spans, alignment)?;
+                if has_break_inside_avoid(elem) {
+                    flow.push_paragraph_styled_keep_together_with_alignment(&spans, alignment)?;
+                } else {
+                    flow.push_paragraph_styled_with_alignment(&spans, alignment)?;
+                }
             }
         }
 
@@ -361,7 +366,11 @@ fn has_page_break(elem: &HtmlNode) -> bool {
     let class = elem.attr("class").unwrap_or_default();
     style.contains("page-break-after: always")
         || style.contains("page-break-after:always")
-        || class.split_whitespace().any(|c| c == "page-break")
+        || style.contains("break-after: page")
+        || style.contains("break-after:page")
+        || class
+            .split_whitespace()
+            .any(|c| c == "page-break" || c == "page-break-after")
 }
 
 fn has_page_break_before(elem: &HtmlNode) -> bool {
@@ -369,7 +378,17 @@ fn has_page_break_before(elem: &HtmlNode) -> bool {
     let class = elem.attr("class").unwrap_or_default();
     style.contains("page-break-before: always")
         || style.contains("page-break-before:always")
+        || style.contains("break-before: page")
+        || style.contains("break-before:page")
         || class.split_whitespace().any(|c| c == "page-break-before")
+}
+
+fn has_break_inside_avoid(elem: &HtmlNode) -> bool {
+    let style = elem.attr("style").unwrap_or_default().to_ascii_lowercase();
+    style.contains("break-inside: avoid")
+        || style.contains("break-inside:avoid")
+        || style.contains("page-break-inside: avoid")
+        || style.contains("page-break-inside:avoid")
 }
 
 /// Collects `<tr>` elements that are direct or `<tbody>`/`<thead>`/`<tfoot>`-wrapped
@@ -395,6 +414,19 @@ fn table_rows(table: &HtmlNode) -> Vec<&HtmlNode> {
 }
 
 fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
+    let has_nested_table = table_rows(table).iter().any(|tr| {
+        tr.children().any(|cell| {
+            matches!(cell.tag_name(), Some("th") | Some("td"))
+                && cell
+                    .children()
+                    .any(|child| child.tag_name() == Some("table"))
+        })
+    });
+
+    if has_nested_table {
+        return process_nested_table(table, flow);
+    }
+
     let mut rows: Vec<Vec<FlowTableCell>> = Vec::new();
 
     for tr in table_rows(table) {
@@ -431,6 +463,134 @@ fn process_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
     }
 
     flow.push_table_cells(&rows, TableOptions::default())
+}
+
+fn process_nested_table(table: &HtmlNode, flow: &mut FlowDocument) -> Result<()> {
+    let mut rows: Vec<Vec<FlowTableBlockCell>> = Vec::new();
+    for tr in table_rows(table) {
+        let mut cells = Vec::new();
+        for elem in tr
+            .children()
+            .filter(|e| matches!(e.tag_name(), Some("th") | Some("td")))
+        {
+            let colspan = parse_span_attribute(elem, "colspan")?;
+            let rowspan = parse_span_attribute(elem, "rowspan")?;
+            if rowspan > 1 {
+                return Err(Error::InvalidInput(
+                    "HTML nested tables do not support outer rowspan yet".into(),
+                ));
+            }
+            let mut blocks = Vec::new();
+            for child in elem.children() {
+                if child.tag_name() == Some("table") {
+                    if contains_table(child) {
+                        return Err(Error::InvalidInput(
+                            "HTML nested tables support one nesting level only".into(),
+                        ));
+                    }
+                    blocks.push(FlowTableCellBlock::NestedTable {
+                        rows: parse_nested_table_rows(child)?,
+                        options: TableOptions::default(),
+                    });
+                } else {
+                    let text = collect_text_excluding_tables(child).trim().to_owned();
+                    if !text.is_empty() {
+                        blocks.push(FlowTableCellBlock::Text(text));
+                    }
+                }
+            }
+            if blocks.is_empty() {
+                blocks.push(FlowTableCellBlock::Text(String::new()));
+            }
+            let mut cell = FlowTableBlockCell::new("").with_colspan(colspan);
+            cell.blocks = blocks;
+            if let Some(alignment) = parse_css_text_alignment(elem.attr("style").as_deref()) {
+                cell = cell.with_alignment(match alignment {
+                    FlowTextAlignment::Left => TableCellAlignment::Left,
+                    FlowTextAlignment::Center => TableCellAlignment::Center,
+                    FlowTextAlignment::Right => TableCellAlignment::Right,
+                });
+            }
+            if let Some(padding) = parse_css_padding(elem.attr("style").as_deref()) {
+                cell = cell.with_padding(padding);
+            }
+            cells.push(cell);
+        }
+        if !cells.is_empty() {
+            rows.push(cells);
+        }
+    }
+    if rows.is_empty() {
+        return Ok(());
+    }
+    flow.push_table_blocks(&rows, TableOptions::default())
+}
+
+fn parse_nested_table_rows(table: &HtmlNode) -> Result<Vec<Vec<FlowTableCell>>> {
+    let mut rows = Vec::new();
+    for tr in table_rows(table) {
+        let mut cells = Vec::new();
+        for elem in tr
+            .children()
+            .filter(|e| matches!(e.tag_name(), Some("th") | Some("td")))
+        {
+            let colspan = parse_span_attribute(elem, "colspan")?;
+            let rowspan = parse_span_attribute(elem, "rowspan")?;
+            if colspan != 1 || rowspan != 1 {
+                return Err(Error::InvalidInput(
+                    "HTML nested table cells do not support spans yet".into(),
+                ));
+            }
+            let mut cell = FlowTableCell::new(collect_text_excluding_tables(elem))
+                .with_colspan(colspan)
+                .with_rowspan(rowspan);
+            if let Some(alignment) = parse_css_text_alignment(elem.attr("style").as_deref()) {
+                cell = cell.with_alignment(match alignment {
+                    FlowTextAlignment::Left => TableCellAlignment::Left,
+                    FlowTextAlignment::Center => TableCellAlignment::Center,
+                    FlowTextAlignment::Right => TableCellAlignment::Right,
+                });
+            }
+            if let Some(padding) = parse_css_padding(elem.attr("style").as_deref()) {
+                cell = cell.with_padding(padding);
+            }
+            cells.push(cell);
+        }
+        if !cells.is_empty() {
+            rows.push(cells);
+        }
+    }
+    Ok(rows)
+}
+
+fn contains_table(root: &HtmlNode) -> bool {
+    let mut stack: Vec<&HtmlNode> = root.children().collect();
+    while let Some(node) = stack.pop() {
+        if node.tag_name() == Some("table") {
+            return true;
+        }
+        stack.extend(node.children());
+    }
+    false
+}
+
+fn collect_text_excluding_tables(root: &HtmlNode) -> String {
+    let mut stack: Vec<&HtmlNode> = vec![root];
+    let mut text = String::new();
+    while let Some(node) = stack.pop() {
+        if node.tag_name() == Some("table") {
+            continue;
+        }
+        if node.tag_name().is_none() {
+            text.push_str(&node.text_content());
+        } else {
+            let children: Vec<&HtmlNode> = node.children().collect();
+            for child in children.into_iter().rev() {
+                stack.push(child);
+            }
+        }
+    }
+    text
 }
 
 fn parse_span_attribute(elem: &HtmlNode, name: &str) -> Result<usize> {

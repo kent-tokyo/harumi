@@ -18,7 +18,7 @@ Update the snapshot date and rerun the comparison before using it as a benchmark
 | Bulk extraction and Markdown | `unpdf` | 0.17.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.77 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
-| Existing-PDF CJK write-back | `harumi` | 1.22.0 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
+| Existing-PDF CJK write-back | `harumi` | 1.22.1 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
 
 The external references are the package documentation pages:
 
@@ -132,14 +132,15 @@ quality in this order:
    handling.
 3. Add deterministic table sizing, spans, nested blocks, repeated headers, and
    continuation borders.
-4. Add page-template reservations, section changes, footnotes, and TOC anchors.
+4. Add page-template reservations, section changes, page-footnote reservation,
+   and stable TOC anchors; automatic footnote references and endnotes remain open.
 5. Map supported HTML/CSS semantics onto the shared model and rerun all four
    backends on every compatibility change.
 
 Competitor comparisons remain axis-specific: extraction and overflow correctness,
 table structure, page geometry, renderer artifacts, and performance are reported
 separately. A pixel difference is diagnostic and is never treated as proof that
-one backend is generally superior. The v1.22.0 release must pass the expanded
+one backend is generally superior. The v1.22.1 release must pass the expanded
 paragraph/table fixtures and retain Poppler artifacts; Pdfium, Chrome, and Acrobat
 remain optional external-runtime evidence gates.
 

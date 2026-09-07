@@ -132,8 +132,10 @@ pub use extract_image::{PageImage, PageImageFormat};
 
 #[cfg(feature = "flow")]
 pub use flow::{
-    FlowDocument, FlowOptions, FlowTableCell, FlowTextAlignment, HeaderFooter, InlineSpan, Margins,
-    TableCellAlignment, TableColumnWidths, TableOptions, TableWidthAllocation,
+    FlowDocument, FlowOptions, FlowTableBlockCell, FlowTableCell, FlowTableCellBlock,
+    FlowTextAlignment, HeaderFooter, InlineSpan, Margins, PageBorder, PageDecoration, PageTemplate,
+    PageTemplateVariants, TableCellAlignment, TableColumnWidths, TableOptions,
+    TableWidthAllocation,
 };
 
 #[cfg(feature = "html")]

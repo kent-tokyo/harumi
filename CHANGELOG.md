@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.1] — 2026-09-07
+
+- **HTML paragraph keep-together**: `break-inside: avoid` and
+  `page-break-inside: avoid` now use the measured Flow paragraph reservation
+  path for fitting paragraphs; oversized paragraphs still paginate normally.
+- **Modern HTML page-break aliases**: the HTML renderer now maps
+  `break-before: page` and `break-after: page` (including compact CSS
+  spacing) alongside the existing `page-break-*` forms.
+- **Page footnote reservation**: `FlowDocument::push_footnote` reserves space
+  below the body on the current page and renders a numbered footnote without
+  allowing body content to overlap it. Automatic reference insertion and
+  endnotes remain outside this contract.
+- **Opt-in table keep-together**: `FlowDocument::push_table_cells_keep_together`
+  moves a measured table to the next page when it fits as one block; oversized
+  tables retain normal bounded pagination.
+- **Opt-in paragraph keep-together**: `FlowDocument::push_paragraph_keep_together`
+  moves a fitting paragraph to the next page while preserving normal pagination
+  for paragraphs taller than one page.
+- **Section page templates**: `FlowDocument::push_section` starts a new page and
+  switches the header and footer for that section without changing prior pages.
+- **Template-aware geometry**: Flow now reserves excess header/footer height
+  when margins are too small, preventing body content from entering the template
+  bands while preserving standard-margin geometry.
+- **Safe `rowspan` pagination**: vertical-span tables can now continue across
+  page-sized row segments with empty continuation cells, preserving merged
+  borders and avoiding duplicate extraction text. Measured cell lines are
+  distributed across continuation segments.
+- **Nested table blocks**: `FlowDocument::push_table_blocks` and the additive
+  `FlowTableBlockCell`/`FlowTableCellBlock` API render one-level nested tables
+  inside parent cells, with measured child widths, borders, and extraction-order
+  preservation. The HTML entry point maps direct nested `<table>` elements to the
+  same model. Outer tables and isolated child tables split at row boundaries,
+  including multiple child tables beside sibling parent cells; an individual
+  child row that exceeds one page is rejected explicitly.
+- **Grapheme-safe wrapping**: combining marks, emoji modifiers, and the
+  character following a zero-width joiner remain attached during measured line
+  breaking. Full Unicode Line Breaking and bidi shaping remain explicit future
+  boundaries.
+- **Unicode spacing boundaries**: common breakable Unicode spaces now participate
+  in measured word-boundary wrapping while non-breaking spaces remain protected.
+  RTL/Bidi behavior is documented and tested as logical-order-only until shaping
+  and visual reordering are implemented.
+- **Additional cluster safety**: common Arabic, Indic, and Thai combining marks,
+  emoji modifiers, and emoji tag sequences are kept together during wrapping.
+- **Bracket boundary safety**: common ASCII and Unicode closing brackets cannot
+  start a line, and opening brackets are kept with the following scalar.
+- **Additional Unicode break boundaries**: the shared breaker recognizes soft
+  hyphen, zero-width space, and additional Unicode hyphen characters, while
+  expanding combining-mark attachment for Hebrew, Indic, and Southeast Asian
+  scripts. Full Unicode Line Breaking remains outside the current contract.
+- **Page decoration templates**: `PageDecoration` adds bounded page backgrounds
+  and borders, while `set_page_decoration` and
+  `push_section_with_decoration` apply them to the current and subsequent pages.
+- **Section margin templates**: `push_section_with_margins` switches body
+  margins at a page boundary and preserves the prior section's geometry.
+- **First/odd/even templates**: `PageTemplateVariants` selects independent
+  header/footer, margin, and decoration templates for page 1 and later odd/even pages.
+- **Numeric line-break boundaries**: measured wrapping keeps common decimal,
+  date, thousands-separator, and currency-prefix sequences together. Full
+  Unicode Line Breaking remains outside the current contract.
+- **Script separator boundaries**: Tibetan tsheg, Ethiopic wordspace, Hebrew
+  maqaf, and Khmer sentence separators now expose deterministic break points.
+- **Dash line-break boundaries**: em dash, horizontal bar, and double-em dash
+  punctuation now provide deterministic post-dash break points.
+- **Template-aware block reflow**: paragraphs and figures are remeasured or
+  repositioned when pagination switches to a page with a different active
+  template geometry; styled paragraphs follow the same coordinate path.
+- **Named Flow bookmarks**: `FlowDocument::push_bookmark` adds a levelled
+  outline entry at the current flow position for generated TOCs and anchors.
+- **Generated Flow TOC**: `FlowDocument::push_table_of_contents` appends a
+  stable trailing contents page from bookmarks collected before the call.
+
 ## [1.22.0] — 2026-09-06
 
 - **Typesetting fixture v2**: expanded the fixed Flow/HTML/printpdf/genpdf report

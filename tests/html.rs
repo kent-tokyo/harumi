@@ -3,7 +3,7 @@
 
 #![cfg(feature = "html")]
 
-use harumi::{Document, FlowTextAlignment, HtmlRenderOptions, render_html_to_pdf};
+use harumi::{Document, FlowTextAlignment, HtmlRenderOptions, Margins, render_html_to_pdf};
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -106,6 +106,57 @@ fn page_break_before_style_attribute() {
         doc.page_count() >= 2,
         "page-break-before should create a new page"
     );
+}
+
+#[test]
+fn modern_css_page_break_aliases_create_new_pages() {
+    let html = r#"<h1>Page One</h1><div style="break-after: page"></div><h1 style="break-before:page">Page Two</h1>"#;
+    let bytes = render_html_to_pdf(html, opts()).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(doc.page_count(), 3, "each explicit break is preserved");
+
+    let first: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    let third: String = doc
+        .extract_text_runs(3)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(first.contains("Page One"));
+    assert!(third.contains("Page Two"));
+}
+
+#[test]
+fn paragraph_break_inside_avoid_uses_flow_keep_together() {
+    let html = r#"<p>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler<br>Filler</p><p style="break-inside: avoid">Kept first line<br>Kept second line</p>"#;
+    let mut options = opts();
+    options.page_size = (200.0, 160.0);
+    options.margins = Margins::uniform(20.0);
+    options.body_font_size = 10.0;
+    options.line_height_factor = 1.0;
+    options.paragraph_spacing = 0.0;
+    let bytes = render_html_to_pdf(html, options).unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(doc.page_count(), 2);
+    let first: String = doc
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    let second: String = doc
+        .extract_text_runs(2)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(!first.contains("Kept first"));
+    assert!(second.contains("Kept first") && second.contains("Kept second"));
 }
 
 #[test]
@@ -218,6 +269,29 @@ fn nested_table_no_extra_rows() {
                 </table>";
     let bytes = render_html_to_pdf(html, opts()).unwrap();
     assert!(bytes.starts_with(b"%PDF"));
+}
+
+#[test]
+fn nested_table_is_rendered_inside_html_parent_cell() {
+    let html = "<table>\
+                  <tr><th>Outer</th><td>Values\
+                    <table><tr><th>Inner</th><td>X</td></tr></table>\
+                  </td></tr>\
+                </table>";
+    let bytes = render_html_to_pdf(html, opts()).unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    for expected in ["Outer", "Values", "Inner", "X"] {
+        assert!(
+            text.contains(expected),
+            "missing nested HTML table text: {expected}"
+        );
+    }
 }
 
 #[test]

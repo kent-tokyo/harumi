@@ -34,10 +34,22 @@
 | Need a bookmarks / navigation outline | `add_bookmark(title, page, y)` — flat PDF outline entries; CJK titles stored as UTF-16BE automatically |
 | Need page numbers / running headers–footers on every page | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` with `HeaderFooter` (`flow` feature); `{{page}}` / `{{total}}` substituted at render |
 | Need headings to auto-generate outline entries | `FlowOptions { auto_bookmarks: true, .. }` (default) — every `push_heading` creates a bookmark |
+| Need a named bookmark at a Flow position | `FlowDocument::push_bookmark(title, level)` records a deterministic outline destination at the current page position |
+| Need a generated table of contents | `FlowDocument::push_table_of_contents(title)` appends a trailing TOC page from bookmarks collected so far |
+| Need page footnotes | `FlowDocument::push_footnote(text)` reserves the current page's bottom band and renders a numbered note; automatic reference insertion and endnotes are not included |
+| Need CSS page breaks | HTML supports legacy `page-break-before/after` and modern `break-before/after: page` forms, plus page-break classes |
+| Need an HTML paragraph kept together | `style="break-inside: avoid"` or `page-break-inside: avoid` uses Flow's measured keep-together behavior when the paragraph fits on one page |
 | Need mixed Latin/CJK or symbol-heavy body text | `FlowOptions { fallback_font_bytes: Some(bytes), .. }` selects the fallback per missing glyph while preserving run advances |
 | Need stronger paragraph page-boundary control | `FlowOptions { paragraph_min_lines: 3, .. }` keeps at least three lines together at widow/orphan boundaries |
 | Need headings to avoid page-bottom isolation | `FlowOptions { keep_headings_with_next: true, .. }` reserves the first following body line when it fits |
-| Need tables to avoid page-bottom isolation | `TableOptions { keep_with_next: true, .. }` reserves the complete one-page table and first following body line |
+| Need a paragraph to start as one block | `FlowDocument::push_paragraph_keep_together(...)` moves a fitting paragraph to the next page; paragraphs taller than one page paginate normally |
+| Need different headers/footers by section | `FlowDocument::push_section(header, footer)` starts a new page and applies the new template to that page and later pages |
+| Need different body margins by section | `FlowDocument::push_section_with_margins(header, footer, margins)` starts a new page with independent content geometry |
+| Need first/odd/even page templates | `PageTemplateVariants` with `set_page_template_variants` selects independent header/footer, margins, and decoration by page class |
+| Need body content protected from small header/footer margins | Flow geometry automatically reserves the excess header/footer height when the configured margin is smaller than the template |
+| Need page backgrounds or borders by section | `PageDecoration` with `set_page_decoration` or `push_section_with_decoration` applies bounded background and border templates |
+| Need tables to avoid page-bottom isolation | `FlowDocument::push_table_cells_keep_together(...)` keeps a fitting table together; `TableOptions { keep_with_next: true, .. }` also reserves the first following body line |
+| Need a measured table inside a report cell | `FlowDocument::push_table_blocks(...)` or HTML `<table>` nesting uses `FlowTableBlockCell`/`FlowTableCellBlock::NestedTable` for one nested level; outer and isolated child rows split safely across pages, including synchronized child tables |
 | Need stable paragraph alignment | `FlowOptions { body_alignment: FlowTextAlignment::Center, .. }` aligns measured normal and styled lines |
 | Need to load a password-protected PDF | `Document::from_file_with_password(path, pw)` / `from_bytes_with_password(bytes, pw)` — decrypts on load; both user and owner passwords accepted |
 | Need to save a PDF with password protection | `doc.set_encryption(user_pw, owner_pw)` — encrypts at `save()` time with 128-bit RC4 |

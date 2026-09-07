@@ -1,7 +1,10 @@
 /// Tests for FlowDocument header/footer and auto-bookmark features (v0.5).
 #[cfg(feature = "flow")]
 mod inner {
-    use harumi::{Document, FlowDocument, FlowOptions, HeaderFooter};
+    use harumi::{
+        Color, Document, FlowDocument, FlowOptions, HeaderFooter, Margins, PageBorder,
+        PageDecoration, PageTemplate, PageTemplateVariants,
+    };
 
     const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -60,12 +63,298 @@ mod inner {
     }
 
     #[test]
+    fn section_switches_header_and_footer_on_new_page() {
+        let opts = FlowOptions {
+            header: Some(HeaderFooter {
+                left: Some("Section A".into()),
+                ..Default::default()
+            }),
+            footer: Some(HeaderFooter {
+                center: Some("Footer A".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut doc = FlowDocument::new(FONT, opts).unwrap();
+        doc.push_paragraph("Body A").unwrap();
+        doc.push_section(
+            Some(HeaderFooter {
+                left: Some("Section B".into()),
+                ..Default::default()
+            }),
+            Some(HeaderFooter {
+                center: Some("Footer B".into()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        doc.push_paragraph("Body B").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = Document::from_bytes(&bytes).unwrap();
+        assert_eq!(reloaded.page_count(), 2);
+        let page_one: String = reloaded
+            .extract_text_runs(1)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.text)
+            .collect();
+        let page_two: String = reloaded
+            .extract_text_runs(2)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.text)
+            .collect();
+        assert!(page_one.contains("Section A") && page_one.contains("Footer A"));
+        assert!(page_two.contains("Section B") && page_two.contains("Footer B"));
+        assert!(!page_one.contains("Section B") && !page_two.contains("Section A"));
+    }
+
+    #[test]
     fn no_header_footer_still_works() {
         let opts = FlowOptions::default(); // header = None, footer = None
         let mut doc = FlowDocument::new(FONT, opts).unwrap();
         doc.push_paragraph("No decoration.").unwrap();
         let bytes = doc.render().unwrap();
         assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn page_decoration_renders_background_and_border() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.set_page_decoration(PageDecoration {
+            background: Some(Color::Rgb([0.95, 0.95, 0.98])),
+            border: Some(PageBorder {
+                color: Color::Rgb([0.1, 0.2, 0.3]),
+                width: 2.0,
+            }),
+        })
+        .unwrap();
+        doc.push_paragraph("Decorated page").unwrap();
+        let bytes = doc.render().unwrap();
+        let pdf = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+        let page_id = *pdf.get_pages().get(&1).unwrap();
+        let content = String::from_utf8(pdf.get_page_content(page_id).unwrap()).unwrap();
+        assert!(
+            content.contains(" rg\n"),
+            "background fill missing: {content}"
+        );
+        assert!(
+            content.contains(" RG\n"),
+            "border stroke missing: {content}"
+        );
+        assert!(content.contains(" w\n"), "border width missing: {content}");
+    }
+
+    #[test]
+    fn section_decoration_switches_between_pages() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.set_page_decoration(PageDecoration {
+            background: Some(Color::Rgb([0.95, 0.95, 0.98])),
+            ..Default::default()
+        })
+        .unwrap();
+        doc.push_paragraph("First page").unwrap();
+        doc.push_section_with_decoration(
+            None,
+            None,
+            PageDecoration {
+                background: Some(Color::Rgb([0.98, 0.95, 0.95])),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        doc.push_paragraph("Second page").unwrap();
+        let bytes = doc.render().unwrap();
+        let pdf = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+        let pages = pdf.get_pages();
+        let first =
+            String::from_utf8(pdf.get_page_content(*pages.get(&1).unwrap()).unwrap()).unwrap();
+        let second =
+            String::from_utf8(pdf.get_page_content(*pages.get(&2).unwrap()).unwrap()).unwrap();
+        assert!(
+            first.contains(" rg\n"),
+            "first page background missing: {first}"
+        );
+        assert!(
+            second.contains(" rg\n"),
+            "second page background missing: {second}"
+        );
+        assert_ne!(first, second, "section decoration/content should differ");
+    }
+
+    #[test]
+    fn section_margins_switch_body_geometry() {
+        let mut doc = FlowDocument::new(
+            FONT,
+            FlowOptions {
+                margins: Margins::uniform(20.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        doc.push_paragraph("Left margin A").unwrap();
+        doc.push_section_with_margins(
+            None,
+            None,
+            Margins {
+                top: 30.0,
+                right: 40.0,
+                bottom: 30.0,
+                left: 100.0,
+            },
+        )
+        .unwrap();
+        doc.push_paragraph("Left margin B").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = Document::from_bytes(&bytes).unwrap();
+        let first = reloaded.extract_text_runs(1).unwrap().remove(0);
+        let second = reloaded.extract_text_runs(2).unwrap().remove(0);
+        assert_eq!(first.x, 20.0);
+        assert_eq!(second.x, 100.0);
+    }
+
+    #[test]
+    fn section_margins_reject_invalid_geometry() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        assert!(
+            doc.push_section_with_margins(
+                None,
+                None,
+                Margins {
+                    top: 10.0,
+                    right: 600.0,
+                    bottom: 10.0,
+                    left: 10.0,
+                },
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn first_odd_even_templates_switch_page_geometry() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.set_page_template_variants(PageTemplateVariants {
+            first: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("First".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins::uniform(30.0),
+            )),
+            odd: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("Odd".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins {
+                    top: 20.0,
+                    right: 20.0,
+                    bottom: 20.0,
+                    left: 90.0,
+                },
+            )),
+            even: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("Even".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins {
+                    top: 20.0,
+                    right: 60.0,
+                    bottom: 20.0,
+                    left: 60.0,
+                },
+            )),
+        })
+        .unwrap();
+        doc.push_paragraph("First body").unwrap();
+        doc.push_page_break().unwrap();
+        doc.push_paragraph("Even body").unwrap();
+        doc.push_page_break().unwrap();
+        doc.push_paragraph("Odd body").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = Document::from_bytes(&bytes).unwrap();
+        assert_eq!(reloaded.page_count(), 3);
+        assert_eq!(reloaded.extract_text_runs(1).unwrap()[0].x, 30.0);
+        assert_eq!(reloaded.extract_text_runs(2).unwrap()[0].x, 60.0);
+        assert_eq!(reloaded.extract_text_runs(3).unwrap()[0].x, 90.0);
+        for (page, marker) in [(1, "First"), (2, "Even"), (3, "Odd")] {
+            let text: String = reloaded
+                .extract_text_runs(page)
+                .unwrap()
+                .into_iter()
+                .map(|run| run.text)
+                .collect();
+            assert!(
+                text.contains(marker),
+                "page {page} missing {marker}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn first_odd_even_templates_restart_for_new_section() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.push_paragraph("Base section").unwrap();
+        doc.push_section(None, None).unwrap();
+        doc.set_page_template_variants(PageTemplateVariants {
+            first: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("Section first".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins::uniform(20.0),
+            )),
+            odd: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("Section odd".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins::uniform(30.0),
+            )),
+            even: Some(PageTemplate::new(
+                Some(HeaderFooter {
+                    left: Some("Section even".into()),
+                    ..Default::default()
+                }),
+                None,
+                Margins::uniform(40.0),
+            )),
+        })
+        .unwrap();
+        doc.push_paragraph("Section page one").unwrap();
+        doc.push_page_break().unwrap();
+        doc.push_paragraph("Section page two").unwrap();
+        doc.push_page_break().unwrap();
+        doc.push_paragraph("Section page three").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = Document::from_bytes(&bytes).unwrap();
+        for (page, marker) in [
+            (2, "Section first"),
+            (3, "Section even"),
+            (4, "Section odd"),
+        ] {
+            let text: String = reloaded
+                .extract_text_runs(page)
+                .unwrap()
+                .into_iter()
+                .map(|run| run.text)
+                .collect();
+            assert!(
+                text.contains(marker),
+                "page {page} missing {marker}: {text}"
+            );
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -107,6 +396,112 @@ mod inner {
             .unwrap();
         let count = outlines.get(b"Count").unwrap().as_i64().unwrap();
         assert_eq!(count, 2, "Two headings should produce two bookmarks");
+    }
+
+    #[test]
+    fn auto_bookmark_tracks_heading_after_reflow() {
+        let opts = FlowOptions {
+            auto_bookmarks: true,
+            page_size: (200.0, 100.0),
+            margins: Margins::uniform(10.0),
+            body_font_size: 10.0,
+            line_height_factor: 1.0,
+            paragraph_spacing: 0.0,
+            ..Default::default()
+        };
+        let mut doc = FlowDocument::new(FONT, opts).unwrap();
+        doc.push_paragraph("a\nb\nc\nd\ne\nf\ng").unwrap();
+        doc.push_heading("Reflowed heading", 1).unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+        let pages = reloaded.get_pages();
+        let page_two = *pages.get(&2).expect("heading should reflow to page two");
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
+        let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
+        let first = reloaded.get_object(first_ref).unwrap().as_dict().unwrap();
+        let dest = first.get(b"Dest").unwrap().as_array().unwrap();
+        assert_eq!(dest[0].as_reference().unwrap(), page_two);
+    }
+
+    #[test]
+    fn named_flow_bookmark_points_to_current_position() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.push_page_break().unwrap();
+        doc.push_bookmark("Contents", 1).unwrap();
+        doc.push_paragraph("Bookmarked section").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
+        let page_two = *reloaded
+            .get_pages()
+            .get(&2)
+            .expect("second page should exist");
+        let root_ref = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let catalog = reloaded.get_object(root_ref).unwrap().as_dict().unwrap();
+        let outlines_ref = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
+        let outlines = reloaded
+            .get_object(outlines_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let first_ref = outlines.get(b"First").unwrap().as_reference().unwrap();
+        let first = reloaded.get_object(first_ref).unwrap().as_dict().unwrap();
+        let dest = first.get(b"Dest").unwrap().as_array().unwrap();
+        assert_eq!(dest[0].as_reference().unwrap(), page_two);
+    }
+
+    #[test]
+    fn generated_table_of_contents_lists_stable_bookmarks() {
+        let mut doc = FlowDocument::new(FONT, FlowOptions::default()).unwrap();
+        doc.push_heading("Chapter 1", 1).unwrap();
+        doc.push_paragraph("Body").unwrap();
+        doc.push_bookmark("Named section", 1).unwrap();
+        doc.push_paragraph("Section body").unwrap();
+        doc.push_table_of_contents("Contents").unwrap();
+
+        let bytes = doc.render().unwrap();
+        let reloaded = Document::from_bytes(&bytes).unwrap();
+        assert_eq!(reloaded.page_count(), 2);
+        let contents: String = reloaded
+            .extract_text_runs(2)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.text)
+            .collect();
+        assert!(
+            contents.contains("Contents"),
+            "TOC title missing: {contents}"
+        );
+        assert!(
+            contents.contains("Chapter 1"),
+            "heading missing: {contents}"
+        );
+        assert!(
+            contents.contains("Named section"),
+            "named bookmark missing: {contents}"
+        );
+        assert!(
+            contents.contains("...... 1"),
+            "page number missing: {contents}"
+        );
     }
 
     #[test]

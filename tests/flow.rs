@@ -4,8 +4,9 @@
 #![cfg(feature = "flow")]
 
 use harumi::{
-    Document, FlowDocument, FlowOptions, FlowTableCell, FlowTextAlignment, HeaderFooter,
-    InlineSpan, Margins, TableCellAlignment, TableColumnWidths, TableOptions,
+    Document, FlowDocument, FlowOptions, FlowTableBlockCell, FlowTableCell, FlowTableCellBlock,
+    FlowTextAlignment, HeaderFooter, InlineSpan, Margins, TableCellAlignment, TableColumnWidths,
+    TableOptions,
 };
 
 const NOTO: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
@@ -303,6 +304,91 @@ fn paragraph_min_lines_can_raise_widow_orphan_guard() {
 }
 
 #[test]
+fn paragraph_can_stay_together_when_it_fits_on_one_page() {
+    let opts = FlowOptions {
+        page_size: (200.0, 200.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        paragraph_min_lines: 1,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    for _ in 0..15 {
+        doc.push_paragraph("filler").unwrap();
+    }
+    doc.push_paragraph_keep_together("kept first line\nkept second line")
+        .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+    let first_page: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    let second_page: String = reloaded
+        .extract_text_runs(2)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(!first_page.contains("kept first"));
+    assert!(second_page.contains("kept first") && second_page.contains("kept second"));
+}
+
+#[test]
+fn footnote_reserves_bottom_region_and_renders_numbered_note() {
+    let opts = FlowOptions {
+        page_size: (200.0, 200.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    assert_eq!(
+        doc.push_footnote("A note attached to this page.").unwrap(),
+        1
+    );
+    doc.push_paragraph("Body text").unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(text.contains("Body text"));
+    assert!(text.contains("[1] A note attached to this page."));
+}
+
+#[test]
+fn footnote_rejects_reservation_that_would_overlap_body() {
+    let opts = FlowOptions {
+        page_size: (200.0, 120.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    doc.push_paragraph("body\nbody\nbody\nbody\nbody\nbody")
+        .unwrap();
+    assert!(
+        doc.push_footnote("This note cannot fit below the body.")
+            .is_err()
+    );
+}
+
+#[test]
 fn heading_can_stay_with_the_following_body_line() {
     let opts = FlowOptions {
         page_size: (200.0, 200.0),
@@ -382,6 +468,48 @@ fn table_can_stay_with_the_following_body_line() {
         .collect();
     assert!(!first_page.contains("Table marker"));
     assert!(second_page.contains("Table marker") && second_page.contains("Following body"));
+}
+
+#[test]
+fn table_can_stay_together_when_it_fits_on_one_page() {
+    let opts = FlowOptions {
+        page_size: (200.0, 200.0),
+        margins: Margins::uniform(20.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    for _ in 0..14 {
+        doc.push_paragraph("filler").unwrap();
+    }
+    doc.push_table_cells_keep_together(
+        &[
+            vec![FlowTableCell::new("first table row")],
+            vec![FlowTableCell::new("second table row")],
+        ],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+    let first_page: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    let second_page: String = reloaded
+        .extract_text_runs(2)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(!first_page.contains("first table row"));
+    assert!(second_page.contains("first table row") && second_page.contains("second table row"));
 }
 
 #[test]
@@ -731,6 +859,357 @@ fn generic_table_cells_support_vertical_rowspan() {
     assert!(text.contains("rowspan"));
     assert!(text.contains("top"));
     assert!(text.contains("bottom"));
+}
+
+#[test]
+fn vertical_rowspan_table_splits_at_safe_span_boundaries() {
+    let opts = FlowOptions {
+        page_size: (200.0, 80.0),
+        margins: Margins::uniform(10.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    doc.push_table_cells(
+        &[
+            vec![
+                FlowTableCell::new("group A").with_rowspan(2),
+                FlowTableCell::new("a top"),
+            ],
+            vec![FlowTableCell::new("a bottom")],
+            vec![
+                FlowTableCell::new("group B").with_rowspan(2),
+                FlowTableCell::new("b top"),
+            ],
+            vec![FlowTableCell::new("b bottom")],
+            vec![FlowTableCell::new("tail"), FlowTableCell::new("tail value")],
+        ],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() >= 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for marker in [
+        "group A",
+        "a top",
+        "a bottom",
+        "group B",
+        "b top",
+        "b bottom",
+        "tail value",
+    ] {
+        assert!(text.contains(marker), "missing marker {marker:?}: {text:?}");
+    }
+}
+
+#[test]
+fn vertical_rowspan_table_continues_across_a_span_boundary() {
+    let opts = FlowOptions {
+        page_size: (200.0, 70.0),
+        margins: Margins::uniform(8.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    doc.push_table_cells(
+        &[
+            vec![
+                FlowTableCell::new("continued group").with_rowspan(4),
+                FlowTableCell::new("row 1"),
+            ],
+            vec![FlowTableCell::new("row 2")],
+            vec![FlowTableCell::new("row 3")],
+            vec![FlowTableCell::new("row 4")],
+            vec![FlowTableCell::new("tail"), FlowTableCell::new("tail value")],
+        ],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() >= 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for marker in [
+        "continued group",
+        "row 1",
+        "row 2",
+        "row 3",
+        "row 4",
+        "tail value",
+    ] {
+        assert!(text.contains(marker), "missing marker {marker:?}: {text:?}");
+    }
+    assert_eq!(text.matches("continued group").count(), 1);
+}
+
+#[test]
+fn vertical_rowspan_cell_text_continues_without_duplication() {
+    let opts = FlowOptions {
+        page_size: (200.0, 70.0),
+        margins: Margins::uniform(8.0),
+        body_font_size: 10.0,
+        line_height_factor: 1.0,
+        paragraph_spacing: 0.0,
+        ..FlowOptions::default()
+    };
+    let mut doc = FlowDocument::new(NOTO, opts).unwrap();
+    let span_text = (0..12)
+        .map(|index| format!("span line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    doc.push_table_cells(
+        &[
+            vec![
+                FlowTableCell::new(span_text).with_rowspan(4),
+                FlowTableCell::new("first row"),
+            ],
+            vec![FlowTableCell::new("second row")],
+            vec![FlowTableCell::new("third row")],
+            vec![FlowTableCell::new("fourth row")],
+        ],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() >= 2);
+    let runs: Vec<String> = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for index in 0..12 {
+        let marker = format!("span line {index}");
+        assert!(
+            runs.iter().any(|run| run == &marker),
+            "missing marker {marker:?}: {runs:?}"
+        );
+        assert_eq!(
+            runs.iter().filter(|run| *run == &marker).count(),
+            1,
+            "duplicated marker {marker:?}"
+        );
+    }
+}
+
+#[test]
+fn nested_table_blocks_render_inside_the_parent_cell() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_table_blocks(
+        &[vec![
+            FlowTableBlockCell::new("Summary"),
+            FlowTableBlockCell::new("Values").with_block(FlowTableCellBlock::NestedTable {
+                rows: vec![
+                    vec![FlowTableCell::new("Q1"), FlowTableCell::new("100")],
+                    vec![FlowTableCell::new("Q2"), FlowTableCell::new("120")],
+                ],
+                options: TableOptions {
+                    column_widths: TableColumnWidths::Fractions(vec![1.0, 1.0]),
+                    border_width: 0.25,
+                    ..TableOptions::default()
+                },
+            }),
+        ]],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = reloaded
+        .extract_text_runs(1)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    for expected in ["Summary", "Values", "Q1", "100", "Q2", "120"] {
+        assert!(
+            text.contains(expected),
+            "missing nested table text: {expected}"
+        );
+    }
+}
+
+#[test]
+fn nested_table_blocks_reject_a_child_row_taller_than_one_page() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let long_text = (0..200)
+        .map(|index| format!("long {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = doc.push_table_blocks(
+        &[vec![FlowTableBlockCell::nested_table(
+            vec![vec![FlowTableCell::new(long_text)]],
+            TableOptions::default(),
+        )]],
+        TableOptions::default(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn nested_child_rows_split_without_duplicate_extraction() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let nested_rows = (0..100)
+        .map(|index| vec![FlowTableCell::new(format!("child row {index}"))])
+        .collect();
+    doc.push_table_blocks(
+        &[vec![FlowTableBlockCell::nested_table(
+            nested_rows,
+            TableOptions::default(),
+        )]],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() > 1);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for index in [0, 37, 99] {
+        assert!(text.contains(&format!("child row {index}")));
+    }
+    assert_eq!(text.matches("child row 37").count(), 1);
+}
+
+#[test]
+fn nested_child_rows_split_with_a_sibling_parent_cell() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let nested_rows = (0..100)
+        .map(|index| vec![FlowTableCell::new(format!("sibling child {index}"))])
+        .collect();
+    doc.push_table_blocks(
+        &[vec![
+            FlowTableBlockCell::new("sibling"),
+            FlowTableBlockCell::nested_table(nested_rows, TableOptions::default()),
+        ]],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    assert!(reloaded.page_count() > 1);
+    assert!(text.contains("sibling"));
+    assert!(text.contains("sibling child 99"));
+}
+
+#[test]
+fn multiple_nested_children_split_in_sync() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let left_rows = (0..100)
+        .map(|index| vec![FlowTableCell::new(format!("left child {index}"))])
+        .collect();
+    let right_rows = (0..100)
+        .map(|index| vec![FlowTableCell::new(format!("right child {index}"))])
+        .collect();
+    doc.push_table_blocks(
+        &[vec![
+            FlowTableBlockCell::nested_table(left_rows, TableOptions::default()),
+            FlowTableBlockCell::nested_table(right_rows, TableOptions::default()),
+        ]],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    assert!(reloaded.page_count() > 1);
+    assert!(text.contains("left child 99"));
+    assert!(text.contains("right child 99"));
+}
+
+#[test]
+fn nested_child_rows_split_inside_multi_row_outer_table() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let nested_rows = (0..100)
+        .map(|index| vec![FlowTableCell::new(format!("multi child {index}"))])
+        .collect();
+    doc.push_table_blocks(
+        &[
+            vec![FlowTableBlockCell::new("outer before")],
+            vec![FlowTableBlockCell::nested_table(
+                nested_rows,
+                TableOptions::default(),
+            )],
+            vec![FlowTableBlockCell::new("outer after")],
+        ],
+        TableOptions::default(),
+    )
+    .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    assert!(reloaded.page_count() > 1);
+    for expected in [
+        "outer before",
+        "multi child 0",
+        "multi child 99",
+        "outer after",
+    ] {
+        assert!(text.contains(expected), "missing text: {expected}");
+    }
+    assert_eq!(text.matches("multi child 37").count(), 1);
+}
+
+#[test]
+fn nested_table_blocks_split_at_outer_row_boundaries() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    let rows: Vec<Vec<FlowTableBlockCell>> = (0..60)
+        .map(|index| {
+            vec![
+                FlowTableBlockCell::new(format!("outer {index}")).with_block(
+                    FlowTableCellBlock::NestedTable {
+                        rows: vec![vec![FlowTableCell::new(format!("inner {index}"))]],
+                        options: TableOptions::default(),
+                    },
+                ),
+            ]
+        })
+        .collect();
+    doc.push_table_blocks(&rows, TableOptions::default())
+        .unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert!(reloaded.page_count() > 1);
+    let text: String = reloaded
+        .extract_text_runs(reloaded.page_count())
+        .unwrap()
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert!(text.contains("outer 59"));
+    assert!(text.contains("inner 59"));
 }
 
 #[test]

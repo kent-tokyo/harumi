@@ -282,7 +282,7 @@ doc.page(1)?.add_text(
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current release versions: **v1.22.0** (harumi) / **v0.10.1** (harumi-ai).
+Current release versions: **v1.22.1** (harumi) / **v0.10.1** (harumi-ai).
 This release adds shared measured paragraph/table layout, HTML break semantics,
 renderer comparison diagnostics, and bounded large-report verification.
 

@@ -246,8 +246,10 @@ doc.push_table(
 )?;
 ```
 
-Horizontal cell spans, repeated headers, per-cell padding/alignment, and border
-styles are supported. Vertical spans and nested blocks remain planned table-engine work.
+Horizontal cell spans, repeated headers, per-cell padding/alignment, border
+styles, vertical spans, and one-level nested blocks are supported. Nested blocks
+are available through `push_table_blocks`; automatic footnote references and
+endnotes remain outside the current Flow contract.
 
 Use `doc.measure_table_widths(&rows, &options)` to inspect the resolved column
 widths before rendering.

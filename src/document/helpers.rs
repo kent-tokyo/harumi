@@ -656,6 +656,18 @@ fn is_line_start_prohibited(ch: char) -> bool {
             | '’'
             | '»'
             | '›'
+            | ')'
+            | ']'
+            | '}'
+            | '⟧'
+            | '⟩'
+            | '⌉'
+            | '⌋'
+            | '❩'
+            | '❫'
+            | '❭'
+            | '❯'
+            | '❱'
             | '!'
             | '?'
             | ','
@@ -695,6 +707,27 @@ fn is_line_end_prohibited(ch: char) -> bool {
             | '〝'
             | '〖'
             | '〘'
+            | '⟦'
+            | '⟨'
+            | '⌈'
+            | '⌊'
+            | '❨'
+            | '❪'
+            | '❬'
+            | '❮'
+            | '❰'
+            | '%'
+            | '‰'
+            | '‱'
+            | '°'
+            | '℃'
+            | '℉'
+            | '€'
+            | '£'
+            | '¥'
+            | '₩'
+            | '₹'
+            | '₽'
     )
 }
 
@@ -706,6 +739,53 @@ fn is_non_spacing_or_joining_mark(ch: char) -> bool {
     matches!(
         ch,
         '\u{0300}'..='\u{036f}'
+            | '\u{0483}'..='\u{0489}'
+            | '\u{0591}'..='\u{05bd}'
+            | '\u{05bf}'
+            | '\u{05c1}'..='\u{05c2}'
+            | '\u{05c4}'..='\u{05c5}'
+            | '\u{05c7}'
+            | '\u{0610}'..='\u{061a}'
+            | '\u{064b}'..='\u{065f}'
+            | '\u{0670}'
+            | '\u{0711}'
+            | '\u{0730}'..='\u{074a}'
+            | '\u{093a}'..='\u{094d}'
+            | '\u{0951}'..='\u{0957}'
+            | '\u{0962}'..='\u{0963}'
+            | '\u{09bc}'
+            | '\u{09be}'..='\u{09cd}'
+            | '\u{0a01}'..='\u{0a03}'
+            | '\u{0a3c}'
+            | '\u{0a3e}'..='\u{0a4d}'
+            | '\u{0abc}'
+            | '\u{0abe}'..='\u{0acd}'
+            | '\u{0b3c}'
+            | '\u{0bbe}'..='\u{0bcd}'
+            | '\u{0c3e}'..='\u{0c56}'
+            | '\u{0cbc}'
+            | '\u{0cbe}'..='\u{0cdc}'
+            | '\u{0d3b}'..='\u{0d3c}'
+            | '\u{0d3e}'..='\u{0d4d}'
+            | '\u{0e31}'
+            | '\u{0e34}'..='\u{0e3a}'
+            | '\u{0e47}'..='\u{0e4e}'
+            | '\u{0eb1}'
+            | '\u{0eb4}'..='\u{0ebc}'
+            | '\u{0ec8}'..='\u{0ecd}'
+            | '\u{0f18}'..='\u{0f19}'
+            | '\u{0f35}' | '\u{0f37}' | '\u{0f39}'
+            | '\u{0f71}'..='\u{0f84}'
+            | '\u{0f86}'..='\u{0f87}'
+            | '\u{0f8d}'..='\u{0fbc}'
+            | '\u{102d}'..='\u{103e}'
+            | '\u{1056}'..='\u{1059}'
+            | '\u{105e}'..='\u{1060}'
+            | '\u{1062}'..='\u{1064}'
+            | '\u{1067}'..='\u{106d}'
+            | '\u{1071}'..='\u{1074}'
+            | '\u{1082}' | '\u{1085}'..='\u{1086}' | '\u{108d}'
+            | '\u{109d}'
             | '\u{1ab0}'..='\u{1aff}'
             | '\u{1dc0}'..='\u{1dff}'
             | '\u{20d0}'..='\u{20ff}'
@@ -716,10 +796,101 @@ fn is_non_spacing_or_joining_mark(ch: char) -> bool {
     )
 }
 
+/// Characters that extend the preceding grapheme cluster for the line-breaker.
+/// This keeps emoji modifiers attached and, importantly, keeps the character
+/// after a zero-width joiner from being separated from the joined sequence.
+fn is_grapheme_extension(ch: char) -> bool {
+    is_non_spacing_or_joining_mark(ch)
+        || matches!(ch, '\u{1f3fb}'..='\u{1f3ff}' | '\u{e0020}'..='\u{e007f}')
+}
+
 /// Characters that must not become a line boundary. This covers the common
 /// Unicode no-break spaces and Word Joiner without claiming full UAX #14.
 fn is_non_breaking_character(ch: char) -> bool {
     matches!(ch, '\u{00a0}' | '\u{202f}' | '\u{2060}' | '\u{feff}')
+}
+
+/// Unicode spacing characters that provide a word boundary. Non-breaking
+/// spaces are intentionally excluded and remain protected boundaries.
+fn is_breakable_space(ch: char) -> bool {
+    matches!(
+        ch,
+        ' ' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{205f}' | '\u{3000}'
+    )
+}
+
+fn is_decimal_digit(ch: char) -> bool {
+    ch.is_ascii_digit() || matches!(ch, '\u{ff10}'..='\u{ff19}')
+}
+
+/// Numeric separators and signs stay with the surrounding number. This is a
+/// deliberately small UAX #14 NU/IS/PR/PO boundary subset: it protects the
+/// common cases without pretending to implement locale-specific number rules.
+fn is_numeric_joiner(ch: char) -> bool {
+    matches!(
+        ch,
+        '+' | '-' | '\u{2212}' | ',' | '.' | ':' | '/' | '\u{ff0c}' | '\u{ff0e}'
+    )
+}
+
+fn is_numeric_boundary_protected(current: &str, next: char) -> bool {
+    let Some(previous) = current.chars().last() else {
+        return false;
+    };
+    (is_decimal_digit(previous) && is_numeric_joiner(next))
+        || (is_numeric_joiner(previous) && is_decimal_digit(next))
+}
+
+fn is_unit_prefix(ch: char) -> bool {
+    matches!(ch, '$' | '€' | '£' | '¥' | '₩' | '₹' | '₽')
+}
+
+fn is_unit_suffix(ch: char) -> bool {
+    matches!(ch, '%' | '‰' | '‱' | '°' | '℃' | '℉' | '円')
+}
+
+/// Characters that create a break opportunity after themselves. The subset
+/// intentionally excludes non-breaking hyphen and Unicode no-break spaces.
+fn is_break_opportunity(ch: char) -> bool {
+    is_breakable_space(ch)
+        || matches!(
+            ch,
+            '-' | '\u{00ad}'
+                | '\u{05be}'
+                | '\u{058a}'
+                | '\u{0f0b}'
+                | '\u{1400}'
+                | '\u{1361}'
+                | '\u{1806}'
+                | '\u{2014}'
+                | '\u{2015}'
+                | '\u{2e3a}'
+                | '\u{2e3b}'
+                | '\u{2010}'
+                | '\u{2012}'
+                | '\u{2043}'
+                | '\u{2044}'
+                | '\u{2053}'
+                | '\u{2e17}'
+                | '\u{2e1a}'
+                | '\u{2e40}'
+                | '\u{30a0}'
+                | '\u{17d4}'
+                | '\u{17d5}'
+                | '\u{200b}'
+                | '/'
+        )
+}
+
+fn is_regional_indicator(ch: char) -> bool {
+    matches!(ch, '\u{1f1e6}'..='\u{1f1ff}')
+}
+
+fn trailing_regional_indicators(text: &str) -> usize {
+    text.chars()
+        .rev()
+        .take_while(|ch| is_regional_indicator(*ch))
+        .count()
 }
 
 /// Width of one character in PDF points given the font face and font size.
@@ -797,16 +968,51 @@ pub(crate) fn wrap_paragraph_with_fallback(
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut current_w: f32 = 0.0;
-    // byte index of last ASCII space in `current`; width after that space (= start of next word)
-    let mut last_space_byte: Option<usize> = None;
+    // byte index and length of the last breakable space in `current`; width
+    // after that space (= start of the next word)
+    let mut last_space: Option<(usize, usize)> = None;
     let mut width_at_word_start: f32 = 0.0;
 
     for ch in paragraph.chars() {
-        let ch_w = glyph_advance_pt(face, ch, font_size)
-            .or_else(|| fallback.and_then(|fallback| glyph_advance_pt(fallback, ch, font_size)))
-            .unwrap_or(font_size * 0.5);
+        // These are layout controls rather than visible glyphs. Treating a
+        // missing cmap entry as a half-em fallback width would prevent the
+        // boundary from becoming reachable in fonts that omit them.
+        let ch_w = if matches!(ch, '\u{00ad}' | '\u{200b}') {
+            0.0
+        } else {
+            glyph_advance_pt(face, ch, font_size)
+                .or_else(|| fallback.and_then(|fallback| glyph_advance_pt(fallback, ch, font_size)))
+                .unwrap_or(font_size * 0.5)
+        };
 
         if current_w + ch_w > box_width && !current.is_empty() {
+            if is_numeric_boundary_protected(&current, ch)
+                || (current.chars().last().is_some_and(is_decimal_digit)
+                    && (is_decimal_digit(ch) || is_unit_suffix(ch)))
+                || (current.chars().last().is_some_and(is_unit_prefix) && is_decimal_digit(ch))
+            {
+                // Keep numeric punctuation and currency prefixes attached to
+                // the number. Breaking `12,345`, `2026-09-07`, or `$100`
+                // creates a materially misleading value even when the line
+                // is only one glyph over the nominal width.
+                current.push(ch);
+                current_w += ch_w;
+                continue;
+            }
+            if current
+                .chars()
+                .last()
+                .is_some_and(|last| last == '\u{200d}')
+                || is_grapheme_extension(ch)
+                || (is_regional_indicator(ch) && trailing_regional_indicators(&current) % 2 == 1)
+            {
+                // Do not split a combining/emoji extension sequence. In the
+                // ZWJ case this also keeps the glyph following the joiner in
+                // the same line.
+                current.push(ch);
+                current_w += ch_w;
+                continue;
+            }
             if current
                 .chars()
                 .last()
@@ -815,6 +1021,16 @@ pub(crate) fn wrap_paragraph_with_fallback(
                 // Keep the token following a no-break character attached. It is
                 // better to exceed the nominal width than to create a semantic
                 // break inside a protected boundary.
+                current.push(ch);
+                current_w += ch_w;
+                continue;
+            }
+            if current.chars().count() == 1
+                && current.chars().next().is_some_and(is_line_end_prohibited)
+            {
+                // Do not leave an opening bracket stranded on a line by itself.
+                // Keeping the first following scalar may exceed the nominal width
+                // by one glyph, but preserves the bracket pair's reading shape.
                 current.push(ch);
                 current_w += ch_w;
                 continue;
@@ -831,9 +1047,15 @@ pub(crate) fn wrap_paragraph_with_fallback(
                 lines.push(std::mem::take(&mut current));
                 current.push(last);
                 current_w = last_w;
-                last_space_byte = None;
+                last_space = None;
+                // The opening punctuation belongs with the following scalar;
+                // consume that scalar here so the generic overflow path cannot
+                // emit the opening punctuation as a line by itself.
+                current.push(ch);
+                current_w += ch_w;
+                continue;
             }
-            if is_cjk(ch) || last_space_byte.is_none() {
+            if is_cjk(ch) || last_space.is_none() {
                 // CJK or no word boundary found → break at the current character
                 if is_line_start_prohibited(ch) {
                     // Keep closing punctuation with the preceding glyph. This
@@ -845,25 +1067,25 @@ pub(crate) fn wrap_paragraph_with_fallback(
                 } else {
                     lines.push(std::mem::take(&mut current));
                     current_w = 0.0;
-                    last_space_byte = None;
+                    last_space = None;
                 }
             } else {
                 // Break at the last space: emit everything before it, keep the word after
-                let sp = last_space_byte.unwrap();
-                let word = current[sp + 1..].to_owned(); // sp+1 safe: space is ASCII (1 byte)
+                let (sp, space_len) = last_space.unwrap();
+                let word = current[sp + space_len..].to_owned();
                 // Keep the boundary space in the emitted line. It remains visually
                 // equivalent to trimming it at a line break, while preserving the
                 // source text for extraction and downstream layout consumers.
-                current.truncate(sp + 1);
+                current.truncate(sp + space_len);
                 lines.push(std::mem::take(&mut current));
                 current = word;
                 current_w = (current_w - width_at_word_start).max(0.0);
-                last_space_byte = None;
+                last_space = None;
             }
         }
 
-        if ch == ' ' {
-            last_space_byte = Some(current.len()); // byte index of space before it is pushed
+        if is_break_opportunity(ch) {
+            last_space = Some((current.len(), ch.len_utf8()));
             width_at_word_start = current_w + ch_w; // total width including the space
         }
         current.push(ch);
@@ -1614,6 +1836,40 @@ mod tests {
     }
 
     #[test]
+    fn wrap_paragraph_keeps_grapheme_extensions_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("A\u{0301}B", &face, 10.0, 7.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines.iter().all(|line| !line.starts_with('\u{0301}')));
+        assert_eq!(lines.concat(), "A\u{0301}B");
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_arabic_combining_marks_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("ا\u{064e}ب", &face, 10.0, 7.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines.iter().all(|line| !line.starts_with('\u{064e}')));
+        assert_eq!(lines.concat(), "ا\u{064e}ب");
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_zwj_sequence_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("😀\u{200d}😀X", &face, 10.0, 7.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines.iter().all(|line| !line.ends_with('\u{200d}')));
+        assert!(lines.iter().skip(1).all(|line| !line.starts_with('😀')));
+        assert_eq!(lines.concat(), "😀\u{200d}😀X");
+    }
+
+    #[test]
     fn wrap_paragraph_keeps_cjk_closing_punctuation_off_line_start() {
         let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
         let face = Face::parse(bytes, 0).expect("fixture font should parse");
@@ -1645,6 +1901,38 @@ mod tests {
     }
 
     #[test]
+    fn wrap_paragraph_keeps_common_brackets_on_their_valid_side() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("abc(def)ghi", &face, 10.0, 25.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(
+            lines.iter().all(|line| {
+                !matches!(line.chars().next(), Some(')' | ']' | '}'))
+                    && !matches!(line.chars().last(), Some('(' | '[' | '{'))
+            }),
+            "invalid bracket boundary: {lines:?}"
+        );
+        assert_eq!(lines.concat(), "abc(def)ghi");
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_unicode_brackets_on_their_valid_side() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("あいう⟦えお⟧かき", &face, 10.0, 28.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(
+            lines
+                .iter()
+                .all(|line| { !line.starts_with('⟧') && !line.ends_with('⟦') })
+        );
+        assert_eq!(lines.concat(), "あいう⟦えお⟧かき");
+    }
+
+    #[test]
     fn wrap_paragraph_preserves_ascii_boundary_space() {
         let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
         let face = Face::parse(bytes, 0).expect("fixture font should parse");
@@ -1661,6 +1949,129 @@ mod tests {
     }
 
     #[test]
+    fn wrap_paragraph_preserves_unicode_boundary_space() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let prefix = "alpha\u{2003}";
+        let width = super::text_width_with_face(prefix, &face, 10.0) + 1.0;
+        let lines = wrap_paragraph("alpha\u{2003}beta", &face, 10.0, width);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines[0].ends_with('\u{2003}'));
+        assert_eq!(lines.concat(), "alpha\u{2003}beta");
+    }
+
+    #[test]
+    fn wrap_paragraph_breaks_after_hyphen() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let prefix = "alpha-";
+        let width = super::text_width_with_face(prefix, &face, 10.0) + 1.0;
+        let lines = wrap_paragraph("alpha-beta", &face, 10.0, width);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines[0].ends_with('-'));
+        assert_eq!(lines.concat(), "alpha-beta");
+    }
+
+    #[test]
+    fn wrap_paragraph_breaks_after_em_dash_boundaries() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        for (text, prefix) in [("alpha—beta", "alpha—"), ("alpha―beta", "alpha―")] {
+            let width = prefix
+                .chars()
+                .map(|ch| super::glyph_advance_pt(&face, ch, 10.0).unwrap_or(5.0))
+                .sum::<f32>()
+                + 0.1;
+            let lines = wrap_paragraph(&format!("{text} x"), &face, 10.0, width);
+            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
+            assert!(lines[0].ends_with('—') || lines[0].ends_with('―'));
+            assert_eq!(lines.concat(), format!("{text} x"));
+        }
+    }
+
+    #[test]
+    fn wrap_paragraph_breaks_at_soft_hyphen_and_zero_width_space() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        let soft_hyphen_prefix = "alpha\u{00ad}";
+        let soft_hyphen_width = super::text_width_with_face(soft_hyphen_prefix, &face, 10.0);
+        let soft_hyphen_lines =
+            wrap_paragraph("alpha\u{00ad}beta", &face, 10.0, soft_hyphen_width + 1.0);
+        assert!(soft_hyphen_lines.len() >= 2, "{soft_hyphen_lines:?}");
+        assert_eq!(soft_hyphen_lines.concat(), "alpha\u{00ad}beta");
+        assert!(soft_hyphen_lines[0].ends_with('\u{00ad}'));
+
+        let zero_width_width = super::text_width_with_face("alpha", &face, 10.0);
+        let zero_width_lines =
+            wrap_paragraph("alpha\u{200b}beta", &face, 10.0, zero_width_width + 1.0);
+        assert!(zero_width_lines.len() >= 2, "{zero_width_lines:?}");
+        assert_eq!(zero_width_lines.concat(), "alpha\u{200b}beta");
+        assert!(zero_width_lines[0].ends_with('\u{200b}'));
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_hebrew_and_devanagari_marks_attached() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        for text in ["א\u{05b0}ב", "क\u{093f}ख"] {
+            let lines = wrap_paragraph(text, &face, 10.0, 7.0);
+            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| { !line.starts_with('\u{05b0}') && !line.starts_with('\u{093f}') })
+            );
+            assert_eq!(lines.concat(), text);
+        }
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_regional_indicator_pairs_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("🇯🇵X", &face, 10.0, 7.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines.iter().skip(1).all(|line| !line.starts_with('🇯')));
+        assert_eq!(lines.concat(), "🇯🇵X");
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_emoji_tag_sequence_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let lines = wrap_paragraph("🏴\u{e0067}\u{e0062}\u{e007f}X", &face, 10.0, 7.0);
+
+        assert!(lines.len() >= 2, "fixture should wrap: {lines:?}");
+        assert!(lines[0].contains('\u{e007f}'));
+        assert!(
+            lines
+                .iter()
+                .skip(1)
+                .all(|line| !line.starts_with('\u{e0067}'))
+        );
+        assert_eq!(lines.concat(), "🏴\u{e0067}\u{e0062}\u{e007f}X");
+    }
+
+    #[test]
+    fn rtl_fixture_preserves_logical_order_without_bidi_shaping() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+        let source = "שלום עולם";
+        let lines = wrap_paragraph(source, &face, 10.0, 30.0);
+
+        // This is an explicit boundary: line breaking preserves logical source
+        // order, while glyph shaping and visual bidi reordering remain future
+        // work and are not claimed by the Flow layout engine.
+        assert_eq!(lines.concat(), source);
+    }
+
+    #[test]
     fn wrap_paragraph_keeps_opening_punctuation_with_following_text() {
         let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
         let face = Face::parse(bytes, 0).expect("fixture font should parse");
@@ -1672,6 +2083,63 @@ mod tests {
             "opening punctuation must not end a line: {lines:?}"
         );
         assert_eq!(lines.concat(), "あいう（えお）");
+    }
+
+    #[test]
+    fn wrap_paragraph_keeps_numeric_and_unit_boundaries_together() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        for (text, prefix) in [
+            ("12,345円", "12,"),
+            ("2026-09-07", "2026-"),
+            ("3.14", "3."),
+            ("$100", "$1"),
+        ] {
+            let width = super::text_width_with_face(prefix, &face, 10.0) + 1.0;
+            let source = format!("{text} x");
+            let lines = wrap_paragraph(&source, &face, 10.0, width);
+            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
+            assert_eq!(lines.concat(), source);
+            assert!(
+                !lines.iter().skip(1).any(|line| {
+                    line.starts_with(',')
+                        || line.starts_with('.')
+                        || line.starts_with('-')
+                        || line.starts_with('円')
+                }),
+                "numeric boundary was split: {text:?} -> {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_paragraph_breaks_at_script_specific_separators() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        for (text, separator) in [
+            ("བོད་ཡིག", '\u{0f0b}'),
+            ("ኢትዮጵያ፡አማርኛ", '\u{1361}'),
+            ("א־ב", '\u{05be}'),
+            ("ខ្មែរ។ភាសា", '។'),
+        ] {
+            let prefix = text.split(separator).next().unwrap_or(text);
+            let prefix_with_separator = format!("{prefix}{separator}");
+            let width = prefix_with_separator
+                .chars()
+                .map(|ch| super::glyph_advance_pt(&face, ch, 10.0).unwrap_or(5.0))
+                .sum::<f32>()
+                + 0.1;
+            let source = format!("{text} x");
+            let lines = wrap_paragraph(&source, &face, 10.0, width);
+            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
+            assert_eq!(lines.concat(), source);
+            assert!(
+                lines[0].ends_with(separator),
+                "separator was not retained on the preceding line: {text:?} -> {lines:?}"
+            );
+        }
     }
 
     #[test]
