@@ -26,6 +26,8 @@ struct InputReport {
     markdown_block_count: usize,
     image_count: usize,
     invisible_fragment_count: usize,
+    page_batch_count: usize,
+    resumable_page_failures: usize,
     elapsed_ms: u128,
 }
 
@@ -187,6 +189,16 @@ fn measure_case(
     let mut markdown_block_count = 0;
     let mut image_count = 0;
     let mut invisible_fragment_count = 0;
+    let mut page_batch_count = 0;
+    let mut resumable_page_failures = 0;
+    let page_count = doc.page_count();
+
+    doc.for_each_text_runs_verbose_batch(1, page_count, 2, |batch| {
+        page_batch_count += 1;
+        resumable_page_failures += batch.iter().filter(|page| page.error.is_some()).count();
+        Ok(())
+    })?;
+
     for page in 1..=doc.page_count() {
         let page_fragments = doc.extract_text_runs(page)?;
         invisible_fragment_count += page_fragments
@@ -229,7 +241,7 @@ fn measure_case(
     Ok(InputReport {
         id,
         pdf_path: pdf_path.display().to_string(),
-        page_count: doc.page_count(),
+        page_count,
         text_marker_recall: found_markers as f32 / expected.len() as f32,
         expected_markers: expected.len(),
         found_markers,
@@ -238,6 +250,8 @@ fn measure_case(
         markdown_block_count,
         image_count,
         invisible_fragment_count,
+        page_batch_count,
+        resumable_page_failures,
         elapsed_ms: started.elapsed().as_millis(),
     })
 }
