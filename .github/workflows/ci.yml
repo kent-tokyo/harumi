@@ -37,6 +37,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - name: Verify WASM demo lockfile
+        run: cargo metadata --manifest-path wasm-demo/Cargo.toml --locked --format-version 1
       - name: Build (wasm32, default features)
         run: cargo build --target wasm32-unknown-unknown
       - name: Build (wasm32, draw+ocr+flow features)

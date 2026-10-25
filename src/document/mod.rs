@@ -2395,6 +2395,10 @@ impl Document {
     }
 
     /// Processes a page range in bounded batches.
+    ///
+    /// Pages are extracted one at a time and released after their batch is
+    /// delivered. Unlike [`extract_text_runs_verbose_page_range`], this method
+    /// does not retain the complete range in memory.
     pub fn for_each_text_runs_verbose_batch<F>(
         &self,
         start_page: u32,
@@ -2408,9 +2412,41 @@ impl Document {
         if batch_size == 0 {
             return Err(Error::InvalidInput("batch_size must be positive".into()));
         }
-        let pages = self.extract_text_runs_verbose_page_range(start_page, end_page)?;
-        for batch in pages.chunks(batch_size) {
-            callback(batch)?;
+        if start_page == 0 || end_page == 0 || start_page > end_page {
+            return Err(Error::InvalidInput(format!(
+                "invalid page range {start_page}..={end_page}"
+            )));
+        }
+        let page_count = self.page_count();
+        if end_page > page_count {
+            return Err(Error::PageNotFound(end_page));
+        }
+
+        let page_span = (end_page - start_page + 1) as usize;
+        let mut batch = Vec::with_capacity(batch_size.min(page_span));
+        for page in start_page..=end_page {
+            let extraction = match self.extract_text_runs_verbose(page) {
+                Ok((runs, warnings)) => crate::document::PageTextExtraction {
+                    page,
+                    runs,
+                    warnings,
+                    error: None,
+                },
+                Err(error) => crate::document::PageTextExtraction {
+                    page,
+                    runs: Vec::new(),
+                    warnings: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            };
+            batch.push(extraction);
+            if batch.len() == batch_size {
+                callback(&batch)?;
+                batch.clear();
+            }
+        }
+        if !batch.is_empty() {
+            callback(&batch)?;
         }
         Ok(())
     }
