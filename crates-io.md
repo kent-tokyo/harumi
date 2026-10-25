@@ -8,6 +8,9 @@ back into inferred layout regions — CID fonts, CMaps, and font subsetting hand
 automatically. Existing content is retained in overlay mode; pixel-identical layout
 is not guaranteed for complex, rotated, vertical, or image-backed pages.
 
+Current release: **v1.23.7**. Use the root README for the short introduction and
+the linked reference documents for API details and limitations.
+
 ### Choose harumi when
 
 You already have a PDF and need to translate, replace, or add searchable CJK
