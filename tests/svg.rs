@@ -102,3 +102,33 @@ fn renders_referenced_markers_and_honors_none() {
     let plain = svg_to_pdf(without_marker, FONT).expect("unmarked lines should convert");
     assert_ne!(bytes, plain);
 }
+
+#[test]
+fn keeps_path_subpaths_separate_after_move_to() {
+    let svg = br##"<svg width="100" height="40">
+      <path d="M 10 20 L 30 20 M 70 20 L 90 20" fill="none" stroke="#000"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("multiple path subpaths should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+    assert_eq!(content.matches(" m\n").count(), 2);
+    assert_eq!(content.matches("\nS\n").count(), 2);
+}
+
+#[test]
+fn preserves_distinct_polygon_fill_and_stroke_colors() {
+    let svg = br##"<svg width="100" height="100">
+      <polygon points="20,20 80,20 50,80" fill="#ff0000" stroke="#0000ff" stroke-width="8"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("polygon colors should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+
+    assert!(content.contains("1.0000 0.0000 0.0000 rg"));
+    assert!(content.contains("0.0000 0.0000 1.0000 RG"));
+    assert!(content.contains("8.0000 w"));
+}
