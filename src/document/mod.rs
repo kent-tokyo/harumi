@@ -2524,29 +2524,7 @@ impl Document {
         }
 
         // Pass 1: collect all chars per font across every page (single subset per font).
-        let mut font_chars: HashMap<u32, Vec<char>> = HashMap::new();
-        for page in &self.pending {
-            for op in &page.ops {
-                match op {
-                    PendingOp::Text(t) => {
-                        let chars = font_chars.entry(t.font.0).or_default();
-                        chars.extend(t.text.chars());
-                    }
-                    PendingOp::Replace(r) => {
-                        let chars = font_chars.entry(r.font.0).or_default();
-                        chars.extend(r.new_text.chars());
-                    }
-                    PendingOp::ReplacePreserve(_) => {}
-                    PendingOp::ReplaceResubset(_) => {} // uses existing PDF font
-                    #[cfg(feature = "draw")]
-                    PendingOp::Draw(_) => {}
-                }
-            }
-        }
-        for chars in font_chars.values_mut() {
-            chars.sort_unstable();
-            chars.dedup();
-        }
+        let font_chars = self.collect_pending_font_chars();
 
         // Pass 2: subset + embed each font once, keep char→GID map alongside.
         struct EmbedState {
@@ -3110,6 +3088,36 @@ impl Document {
     /// For PDFs whose existing outlines have nested children, the count may be imprecise, but
     /// the linked-list structure remains navigable.
     #[allow(clippy::type_complexity)]
+    fn collect_pending_font_chars(&self) -> HashMap<u32, Vec<char>> {
+        let mut font_chars: HashMap<u32, Vec<char>> = HashMap::new();
+        for page in &self.pending {
+            for op in &page.ops {
+                match op {
+                    PendingOp::Text(text) => {
+                        font_chars
+                            .entry(text.font.0)
+                            .or_default()
+                            .extend(text.text.chars());
+                    }
+                    PendingOp::Replace(replace) => {
+                        font_chars
+                            .entry(replace.font.0)
+                            .or_default()
+                            .extend(replace.new_text.chars());
+                    }
+                    PendingOp::ReplacePreserve(_) | PendingOp::ReplaceResubset(_) => {}
+                    #[cfg(feature = "draw")]
+                    PendingOp::Draw(_) => {}
+                }
+            }
+        }
+        for chars in font_chars.values_mut() {
+            chars.sort_unstable();
+            chars.dedup();
+        }
+        font_chars
+    }
+
     fn build_outlines_from_bookmarks(&mut self) -> Result<()> {
         if self.pending_bookmarks.is_empty() {
             return Ok(());
@@ -3144,8 +3152,8 @@ impl Document {
 
         // Build outline item objects with parent/sibling links.
         // Stack: (level, item_idx, first_child_idx, last_child_idx, child_count)
-        let mut stack: Vec<(u8, usize, Option<usize>, Option<usize>, u32)> =
-            vec![(0, usize::MAX, None, None, 0)];
+        type OutlineStackFrame = (u8, usize, Option<usize>, Option<usize>, u32);
+        let mut stack: Vec<OutlineStackFrame> = vec![(0, usize::MAX, None, None, 0)];
 
         for i in 0..n {
             let curr_level = levels[i];
