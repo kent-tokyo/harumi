@@ -145,6 +145,7 @@ fn suppress_ops_in_object(
 }
 
 impl<'doc> PageHandle<'doc> {
+    #[cfg(feature = "svg")]
     pub(crate) fn measure_text(&self, text: &str, font: FontHandle, font_size: f32) -> Result<f32> {
         self.doc.measure_text(text, font, font_size)
     }
