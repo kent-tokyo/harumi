@@ -6428,58 +6428,22 @@ pub fn extract_layout_regions(
                 sizes.iter().sum::<f32>() / sizes.len() as f32
             }
         };
-        let ratio = if median_fs > 0.0 {
-            avg_fs / median_fs
-        } else {
-            1.0
-        };
-        let is_bold = cell.fragments.iter().any(|f| f.is_bold);
-        let kind = if ratio >= 1.8 || (ratio >= 1.5 && is_bold) {
-            LayoutRegionKind::Heading(1)
-        } else if ratio >= 1.5 {
-            LayoutRegionKind::Heading(2)
-        } else if ratio >= 1.3 {
-            LayoutRegionKind::Heading(3)
-        } else if ratio >= 1.15 || (ratio >= 1.05 && is_bold) {
-            LayoutRegionKind::Heading(4)
-        } else if zones.len() <= 1 && cell.col == 0 {
-            // Single column without tabular siblings → paragraph
-            LayoutRegionKind::Paragraph
-        } else {
-            LayoutRegionKind::TableCell
-        };
+        let kind = classify_layout_region_kind(
+            avg_fs,
+            median_fs,
+            cell.fragments.iter().any(|f| f.is_bold),
+            zones.len(),
+            cell.col,
+        );
 
         // --- Role classification ---
-        let role = match &kind {
-            LayoutRegionKind::Heading(_) => LayoutRegionRole::SectionHeading,
-            _ => {
-                let top_y = source_bbox[1] + source_bbox[3];
-                let bot_y = source_bbox[1];
-                if page_height > 0.0
-                    && top_y.is_finite()
-                    && bot_y.is_finite()
-                    && (top_y > page_height * 0.92 || bot_y < page_height * 0.08)
-                {
-                    LayoutRegionRole::HeaderFooter
-                } else if let Some(cols) = row_cols.get(&cell.row) {
-                    let has_higher = cols.iter().any(|&c| c > cell.col);
-                    let has_lower = cols.iter().any(|&c| c < cell.col);
-                    if cell.col == 0 && has_higher {
-                        LayoutRegionRole::LeftLabel
-                    } else if cell.col > 0 && has_lower {
-                        LayoutRegionRole::RightValue
-                    } else if matches!(kind, LayoutRegionKind::Paragraph) {
-                        LayoutRegionRole::ParagraphBody
-                    } else {
-                        LayoutRegionRole::Unknown
-                    }
-                } else if matches!(kind, LayoutRegionKind::Paragraph) {
-                    LayoutRegionRole::ParagraphBody
-                } else {
-                    LayoutRegionRole::Unknown
-                }
-            }
-        };
+        let role = classify_layout_region_role(
+            &kind,
+            source_bbox,
+            page_height,
+            row_cols.get(&cell.row),
+            cell.col,
+        );
 
         regions.push(LayoutRegion {
             kind,
@@ -6517,6 +6481,72 @@ fn median_layout_font_size(fragments: &[TextFragment]) -> f32 {
         .get(font_sizes.len() / 2)
         .copied()
         .unwrap_or(10.0)
+}
+
+fn classify_layout_region_kind(
+    avg_font_size: f32,
+    median_font_size: f32,
+    is_bold: bool,
+    column_count: usize,
+    column: usize,
+) -> LayoutRegionKind {
+    let ratio = if median_font_size > 0.0 {
+        avg_font_size / median_font_size
+    } else {
+        1.0
+    };
+    if ratio >= 1.8 || (ratio >= 1.5 && is_bold) {
+        LayoutRegionKind::Heading(1)
+    } else if ratio >= 1.5 {
+        LayoutRegionKind::Heading(2)
+    } else if ratio >= 1.3 {
+        LayoutRegionKind::Heading(3)
+    } else if ratio >= 1.15 || (ratio >= 1.05 && is_bold) {
+        LayoutRegionKind::Heading(4)
+    } else if column_count <= 1 && column == 0 {
+        LayoutRegionKind::Paragraph
+    } else {
+        LayoutRegionKind::TableCell
+    }
+}
+
+fn classify_layout_region_role(
+    kind: &LayoutRegionKind,
+    source_bbox: [f32; 4],
+    page_height: f32,
+    row_columns: Option<&std::collections::BTreeSet<usize>>,
+    column: usize,
+) -> LayoutRegionRole {
+    if matches!(kind, LayoutRegionKind::Heading(_)) {
+        return LayoutRegionRole::SectionHeading;
+    }
+
+    let top_y = source_bbox[1] + source_bbox[3];
+    let bottom_y = source_bbox[1];
+    if page_height > 0.0
+        && top_y.is_finite()
+        && bottom_y.is_finite()
+        && (top_y > page_height * 0.92 || bottom_y < page_height * 0.08)
+    {
+        return LayoutRegionRole::HeaderFooter;
+    }
+
+    if let Some(columns) = row_columns {
+        let has_higher = columns.iter().any(|&c| c > column);
+        let has_lower = columns.iter().any(|&c| c < column);
+        if column == 0 && has_higher {
+            return LayoutRegionRole::LeftLabel;
+        }
+        if column > 0 && has_lower {
+            return LayoutRegionRole::RightValue;
+        }
+    }
+
+    if matches!(kind, LayoutRegionKind::Paragraph) {
+        LayoutRegionRole::ParagraphBody
+    } else {
+        LayoutRegionRole::Unknown
+    }
 }
 
 // ---------------------------------------------------------------------------
