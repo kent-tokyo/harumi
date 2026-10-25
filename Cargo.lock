@@ -704,6 +704,7 @@ dependencies = [
 name = "harumi"
 version = "1.23.1"
 dependencies = [
+ "aes",
  "axum",
  "cms",
  "der",
