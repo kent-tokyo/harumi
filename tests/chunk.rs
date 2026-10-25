@@ -270,9 +270,9 @@ fn verbose_page_batches_are_bounded_and_resumable() {
 
     let bytes = doc.save_to_bytes().unwrap();
     let doc = Document::from_bytes(&bytes).unwrap();
-    let mut batches = Vec::new();
+    let mut batches: Vec<Vec<harumi::PageTextExtraction>> = Vec::new();
     doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 2, |batch| {
-        batches.push(batch);
+        batches.push(batch.to_vec());
         Ok(())
     })
     .unwrap();

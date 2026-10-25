@@ -25,6 +25,7 @@ use std::{
 use crate::{
     content::text::text_stream,
     error::{Error, Result},
+    extract::resolve_dict,
     font::{
         EmbeddedFont, FontHandle,
         embed::{EmbedParams, embed_cid_font},
@@ -42,6 +43,92 @@ use helpers::{
     realize_page_inherited_attrs, root_pages_id, wrap_page_contents_in_q_q,
 };
 use types::{EncAlgorithm, PendingBookmark, PendingOp, PendingPage, RawFont};
+
+fn count_content_streams(doc: &lopdf::Document, object: Option<&Object>) -> usize {
+    let Some(object) = object else { return 0 };
+    match object {
+        Object::Array(items) => items
+            .iter()
+            .map(|item| count_content_streams(doc, Some(item)))
+            .sum(),
+        Object::Reference(id) => count_content_streams(doc, doc.get_object(*id).ok()),
+        Object::Stream(_) => 1,
+        _ => 0,
+    }
+}
+
+fn collect_page_resource_ids(
+    doc: &lopdf::Document,
+    resources: Option<&Dictionary>,
+    font_ids: &mut HashSet<ObjectId>,
+    image_ids: &mut HashSet<ObjectId>,
+) {
+    let Some(resources) = resources else { return };
+    if let Ok(fonts) = resources.get(b"Font")
+        && let Some(fonts) = resolve_dict(doc, fonts)
+    {
+        for (_, object) in fonts.iter() {
+            if let Object::Reference(id) = object {
+                font_ids.insert(*id);
+            }
+        }
+    }
+    if let Ok(xobjects) = resources.get(b"XObject")
+        && let Some(xobjects) = resolve_dict(doc, xobjects)
+    {
+        for (_, object) in xobjects.iter() {
+            let Ok(id) = object.as_reference() else {
+                continue;
+            };
+            let Some(Object::Stream(stream)) = doc.get_object(id).ok() else {
+                continue;
+            };
+            if stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|value| value.as_name().ok())
+                == Some(b"Image")
+            {
+                image_ids.insert(id);
+            }
+        }
+    }
+}
+
+fn page_parent_depth(doc: &lopdf::Document, page: &Dictionary) -> Result<usize> {
+    let mut depth = 0;
+    let mut parent = page.get(b"Parent").ok();
+    while let Some(Object::Reference(id)) = parent {
+        depth += 1;
+        let parent_dict = doc.get_object(*id)?.as_dict()?;
+        parent = parent_dict.get(b"Parent").ok();
+    }
+    Ok(depth)
+}
+
+fn count_outline_items(doc: &lopdf::Document, object: &Object) -> usize {
+    let Some(dict) = resolve_dict(doc, object) else {
+        return 0;
+    };
+    let mut count = 0;
+    let mut next = dict.get(b"First").ok();
+    while let Some(Object::Reference(id)) = next {
+        count += 1;
+        let Some(item) = doc
+            .get_object(*id)
+            .ok()
+            .and_then(|object| object.as_dict().ok())
+        else {
+            break;
+        };
+        if let Ok(first) = item.get(b"First") {
+            count += count_outline_items(doc, first);
+        }
+        next = item.get(b"Next").ok();
+    }
+    count
+}
 
 /// Resolved data needed by all finalization passes that emit or replace text.
 struct EmbedState {
@@ -313,15 +400,41 @@ impl Document {
 
     /// Captures the legacy structural report retained for patch-version compatibility.
     pub fn audit_structure(&self) -> Result<crate::document::StructureReport> {
-        let audit = self.structure_audit()?;
+        let pages = self.inner.get_pages();
+        let mut content_stream_count = 0;
+        let mut font_ids = HashSet::new();
+        let mut image_ids = HashSet::new();
+        let mut page_tree_depth = 0;
+
+        for page_id in pages.values() {
+            let page = self.inner.get_object(*page_id)?.as_dict()?;
+            content_stream_count += count_content_streams(&self.inner, page.get(b"Contents").ok());
+            let resources = inherited_resources(&self.inner, *page_id);
+            collect_page_resource_ids(
+                &self.inner,
+                resources.as_ref(),
+                &mut font_ids,
+                &mut image_ids,
+            );
+            page_tree_depth = page_tree_depth.max(page_parent_depth(&self.inner, page)?);
+        }
+
+        let outline_count = self
+            .inner
+            .catalog()
+            .ok()
+            .and_then(|catalog| catalog.get(b"Outlines").ok())
+            .map(|object| count_outline_items(&self.inner, object))
+            .unwrap_or(0);
+
         Ok(crate::document::StructureReport {
-            page_count: audit.page_count,
-            object_count: audit.object_count,
-            page_tree_depth: 0,
-            content_stream_count: audit.stream_count,
-            font_count: 0,
-            image_count: audit.xobject_count,
-            outline_count: usize::from(audit.has_outline),
+            page_count: pages.len() as u32,
+            object_count: self.inner.objects.len(),
+            page_tree_depth,
+            content_stream_count,
+            font_count: font_ids.len(),
+            image_count: image_ids.len(),
+            outline_count,
         })
     }
 
@@ -2452,34 +2565,53 @@ impl Document {
             )));
         }
 
-        (start_page..=end_page)
-            .map(|page| {
-                let (fragments, warnings) = self.extract_text_runs_verbose(page)?;
-                Ok(crate::document::PageTextExtraction {
+        let page_ids = self.inner.get_pages();
+        Ok((start_page..=end_page)
+            .map(|page| match page_ids.get(&page).copied() {
+                Some(page_id) => {
+                    match crate::extract::extract_text_runs_from_page_verbose(&self.inner, page_id)
+                    {
+                        Ok((runs, warnings)) => crate::document::PageTextExtraction {
+                            page,
+                            runs,
+                            warnings,
+                            error: None,
+                        },
+                        Err(error) => crate::document::PageTextExtraction {
+                            page,
+                            runs: Vec::new(),
+                            warnings: Vec::new(),
+                            error: Some(error.to_string()),
+                        },
+                    }
+                }
+                None => crate::document::PageTextExtraction {
                     page,
-                    runs: fragments,
-                    warnings,
-                    error: None,
-                })
+                    runs: Vec::new(),
+                    warnings: Vec::new(),
+                    error: Some(Error::PageNotFound(page).to_string()),
+                },
             })
-            .collect()
+            .collect())
     }
 
     /// Streams verbose extraction in bounded page batches.
     ///
-    /// The callback receives one owned batch at a time and may persist it before
-    /// the next batch is extracted. Returning an error stops immediately, so a
+    /// The callback receives a borrowed batch and may persist or transform it
+    /// before the next batch is extracted. Returning an error stops immediately, so a
     /// caller can record the last successful page and resume with
     /// [`extract_text_runs_verbose_page_range`](Document::extract_text_runs_verbose_page_range).
+    /// Page failures are recorded in the page's `error` field and do not abort
+    /// the remaining pages.
     pub fn for_each_text_runs_verbose_batch<F>(
         &self,
         start_page: u32,
         end_page: u32,
-        batch_size: u32,
+        batch_size: usize,
         mut callback: F,
     ) -> Result<()>
     where
-        F: FnMut(Vec<crate::document::PageTextExtraction>) -> Result<()>,
+        F: FnMut(&[crate::document::PageTextExtraction]) -> Result<()>,
     {
         if batch_size == 0 {
             return Err(Error::InvalidInput(
@@ -2487,20 +2619,50 @@ impl Document {
             ));
         }
 
-        let page_count = self.page_count();
+        let page_ids = self.inner.get_pages();
+        let page_count = page_ids.len() as u32;
         if start_page == 0 || end_page == 0 || start_page > end_page || end_page > page_count {
             return Err(Error::InvalidInput(format!(
                 "invalid page range {}..={} for {}-page PDF",
                 start_page, end_page, page_count
             )));
         }
-        let mut current_page = start_page;
-        while current_page <= end_page {
-            let batch_end = current_page
-                .saturating_add(batch_size.saturating_sub(1))
-                .min(end_page);
-            callback(self.extract_text_runs_verbose_page_range(current_page, batch_end)?)?;
-            current_page = batch_end.saturating_add(1);
+
+        let mut batch = Vec::with_capacity(batch_size);
+        for page in start_page..=end_page {
+            let extraction = match page_ids.get(&page).copied() {
+                Some(page_id) => {
+                    match crate::extract::extract_text_runs_from_page_verbose(&self.inner, page_id)
+                    {
+                        Ok((runs, warnings)) => crate::document::PageTextExtraction {
+                            page,
+                            runs,
+                            warnings,
+                            error: None,
+                        },
+                        Err(error) => crate::document::PageTextExtraction {
+                            page,
+                            runs: Vec::new(),
+                            warnings: Vec::new(),
+                            error: Some(error.to_string()),
+                        },
+                    }
+                }
+                None => crate::document::PageTextExtraction {
+                    page,
+                    runs: Vec::new(),
+                    warnings: Vec::new(),
+                    error: Some(Error::PageNotFound(page).to_string()),
+                },
+            };
+            batch.push(extraction);
+            if batch.len() == batch_size {
+                callback(&batch)?;
+                batch.clear();
+            }
+        }
+        if !batch.is_empty() {
+            callback(&batch)?;
         }
         Ok(())
     }

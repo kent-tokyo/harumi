@@ -289,6 +289,12 @@ fn structure_audit_reports_metadata_and_attachment_mutations() {
     let pdf_bytes = helpers::minimal_pdf_bytes();
     let mut doc = Document::from_bytes(&pdf_bytes).expect("load");
     let before = doc.audit_structure().expect("audit before");
+    assert_eq!(before.page_count, 1);
+    assert_eq!(before.page_tree_depth, 1);
+    assert_eq!(before.content_stream_count, 0);
+    assert_eq!(before.font_count, 0);
+    assert_eq!(before.image_count, 0);
+    assert_eq!(before.outline_count, 0);
 
     doc.set_metadata(&harumi::PdfMetadata {
         title: Some("Audited PDF".into()),
