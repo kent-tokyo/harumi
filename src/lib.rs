@@ -109,9 +109,10 @@ pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, GlyphFallbackDiagnostic,
-    GlyphResolution, OverflowPolicy, PageHandle, PdfMetadata, PlacementStatus, ReplaceOptions,
-    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, diagnose_font_fallback,
-    font_covers_char, glyph_advance_pt, wrap_paragraph,
+    GlyphResolution, MutationReport, OverflowPolicy, PageHandle, PageTextExtraction, PdfMetadata,
+    PlacementStatus, ReplaceOptions, StructureReport, TextFieldOptions, TextRun, VerticalAlign,
+    calculate_text_width, diagnose_font_fallback, font_covers_char, glyph_advance_pt,
+    wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{

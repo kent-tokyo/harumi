@@ -48,6 +48,12 @@ Document::new((w, h))?;                   // blank 1-page PDF
 // Merge documents
 doc.merge_from(other)?;             // append other's pages to end
 
+// Structure audit and mutation evidence
+let before = doc.audit_structure()?;
+doc.remove_page(2)?;
+let report = doc.mutation_report(&before)?;
+assert_eq!(report.page_count_delta, -1);
+
 // Save
 doc.save("output.pdf")?;
 doc.save_to_bytes()?;   // in-memory variant
@@ -59,6 +65,12 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 
 // Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
 let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
+let pages = doc.extract_text_runs_verbose_page_range(1, doc.page_count())?;
+doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 50, |batch| {
+    // Persist each batch; failed pages remain in `entry.error`.
+    let _ = batch;
+    Ok(())
+})?;
 
 // PDF metadata (/Info dictionary)
 let meta: PdfMetadata = doc.metadata()?;
@@ -173,6 +185,12 @@ pixel-identical reproduction of an existing PDF. For translation overlays,
 text that intersects an image preserves the image and is reported as a Major
 `image_overlap` issue; background restoration and automatic relocation are not
 performed.
+
+Paragraph wrapping has a deterministic boundary subset: CJK and selected
+space-free scripts may break between characters; combining marks, emoji ZWJ
+sequences, no-break spaces, common numeric units, and a small kinsoku set stay
+together. Full UAX #14 line breaking, dictionary hyphenation, visual bidi/RTL
+shaping, and vertical reflow are not provided.
 
 Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
 collects all characters used across every page, subsets once per font, and writes everything

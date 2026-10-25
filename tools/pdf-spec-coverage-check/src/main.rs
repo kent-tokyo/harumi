@@ -204,6 +204,31 @@ fn image_xobject(image: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     Ok(doc.save_to_bytes()?)
 }
 
+fn edited_cjk_roundtrip(font: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let source = embedded_font(font)?;
+    let mut doc = Document::from_bytes(&source)?;
+    let before = doc.audit_structure()?;
+    let handle = doc.embed_font(font)?;
+    doc.page(1)?.add_text(
+        "write-back CJK 編集",
+        handle,
+        [72.0, 650.0],
+        14.0,
+        [0.0; 3],
+    )?;
+    let bytes = doc.save_to_bytes()?;
+    let reloaded = Document::from_bytes(&bytes)?;
+    let text = reloaded.extract_text(1)?;
+    if !text.contains("font CMap") || !text.contains("write-back CJK 編集") {
+        return Err(format!("write-back text was not preserved: {text:?}").into());
+    }
+    let report = reloaded.mutation_report(&before)?;
+    if report.after.page_count != 1 || report.after.content_stream_count == 0 {
+        return Err(format!("write-back structure is incomplete: {report:?}").into());
+    }
+    Ok(bytes)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let font_path = PathBuf::from(args.next().unwrap_or_else(|| usage()));
@@ -219,6 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("font-cmap.pdf", embedded_font(&font)?),
         ("identity-v-vertical.pdf", identity_v_font(&font)?),
         ("image-xobject.pdf", image_xobject(&image)?),
+        ("edited-cjk-roundtrip.pdf", edited_cjk_roundtrip(&font)?),
     ];
     for (name, bytes) in cases {
         let path = output_dir.join(name);

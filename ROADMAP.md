@@ -6,7 +6,7 @@
 
 ## 現在の基準
 
-- `harumi` v1.23.0、MSRV Rust 1.88、edition 2024
+- `harumi` v1.23.1、MSRV Rust 1.88、edition 2024
 - `harumi-ai` v0.10.1、`harumi-mcp` v0.1.2
 - Pure Rust を基本とし、通常依存と WASM 依存に C/C++ ランタイムを追加しない
 - 既存 PDF の CJK 抽出・置換・overlay・診断と、新規 PDF の帳票組版を主対象とする
@@ -21,6 +21,11 @@
 - Form XObject、ページツリー継承、contents/resources の安全な処理
 - 表、結合セル、ページ分割、ヘッダー・フッター、脚注、TOC、layout diagnostics
 - Poppler を使った固定 fixture の仕様・帳票検証と、比較用の機械可読 manifest
+- CJK/Latin 帳票の固定比較で、保存・再読込後のヘッダー・ページ番号フッター再利用
+- ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
+- CJK・画像・URLリンク・メタデータを含む最小writerのsave/reload・決定性fixture
+- Unicode改行境界の固定fixtureと、UAX #14・辞書hyphenation・視覚的RTL/縦書きを分けた制約
+- CJK編集後のsave/reload・構造監査・Poppler描画を一つにしたPDF仕様fixture
 
 ## 現在の対応範囲
 
