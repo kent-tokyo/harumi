@@ -534,10 +534,10 @@ fn extract_xobjects_from_inherited_resources() {
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
     // Wire up /Parent.
-    if let Ok(obj) = doc.get_object_mut(page_id) {
-        if let Ok(d) = obj.as_dict_mut() {
-            d.set("Parent", Object::Reference(pages_id));
-        }
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.set("Parent", Object::Reference(pages_id));
     }
 
     // Catalog.
@@ -693,10 +693,10 @@ fn extract_cid_xobject_inherited_resources() {
     pages_d.set("Resources", Object::Dictionary(pages_res));
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = doc.get_object_mut(page_id) {
-        if let Ok(d) = obj.as_dict_mut() {
-            d.set("Parent", Object::Reference(pages_id));
-        }
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.set("Parent", Object::Reference(pages_id));
     }
 
     let mut catalog = Dictionary::new();
@@ -999,10 +999,10 @@ fn extract_xobject_font_from_page_resources() {
     pages_d.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = doc.get_object_mut(page_id) {
-        if let Ok(d) = obj.as_dict_mut() {
-            d.set("Parent", Object::Reference(pages_id));
-        }
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.set("Parent", Object::Reference(pages_id));
     }
 
     let mut catalog = Dictionary::new();
@@ -1085,10 +1085,10 @@ fn extract_cross_stream_bt_tj() {
     pages_d.set("Count", Object::Integer(1));
     let pages_id = doc.add_object(Object::Dictionary(pages_d));
 
-    if let Ok(obj) = doc.get_object_mut(page_id) {
-        if let Ok(d) = obj.as_dict_mut() {
-            d.set("Parent", Object::Reference(pages_id));
-        }
+    if let Ok(obj) = doc.get_object_mut(page_id)
+        && let Ok(d) = obj.as_dict_mut()
+    {
+        d.set("Parent", Object::Reference(pages_id));
     }
 
     let mut catalog = Dictionary::new();

@@ -485,43 +485,42 @@ fn subset_offset_table_is_well_formed() {
         let stream_start = find_bytes(&raw[pos..], b"stream\n")
             .map(|o| pos + o + 7)
             .or_else(|| find_bytes(&raw[pos..], b"stream\r\n").map(|o| pos + o + 8));
-        if let Some(start) = stream_start {
-            if let Some(end) = find_bytes(&raw[start..], b"endstream") {
-                let font_data = &raw[start..start + end];
-                assert!(font_data.len() > 12, "embedded font too small");
-                // sfVersion: 0x00010000
-                let sf =
-                    u32::from_be_bytes([font_data[0], font_data[1], font_data[2], font_data[3]]);
-                assert_eq!(sf, 0x00010000, "wrong sfVersion");
-                let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
-                assert!(
-                    num_tables > 0 && num_tables <= 64,
-                    "implausible numTables={num_tables}"
-                );
-                // All table offsets must be within the font data.
-                for i in 0..num_tables {
-                    let base = 12 + i * 16;
-                    if base + 16 > font_data.len() {
-                        break;
-                    }
-                    let offset = u32::from_be_bytes([
-                        font_data[base + 8],
-                        font_data[base + 9],
-                        font_data[base + 10],
-                        font_data[base + 11],
-                    ]) as usize;
-                    let length = u32::from_be_bytes([
-                        font_data[base + 12],
-                        font_data[base + 13],
-                        font_data[base + 14],
-                        font_data[base + 15],
-                    ]) as usize;
-                    assert!(
-                        offset + length <= font_data.len(),
-                        "table {i} offset={offset} length={length} out of bounds (font size={})",
-                        font_data.len()
-                    );
+        if let Some(start) = stream_start
+            && let Some(end) = find_bytes(&raw[start..], b"endstream")
+        {
+            let font_data = &raw[start..start + end];
+            assert!(font_data.len() > 12, "embedded font too small");
+            // sfVersion: 0x00010000
+            let sf = u32::from_be_bytes([font_data[0], font_data[1], font_data[2], font_data[3]]);
+            assert_eq!(sf, 0x00010000, "wrong sfVersion");
+            let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+            assert!(
+                num_tables > 0 && num_tables <= 64,
+                "implausible numTables={num_tables}"
+            );
+            // All table offsets must be within the font data.
+            for i in 0..num_tables {
+                let base = 12 + i * 16;
+                if base + 16 > font_data.len() {
+                    break;
                 }
+                let offset = u32::from_be_bytes([
+                    font_data[base + 8],
+                    font_data[base + 9],
+                    font_data[base + 10],
+                    font_data[base + 11],
+                ]) as usize;
+                let length = u32::from_be_bytes([
+                    font_data[base + 12],
+                    font_data[base + 13],
+                    font_data[base + 14],
+                    font_data[base + 15],
+                ]) as usize;
+                assert!(
+                    offset + length <= font_data.len(),
+                    "table {i} offset={offset} length={length} out of bounds (font size={})",
+                    font_data.len()
+                );
             }
         }
     }
@@ -605,7 +604,7 @@ fn subset_head_checksum_adjustment_is_valid() {
     // extract_font_file2 may include a trailing '\n' added by lopdf before "endstream".
     // Strip trailing CR/LF bytes — the TTF binary itself never ends with newline characters.
     let mut embedded = extract_font_file2(&out);
-    while embedded.last().map_or(false, |&b| b == b'\n' || b == b'\r') {
+    while embedded.last().is_some_and(|&b| b == b'\n' || b == b'\r') {
         embedded.pop();
     }
 

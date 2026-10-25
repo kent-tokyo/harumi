@@ -79,6 +79,9 @@ mod font;
 mod replace;
 mod resubset;
 
+#[cfg(feature = "svg")]
+mod svg;
+
 #[cfg(feature = "image")]
 mod extract_image;
 
@@ -126,6 +129,8 @@ pub use font::{
     FontHandle,
     face::{Face, GlyphId, ParseError},
 };
+#[cfg(feature = "svg")]
+pub use svg::{SvgOptions, svg_to_pdf, svg_to_pdf_with_options};
 
 #[cfg(feature = "draw")]
 pub use document::DebugOverlayOptions;

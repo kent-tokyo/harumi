@@ -87,6 +87,7 @@ std::fs::write("translated.pdf", output.pdf_bytes)?;
 | Text replacement | `replace_text`, `replace_text_preserve_font`, `replace_text_resubset` |
 | Layout-aware translation | `extract_layout_regions`, `plan_text_for_regions`, quality reports |
 | Shapes and images | `draw`, `image` |
+| SVG to PDF | `svg` |
 | Auto-pagination and HTML | `flow`, `html` |
 | OCR coordinate helpers | `ocr` |
 | Digital signatures | `digital-signature` |
