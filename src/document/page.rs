@@ -2256,6 +2256,7 @@ impl<'doc> PageHandle<'doc> {
     /// Overlays a dashed stroked line segment. `dash_array` contains alternating
     /// dash and gap lengths in PDF points; odd-length arrays follow PDF rules
     /// and are repeated to form an even pattern. `dash_phase` is in points.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_line_dashed(
         &mut self,
         from: [f32; 2],
@@ -2321,6 +2322,7 @@ impl<'doc> PageHandle<'doc> {
     }
 
     /// Overlays a dashed open polyline using a PDF vector `d` operator.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_polyline_dashed(
         &mut self,
         points: &[[f32; 2]],
