@@ -1,5 +1,9 @@
 # harumi
 
+현재 릴리스는 **v1.23.6**입니다. 변경 내역은 [CHANGELOG.md](CHANGELOG.md),
+기능 범위와 검증 상태는 [PDF ecosystem comparison contract](docs/PDF_ECOSYSTEM.md)를
+참조하세요.
+
 **기존 PDF에서 추출한 좌표와 추정 영역을 바탕으로 CJK/다국어 텍스트를 다시 쓰는 순수 Rust PDF 엔진.**
 
 harumi는 기존 PDF에서 위치 정보를 포함한 텍스트를 추출하고,
@@ -203,6 +207,8 @@ doc.page(1)?.add_text(
 **[더 많은 예제 →](docs/EXAMPLES.md)** — 페이지 조작, PDF 병합, HTML→PDF, 주석, 폼, 도형, 이미지, FlowDocument
 
 **[API 레퍼런스 →](docs/API.md)** — 좌표계, 기능 플래그, 지원 폰트, 내부 구조
+
+문서 목록은 [docs/README.md](docs/README.md)를 참조하세요.
 
 ---
 

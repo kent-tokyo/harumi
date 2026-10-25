@@ -1,6 +1,6 @@
 # harumi roadmap
 
-Current release: **v1.23.7**. This file is the short public roadmap; release
+Current release: **v1.23.6**. This file is the short public roadmap; release
 history lives in [`CHANGELOG.md`](CHANGELOG.md), and implementation contracts
 live in the tests and fixture documents.
 

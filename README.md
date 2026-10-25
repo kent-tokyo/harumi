@@ -292,10 +292,10 @@ doc.page(1)?.add_text(
 
 See [ROADMAP.md](ROADMAP.md) for the current priorities and
 [CHANGELOG.md](CHANGELOG.md) for the full version history.
+The documentation index is [docs/README.md](docs/README.md).
 
-Current release versions: **v1.23.7** (harumi) / **v0.10.1** (harumi-ai).
-This release removes the unmaintained `ttf-parser` dependency and keeps font
-metadata parsing on `skrifa` across the published SVG graph.
+Current release versions: **v1.23.6** (harumi) / **v0.10.1** (harumi-ai).
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 | Milestone | Status |
 |---|---|
@@ -305,8 +305,8 @@ metadata parsing on `skrifa` across the published SVG graph.
 | harumi-ai: LLM translation, overlay, in-place, scanned PDF | v0.1–v0.10 ✓ |
 | Automated publish CI | v1.21 ✓ |
 | PDF ecosystem fixtures, spec corpus, and pinned adapter checks | v1.21 ✓ / see `docs/PDF_ECOSYSTEM.md` |
-| Competitive new-document typesetting (paragraphs/tables) | v1.22.1 ✓ for the published contract; full Unicode breaking, visual bidi, and arbitrary block grouping remain bounded / see `tasks/todo.md` |
-| Domain-specific competitive roadmap (rendering, typesetting, structure, extraction, writer) | Phase 52 planned; pinned fixtures and same-condition artifacts required / see `docs/PDF_ECOSYSTEM.md` |
+| Competitive new-document typesetting (paragraphs/tables) | v1.22.1 ✓ for the published contract; full Unicode breaking, visual bidi, and arbitrary block grouping remain bounded / see `docs/PDF_ECOSYSTEM.md` |
+| Domain-specific comparison and contract fixtures | In progress; see `docs/PDF_ECOSYSTEM.md` |
 | `InputTextSource::RunOcr` (direct OCR without external CLI) | planned |
 | Multi-page OcrJson translation | v0.10 ✓ |
 
