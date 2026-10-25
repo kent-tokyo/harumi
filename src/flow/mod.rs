@@ -2210,40 +2210,8 @@ impl FlowDocument {
             x_boundaries.push(x_boundaries.last().copied().unwrap() + *width);
         }
 
-        let cell_heights: Vec<Vec<f32>> = rows
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .enumerate()
-                    .map(|(cell_index, cell)| {
-                        let start = row[..cell_index]
-                            .iter()
-                            .map(|candidate| candidate.colspan)
-                            .sum::<usize>();
-                        let end = start + cell.colspan;
-                        let padding = cell.padding.unwrap_or(options.cell_padding);
-                        self.measure_table_cell_blocks(
-                            &cell.blocks,
-                            (x_boundaries[end] - x_boundaries[start] - padding * 2.0).max(1.0),
-                            line_h,
-                            font_size,
-                        )
-                        .map(|height| height + padding * 2.0)
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let row_heights: Vec<f32> = cell_heights
-            .iter()
-            .map(|heights| {
-                heights
-                    .iter()
-                    .copied()
-                    .max_by(f32::total_cmp)
-                    .unwrap_or(line_h)
-            })
-            .collect();
-        let table_height: f32 = row_heights.iter().sum();
+        let (cell_heights, row_heights, table_height) =
+            self.measure_nested_table_rows(rows, &x_boundaries, &options, line_h, font_size)?;
         if row_heights
             .iter()
             .any(|height| *height > geometry.content_height() + 0.1)
@@ -2514,6 +2482,51 @@ impl FlowDocument {
             )?;
         }
         Ok(())
+    }
+
+    fn measure_nested_table_rows(
+        &self,
+        rows: &[Vec<FlowTableBlockCell>],
+        x_boundaries: &[f32],
+        options: &TableOptions,
+        line_h: f32,
+        font_size: f32,
+    ) -> Result<(Vec<Vec<f32>>, Vec<f32>, f32)> {
+        let cell_heights: Vec<Vec<f32>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .enumerate()
+                    .map(|(cell_index, cell)| {
+                        let start = row[..cell_index]
+                            .iter()
+                            .map(|candidate| candidate.colspan)
+                            .sum::<usize>();
+                        let end = start + cell.colspan;
+                        let padding = cell.padding.unwrap_or(options.cell_padding);
+                        self.measure_table_cell_blocks(
+                            &cell.blocks,
+                            (x_boundaries[end] - x_boundaries[start] - padding * 2.0).max(1.0),
+                            line_h,
+                            font_size,
+                        )
+                        .map(|height| height + padding * 2.0)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let row_heights: Vec<f32> = cell_heights
+            .iter()
+            .map(|heights| {
+                heights
+                    .iter()
+                    .copied()
+                    .max_by(f32::total_cmp)
+                    .unwrap_or(line_h)
+            })
+            .collect();
+        let table_height = row_heights.iter().sum();
+        Ok((cell_heights, row_heights, table_height))
     }
 
     fn measure_table_cell_blocks(
