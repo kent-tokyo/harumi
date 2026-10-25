@@ -10,6 +10,9 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 No changes yet.
 
+- Pin `aes` to 0.9.2 so fresh dependency resolution remains compatible with the
+  declared Rust 1.88 MSRV.
+
 ## 1.23.1 — 2026-10-25
 
 - Fix SVG text anchoring, baseline positioning, short hex colors, and marker definitions.
