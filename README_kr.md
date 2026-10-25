@@ -6,7 +6,7 @@ harumi는 기존 PDF에서 텍스트와 좌표를 추출하고, 번역문·대�
 기존 문서에 기록합니다. CJK 글꼴, ToUnicode CMap, 서브셋, 레이아웃 진단을 자동으로
 처리합니다. OCR 엔진이나 PDF 뷰어는 아닙니다.
 
-현재 릴리스는 **v1.23.6**입니다.
+현재 릴리스는 **v1.23.7**입니다.
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
