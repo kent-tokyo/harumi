@@ -50,6 +50,79 @@ struct EmbedState {
     units_per_em: u16,
 }
 
+fn collect_font_resource_names(doc: &lopdf::Document) -> HashSet<Vec<u8>> {
+    let mut names = HashSet::new();
+    for object in doc.objects.values() {
+        collect_font_resource_names_from_object(doc, object, &mut names);
+    }
+    names
+}
+
+fn collect_font_resource_names_from_object(
+    doc: &lopdf::Document,
+    object: &Object,
+    names: &mut HashSet<Vec<u8>>,
+) {
+    match object {
+        Object::Dictionary(dict) => {
+            if let Ok(fonts) = dict.get(b"Font") {
+                collect_font_dictionary_names(doc, fonts, names);
+            }
+            for (_, value) in dict.iter() {
+                collect_font_resource_names_from_object(doc, value, names);
+            }
+        }
+        Object::Stream(stream) => {
+            collect_font_resource_names_from_object(
+                doc,
+                &Object::Dictionary(stream.dict.clone()),
+                names,
+            );
+        }
+        Object::Array(items) => {
+            for value in items {
+                collect_font_resource_names_from_object(doc, value, names);
+            }
+        }
+        Object::Reference(_)
+        | Object::Null
+        | Object::Boolean(_)
+        | Object::Integer(_)
+        | Object::Real(_)
+        | Object::Name(_)
+        | Object::String(_, _) => {}
+    }
+}
+
+fn collect_font_dictionary_names(
+    doc: &lopdf::Document,
+    object: &Object,
+    names: &mut HashSet<Vec<u8>>,
+) {
+    let object = match object {
+        Object::Reference(id) => doc.get_object(*id).ok(),
+        _ => Some(object),
+    };
+    let Some(Object::Dictionary(fonts)) = object else {
+        return;
+    };
+    names.extend(fonts.iter().map(|(name, _)| name.clone()));
+}
+
+fn allocate_pdf_font_name(used: &mut HashSet<Vec<u8>>, font_idx: u32) -> Vec<u8> {
+    let base = format!("HR{font_idx}").into_bytes();
+    if used.insert(base.clone()) {
+        return base;
+    }
+    for suffix in 1.. {
+        let candidate = format!("HR{font_idx}_{suffix}").into_bytes();
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("font resource name suffix range is finite")
+}
+
 #[cfg(feature = "draw")]
 use helpers::add_ext_gstate_to_resources;
 
@@ -2523,6 +2596,7 @@ impl Document {
         font_chars: &HashMap<u32, Vec<char>>,
     ) -> Result<HashMap<u32, EmbedState>> {
         let mut embedded = HashMap::new();
+        let mut used_font_names = collect_font_resource_names(&self.inner);
         for (&font_idx, chars) in font_chars {
             let raw = self
                 .raw_fonts
@@ -2535,8 +2609,8 @@ impl Document {
             let bb = face.global_bounding_box();
             let upm = face.units_per_em() as f64;
             let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
-            let font_name = format!("HARUMI+HR{}", font_idx);
-            let pdf_name = format!("HR{}", font_idx).into_bytes();
+            let pdf_name = allocate_pdf_font_name(&mut used_font_names, font_idx);
+            let font_name = format!("HARUMI+{}", String::from_utf8_lossy(&pdf_name));
             let saved_gid_to_char = subset.gid_to_char.clone();
             let saved_gid_to_advance = subset.gid_to_advance.clone();
             let params = EmbedParams {

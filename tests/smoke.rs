@@ -291,6 +291,54 @@ fn smoke_indirect_resources() {
     overlay_and_verify(&buf, "間接リソース");
 }
 
+#[test]
+fn smoke_indirect_font_dictionary_accepts_writeback_text() {
+    use lopdf::Document as LDoc;
+
+    let mut source = LDoc::with_version("1.4");
+    let pages_id = source.new_object_id();
+    let font_dict_id = source.add_object(Object::Dictionary(dictionary! {}));
+    let resources_id = source.add_object(Object::Dictionary(dictionary! {
+        "Font" => Object::Reference(font_dict_id)
+    }));
+    let page_id = source.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Page".to_vec()),
+        "Parent" => Object::Reference(pages_id),
+        "MediaBox" => Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(595), Object::Integer(842),
+        ]),
+        "Resources" => Object::Reference(resources_id),
+    }));
+    source.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            "Count" => Object::Integer(1),
+        }),
+    );
+    let catalog_id = source.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Catalog".to_vec()),
+        "Pages" => Object::Reference(pages_id),
+    }));
+    source.trailer.set("Root", Object::Reference(catalog_id));
+    let mut bytes = Vec::new();
+    source.save_to(&mut bytes).unwrap();
+
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    let font = doc
+        .embed_font(include_bytes!("fixtures/NotoSansJP-Regular.ttf"))
+        .unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("indirect-font", font, [36.0, 36.0], 10.0, [0.0; 3])
+        .unwrap();
+    let saved = doc.save_to_bytes().unwrap();
+    let reloaded = Document::from_bytes(&saved).unwrap();
+    assert!(reloaded.extract_text(1).unwrap().contains("indirect-font"));
+}
+
 // ---------------------------------------------------------------------------
 // 5. Multi-page document — overlay different text on each page
 // ---------------------------------------------------------------------------
