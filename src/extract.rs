@@ -4585,6 +4585,54 @@ struct ParseCarryState {
     text_rise: f32,
 }
 
+struct TextShowGeometry {
+    ctm: [f32; 6],
+    scale: f32,
+    x_font_size: f32,
+    tm_ox: Option<f32>,
+    tm_oy: Option<f32>,
+    tm_xs: Option<f32>,
+    tm_lm_ox: Option<f32>,
+    tm_lm_oy: Option<f32>,
+}
+
+impl TextShowGeometry {
+    fn new(
+        state: &ParseCarryState,
+        tm_origin_set: bool,
+        tm_x_scale: f32,
+        tm_lm_x: f32,
+        tm_lm_y: f32,
+        tf_font_size: f32,
+        horizontal_scale: f32,
+    ) -> Self {
+        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+        let scale = ctm_scale(ctm);
+        let (tm_ox, tm_oy) = if tm_origin_set {
+            let (x, y) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
+            (Some(x), Some(y))
+        } else {
+            (None, None)
+        };
+        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
+            let (x, y) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
+            (Some(x), Some(y))
+        } else {
+            (None, None)
+        };
+        Self {
+            ctm,
+            scale,
+            x_font_size: tf_font_size * tm_x_scale * horizontal_scale * scale,
+            tm_ox,
+            tm_oy,
+            tm_xs: tm_origin_set.then_some(tm_x_scale),
+            tm_lm_ox,
+            tm_lm_oy,
+        }
+    }
+}
+
 impl Default for ParseCarryState {
     fn default() -> Self {
         Self {
@@ -4903,26 +4951,18 @@ fn parse_content_stream(
                     let op_start = Some(tok_pos);
                     let op_end = Some(tok_pos + 2); // "TJ" is 2 bytes
                     if let Some((Token::Array(items), _)) = stack.pop() {
-                        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
-                        let scale = ctm_scale(ctm);
-                        let (tm_ox, tm_oy) = if tm_origin_set {
-                            let (ox, oy) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
-                            (Some(ox), Some(oy))
-                        } else {
-                            (None, None)
-                        };
-                        let tm_xs = if tm_origin_set {
-                            Some(tm_x_scale)
-                        } else {
-                            None
-                        };
-                        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
-                            let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
-                            (Some(lx), Some(ly))
-                        } else {
-                            (None, None)
-                        };
-                        let x_font_size = tf_font_size * tm_x_scale * horizontal_scale * scale;
+                        let geometry = TextShowGeometry::new(
+                            state,
+                            tm_origin_set,
+                            tm_x_scale,
+                            tm_lm_x,
+                            tm_lm_y,
+                            tf_font_size,
+                            horizontal_scale,
+                        );
+                        let ctm = geometry.ctm;
+                        let scale = geometry.scale;
+                        let x_font_size = geometry.x_font_size;
                         let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
@@ -4948,11 +4988,11 @@ fn parse_content_stream(
                                         op_start,
                                         op_end,
                                         xobj_id,
-                                        tm_ox,
-                                        tm_oy,
-                                        tm_xs,
-                                        tm_lm_ox,
-                                        tm_lm_oy,
+                                        geometry.tm_ox,
+                                        geometry.tm_oy,
+                                        geometry.tm_xs,
+                                        geometry.tm_lm_ox,
+                                        geometry.tm_lm_oy,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
