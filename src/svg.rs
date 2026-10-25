@@ -143,6 +143,18 @@ impl Transform {
             page_height - (self.b * x + self.d * y + self.f),
         ]
     }
+    fn x_scale(self) -> f32 {
+        (self.a * self.a + self.b * self.b).sqrt()
+    }
+    fn y_scale(self) -> f32 {
+        (self.c * self.c + self.d * self.d).sqrt()
+    }
+    fn average_scale(self) -> f32 {
+        ((self.x_scale() + self.y_scale()) / 2.0).max(f32::EPSILON)
+    }
+    fn rotation_degrees(self) -> f32 {
+        (-self.b).atan2(self.a).to_degrees()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -210,19 +222,29 @@ fn render_node(
             let y = attr(node, "y").unwrap_or(0.0);
             let w = attr(node, "width")?;
             let h = attr(node, "height")?;
-            let p = transform.point(x, y + h, ctx.height);
-            if let Some(fill) = style.fill {
-                ctx.page.add_rect(
-                    [p[0], p[1], w * transform.a.abs(), h * transform.d.abs()],
-                    fill,
+            let points = [
+                transform.point(x, y, ctx.height),
+                transform.point(x + w, y, ctx.height),
+                transform.point(x + w, y + h, ctx.height),
+                transform.point(x, y + h, ctx.height),
+            ];
+            if let Some(color) = style.fill {
+                ctx.page.add_path(
+                    &points,
+                    true,
+                    color,
+                    true,
+                    0.0,
                     style.opacity * style.fill_opacity,
                 )?;
             }
-            if let Some(stroke) = style.stroke {
-                ctx.page.add_rect_stroke(
-                    [p[0], p[1], w * transform.a.abs(), h * transform.d.abs()],
-                    stroke,
-                    style.stroke_width,
+            if let Some(color) = style.stroke {
+                ctx.page.add_path(
+                    &points,
+                    true,
+                    color,
+                    false,
+                    scaled_stroke_width(transform, style),
                     style.opacity * style.stroke_opacity,
                 )?;
             }
@@ -231,57 +253,60 @@ fn render_node(
             let cx = attr(node, "cx").unwrap_or(0.0);
             let cy = attr(node, "cy").unwrap_or(0.0);
             let r = attr(node, "r")?;
-            let p = transform.point(cx - r, cy + r, ctx.height);
-            if let Some(color) = style.fill {
-                ctx.page.add_ellipse(
-                    [
-                        p[0],
-                        p[1],
-                        2.0 * r * transform.a.abs(),
-                        2.0 * r * transform.d.abs(),
-                    ],
-                    color,
-                    style.opacity * style.fill_opacity,
-                    true,
-                    style.stroke_width,
-                )?;
-            } else if let Some(color) = style.stroke {
-                ctx.page.add_ellipse(
-                    [
-                        p[0],
-                        p[1],
-                        2.0 * r * transform.a.abs(),
-                        2.0 * r * transform.d.abs(),
-                    ],
-                    color,
-                    style.opacity * style.stroke_opacity,
-                    false,
-                    style.stroke_width,
-                )?;
-            }
-        }
-        "path" => {
-            let points = parse_path(
-                node.attribute("d")
-                    .ok_or_else(|| invalid("missing path data"))?,
-            )?
-            .into_iter()
-            .map(|p| transform.point(p[0], p[1], ctx.height))
-            .collect::<Vec<_>>();
+            let points = (0..32)
+                .map(|index| {
+                    let angle = index as f32 * std::f32::consts::TAU / 32.0;
+                    transform.point(cx + r * angle.cos(), cy + r * angle.sin(), ctx.height)
+                })
+                .collect::<Vec<_>>();
             if let Some(color) = style.fill {
                 ctx.page.add_path(
                     &points,
                     true,
                     color,
                     true,
-                    style.stroke_width,
+                    0.0,
                     style.opacity * style.fill_opacity,
                 )?;
-            } else if let Some(color) = style.stroke {
-                ctx.page.add_polyline(
+            }
+            if let Some(color) = style.stroke {
+                ctx.page.add_path(
                     &points,
+                    true,
                     color,
-                    style.stroke_width,
+                    false,
+                    scaled_stroke_width(transform, style),
+                    style.opacity * style.stroke_opacity,
+                )?;
+            }
+        }
+        "path" => {
+            let path = parse_path(
+                node.attribute("d")
+                    .ok_or_else(|| invalid("missing path data"))?,
+            )?;
+            let points = path
+                .points
+                .into_iter()
+                .map(|p| transform.point(p[0], p[1], ctx.height))
+                .collect::<Vec<_>>();
+            if let Some(color) = style.fill {
+                ctx.page.add_path(
+                    &points,
+                    path.closed,
+                    color,
+                    true,
+                    0.0,
+                    style.opacity * style.fill_opacity,
+                )?;
+            }
+            if let Some(color) = style.stroke {
+                ctx.page.add_path(
+                    &points,
+                    path.closed,
+                    color,
+                    false,
+                    scaled_stroke_width(transform, style),
                     style.opacity * style.stroke_opacity,
                 )?;
             }
@@ -299,13 +324,14 @@ fn render_node(
                     ctx.height,
                 );
                 let color = style.fill.or(style.stroke).unwrap_or([0.0; 3]);
-                ctx.page.add_text_with_opacity(
+                ctx.page.add_text_with_rotation(
                     &text,
                     ctx.font,
                     p,
-                    style.font_size,
+                    style.font_size * transform.y_scale(),
                     color,
                     style.opacity * style.fill_opacity,
+                    transform.rotation_degrees(),
                 )?;
             }
         }
@@ -440,6 +466,13 @@ fn has_marker(node: Node<'_, '_>) -> bool {
     node.attribute("marker-end").is_some()
 }
 
+fn scaled_stroke_width(transform: Transform, style: Style) -> f32 {
+    if style.stroke.is_none() {
+        return 0.0;
+    }
+    style.stroke_width * transform.average_scale()
+}
+
 fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
     let mut values = HashMap::new();
     if let Some(raw) = node.attribute("style") {
@@ -501,8 +534,12 @@ fn parse_transform(raw: Option<&str>) -> Result<Transform> {
             .ok_or_else(|| invalid("malformed transform"))?;
         let n = parse_numbers(args)?;
         let t = match name.trim() {
-            "translate" => Transform::translate(n[0], *n.get(1).unwrap_or(&0.0)),
-            "scale" => Transform::scale(n[0], *n.get(1).unwrap_or(&n[0])),
+            "translate" if (1..=2).contains(&n.len()) => {
+                Transform::translate(n[0], *n.get(1).unwrap_or(&0.0))
+            }
+            "scale" if (1..=2).contains(&n.len()) => {
+                Transform::scale(n[0], *n.get(1).unwrap_or(&n[0]))
+            }
             "matrix" if n.len() == 6 => Transform {
                 a: n[0],
                 b: n[1],
@@ -518,57 +555,138 @@ fn parse_transform(raw: Option<&str>) -> Result<Transform> {
     Ok(result)
 }
 
-fn parse_path(raw: &str) -> Result<Vec<[f32; 2]>> {
-    let tokens = raw
-        .replace(',', " ")
-        .replace('M', " M ")
-        .replace('L', " L ")
-        .replace('H', " H ")
-        .replace('V', " V ")
-        .replace('Z', " Z ")
-        .replace('m', " m ")
-        .replace('l', " l ")
-        .replace('h', " h ")
-        .replace('v', " v ")
-        .replace('z', " z ");
-    let mut iter = tokens.split_whitespace();
-    let mut cmd = 'M';
+fn parse_path(raw: &str) -> Result<ParsedPath> {
+    let tokens = tokenize_path(raw)?;
+    let mut index = 0;
+    let mut command = 'M';
     let mut current = [0.0, 0.0];
-    let mut out = Vec::new();
-    while let Some(token) = iter.next() {
-        if token.len() == 1 && token.chars().next().unwrap().is_ascii_alphabetic() {
-            cmd = token.chars().next().unwrap();
-            if matches!(cmd, 'Z' | 'z') {
+    let mut subpath_start = [0.0, 0.0];
+    let mut closed = false;
+    let mut points = Vec::new();
+
+    while index < tokens.len() {
+        if let PathToken::Command(next) = tokens[index] {
+            command = next;
+            index += 1;
+            if matches!(command, 'Z' | 'z') {
+                current = subpath_start;
+                closed = true;
                 continue;
             }
-        } else {
-            let first = token
-                .parse::<f32>()
-                .map_err(|_| invalid("invalid path number"))?;
-            let second = iter
-                .next()
-                .ok_or_else(|| invalid("incomplete path command"))?
-                .parse::<f32>()
-                .map_err(|_| invalid("invalid path number"))?;
-            match cmd {
-                'M' | 'L' => current = [first, second],
-                'm' | 'l' => {
-                    current[0] += first;
-                    current[1] += second;
+        }
+
+        match command {
+            'M' | 'm' | 'L' | 'l' => {
+                let x = number_token(&tokens, &mut index)?;
+                let y = number_token(&tokens, &mut index)?;
+                if matches!(command, 'm' | 'l') {
+                    current[0] += x;
+                    current[1] += y;
+                } else {
+                    current = [x, y];
                 }
-                _ => {
-                    return Err(invalid(
-                        "path supports only M/L commands with coordinate pairs",
-                    ));
+                if command == 'M' || command == 'm' {
+                    subpath_start = current;
+                    command = if command == 'm' { 'l' } else { 'L' };
                 }
+                points.push(current);
             }
-            out.push(current);
+            'H' | 'h' => {
+                let x = number_token(&tokens, &mut index)?;
+                current[0] = if command == 'h' { current[0] + x } else { x };
+                points.push(current);
+            }
+            'V' | 'v' => {
+                let y = number_token(&tokens, &mut index)?;
+                current[1] = if command == 'v' { current[1] + y } else { y };
+                points.push(current);
+            }
+            _ => return Err(invalid("path supports only M/L/H/V/Z commands")),
         }
     }
-    if out.len() < 2 {
+    if points.len() < 2 {
         return Err(invalid("path needs at least two points"));
     }
-    Ok(out)
+    Ok(ParsedPath { points, closed })
+}
+
+#[derive(Debug)]
+struct ParsedPath {
+    points: Vec<[f32; 2]>,
+    closed: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PathToken {
+    Command(char),
+    Number(f32),
+}
+
+fn number_token(tokens: &[PathToken], index: &mut usize) -> Result<f32> {
+    match tokens.get(*index) {
+        Some(PathToken::Number(value)) => {
+            *index += 1;
+            Ok(*value)
+        }
+        _ => Err(invalid("path command has incomplete arguments")),
+    }
+}
+
+fn tokenize_path(raw: &str) -> Result<Vec<PathToken>> {
+    let chars = raw.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index].is_ascii_whitespace() || chars[index] == ',' {
+            index += 1;
+            continue;
+        }
+        if chars[index].is_ascii_alphabetic() {
+            let command = chars[index];
+            if !matches!(
+                command,
+                'M' | 'm' | 'L' | 'l' | 'H' | 'h' | 'V' | 'v' | 'Z' | 'z'
+            ) {
+                return Err(invalid(format!("unsupported path command {command}")));
+            }
+            tokens.push(PathToken::Command(command));
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        if matches!(chars[index], '+' | '-') {
+            index += 1;
+        }
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index < chars.len() && chars[index] == '.' {
+            index += 1;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+        }
+        if index < chars.len() && matches!(chars[index], 'e' | 'E') {
+            index += 1;
+            if index < chars.len() && matches!(chars[index], '+' | '-') {
+                index += 1;
+            }
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+        }
+        if start == index {
+            return Err(invalid("invalid path number"));
+        }
+        let value = chars[start..index]
+            .iter()
+            .collect::<String>()
+            .parse::<f32>()
+            .map_err(|_| invalid("invalid path number"))?;
+        tokens.push(PathToken::Number(value));
+    }
+    Ok(tokens)
 }
 
 fn parse_points(raw: &str) -> Result<Vec<[f32; 2]>> {
