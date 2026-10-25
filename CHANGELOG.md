@@ -8,6 +8,10 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.23.0 — 2026-10-25
+
 - Add optional pure-Rust `svg_to_pdf` conversion for the supported chemical
   drawing subset, including vector shapes, text, transforms, opacity, dashes,
   and arrowheads.
@@ -18,6 +22,10 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 - Add validated dashed line and polyline drawing APIs using native PDF dash
   operators.
 - Refresh CI artifact actions and audited dependency versions.
+- Refactor text extraction, replacement, layout-region, outline, Flow-table,
+  and finalization internals without changing the public API.
+- Add the concise project roadmap and align documentation with the tested
+  feature boundaries.
 
 ## 1.22.1 — 2026-09-07
 
