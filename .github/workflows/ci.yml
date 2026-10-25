@@ -142,6 +142,26 @@ jobs:
           path: /tmp/harumi-report-generation-fixture
           if-no-files-found: error
 
+  svg-render-contract:
+    name: SVG visual render contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Poppler utilities
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - name: Render SVG visual fixture
+        run: bash scripts/check-svg-render-fixture.sh
+      - name: Upload SVG render artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: svg-render-poppler
+          path: /tmp/harumi-svg-render-fixture
+          if-no-files-found: error
+
   pdfium-contract:
     name: Pdfium runner compile contract
     runs-on: ubuntu-latest
