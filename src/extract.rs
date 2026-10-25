@@ -4820,83 +4820,8 @@ fn parse_content_stream(
                     }
                     stack.clear();
                 }
-                b"rg" => {
-                    let b_val = stack.pop();
-                    let g_val = stack.pop();
-                    let r_val = stack.pop();
-                    if let (
-                        Some((Token::Number(bv), _)),
-                        Some((Token::Number(gv), _)),
-                        Some((Token::Number(rv), _)),
-                    ) = (b_val, g_val, r_val)
-                    {
-                        state.cur_color = [rv, gv, bv];
-                    }
-                    stack.clear();
-                }
-                b"g" => {
-                    if let Some((Token::Number(gray), _)) = stack.pop() {
-                        state.cur_color = [gray, gray, gray];
-                    }
-                    stack.clear();
-                }
-                b"q" => {
-                    state
-                        .ctm_stack
-                        .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
-                    state.opacity_stack.push(state.cur_opacity);
-                    stack.clear();
-                }
-                b"Q" => {
-                    if state.ctm_stack.len() > 1 {
-                        state.ctm_stack.pop();
-                    }
-                    if let Some(opacity) = state.opacity_stack.pop() {
-                        state.cur_opacity = opacity;
-                    }
-                    stack.clear();
-                }
-                b"gs" => {
-                    if let Some((Token::Name(name), _)) = stack.pop()
-                        && let Some(opacity) = extgstates.get(&name)
-                    {
-                        state.cur_opacity = *opacity;
-                    }
-                    stack.clear();
-                }
-                b"Do" => {
-                    let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
-                    state.ctm = ctm;
-                    // Record the XObject name (top of stack) paired with the CTM active
-                    // at this invocation so extract_text_from_xobjects() can apply the
-                    // correct per-Do CTM rather than the last one in the stream.
-                    if let Some((Token::Name(name), _)) = stack.last() {
-                        state.do_ctm_map.push((name.clone(), ctm));
-                    }
-                    stack.clear();
-                }
-                b"cm" => {
-                    // Stack layout (bottom→top): a b c d e f  then  cm
-                    let fv = stack.pop();
-                    let ev = stack.pop();
-                    let dv = stack.pop();
-                    let cv = stack.pop();
-                    let bv = stack.pop();
-                    let av = stack.pop();
-                    if let (
-                        Some((Token::Number(f), _)),
-                        Some((Token::Number(e), _)),
-                        Some((Token::Number(d), _)),
-                        Some((Token::Number(c), _)),
-                        Some((Token::Number(b), _)),
-                        Some((Token::Number(a), _)),
-                    ) = (fv, ev, dv, cv, bv, av)
-                    {
-                        let mat = [a, b, c, d, e, f];
-                        let top = state.ctm_stack.last_mut().unwrap();
-                        *top = multiply_ctm(*top, mat);
-                    }
-                    stack.clear();
+                b"rg" | b"g" | b"q" | b"Q" | b"gs" | b"Do" | b"cm" => {
+                    handle_graphics_operator(kw.as_slice(), &mut stack, state, extgstates);
                 }
                 b"Tj" if in_bt => {
                     let op_start = Some(tok_pos);
@@ -5093,6 +5018,88 @@ fn parse_content_stream(
     state.word_spacing = word_spacing;
     state.horizontal_scale = horizontal_scale;
     state.text_rise = text_rise;
+}
+
+/// Handle graphics-state and resource operators independently from text-state
+/// parsing. Content streams commonly interleave these operators with text, so
+/// keeping the state mutations in one small dispatcher makes the main parser
+/// easier to audit without changing PDF operator order semantics.
+fn handle_graphics_operator(
+    keyword: &[u8],
+    stack: &mut Vec<(Token, usize)>,
+    state: &mut ParseCarryState,
+    extgstates: &HashMap<Vec<u8>, f32>,
+) {
+    match keyword {
+        b"rg" => {
+            let b_val = stack.pop();
+            let g_val = stack.pop();
+            let r_val = stack.pop();
+            if let (
+                Some((Token::Number(bv), _)),
+                Some((Token::Number(gv), _)),
+                Some((Token::Number(rv), _)),
+            ) = (b_val, g_val, r_val)
+            {
+                state.cur_color = [rv, gv, bv];
+            }
+        }
+        b"g" => {
+            if let Some((Token::Number(gray), _)) = stack.pop() {
+                state.cur_color = [gray, gray, gray];
+            }
+        }
+        b"q" => {
+            state
+                .ctm_stack
+                .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+            state.opacity_stack.push(state.cur_opacity);
+        }
+        b"Q" => {
+            if state.ctm_stack.len() > 1 {
+                state.ctm_stack.pop();
+            }
+            if let Some(opacity) = state.opacity_stack.pop() {
+                state.cur_opacity = opacity;
+            }
+        }
+        b"gs" => {
+            if let Some((Token::Name(name), _)) = stack.pop()
+                && let Some(opacity) = extgstates.get(&name)
+            {
+                state.cur_opacity = *opacity;
+            }
+        }
+        b"Do" => {
+            let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+            state.ctm = ctm;
+            if let Some((Token::Name(name), _)) = stack.last() {
+                state.do_ctm_map.push((name.clone(), ctm));
+            }
+        }
+        b"cm" => {
+            let fv = stack.pop();
+            let ev = stack.pop();
+            let dv = stack.pop();
+            let cv = stack.pop();
+            let bv = stack.pop();
+            let av = stack.pop();
+            if let (
+                Some((Token::Number(f), _)),
+                Some((Token::Number(e), _)),
+                Some((Token::Number(d), _)),
+                Some((Token::Number(c), _)),
+                Some((Token::Number(b), _)),
+                Some((Token::Number(a), _)),
+            ) = (fv, ev, dv, cv, bv, av)
+            {
+                let top = state.ctm_stack.last_mut().unwrap();
+                *top = multiply_ctm(*top, [a, b, c, d, e, f]);
+            }
+        }
+        _ => unreachable!("graphics operator dispatcher received {keyword:?}"),
+    }
+    stack.clear();
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
