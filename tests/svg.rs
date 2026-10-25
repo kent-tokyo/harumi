@@ -223,19 +223,67 @@ fn multiplies_nested_group_and_child_opacity() {
         lopdf::Object::Dictionary(resources) => resources,
         other => panic!("unexpected resources object: {other:?}"),
     };
-    let ext_gstate = resources
+    let page_ext_gstate = resources
         .get(b"ExtGState")
-        .expect("ExtGState should exist")
+        .expect("page ExtGState should exist")
         .as_dict()
         .unwrap();
-    assert!(ext_gstate.iter().any(|(_, object)| {
+    assert!(page_ext_gstate.iter().any(|(_, object)| {
         object
             .as_dict()
             .ok()
             .and_then(|dict| dict.get(b"ca").ok())
             .and_then(|value| value.as_float().ok())
-            .is_some_and(|opacity| (opacity - 0.25).abs() < 0.001)
+            .is_some_and(|opacity| (opacity - 0.5).abs() < 0.001)
     }));
+    let mut form_ext_gstates = document.objects.values().filter_map(|object| {
+        let stream = object.as_stream().ok()?;
+        let resources = stream.dict.get(b"Resources").ok()?.as_dict().ok()?;
+        let ext_gstate = resources.get(b"ExtGState").ok()?.as_dict().ok()?;
+        Some(ext_gstate.iter().any(|(_, object)| {
+            object
+                .as_dict()
+                .ok()
+                .and_then(|dict| dict.get(b"ca").ok())
+                .and_then(|value| value.as_float().ok())
+                .is_some_and(|opacity| (opacity - 0.5).abs() < 0.001)
+        }))
+    });
+    assert!(form_ext_gstates.any(|contains_half_opacity| contains_half_opacity));
+}
+
+#[test]
+fn isolates_overlapping_group_children_before_applying_opacity() {
+    let svg = br##"<svg width="40" height="20">
+      <g opacity="0.5">
+        <rect x="0" y="0" width="20" height="20" fill="#ff0000"/>
+        <rect x="10" y="0" width="20" height="20" fill="#ff0000"/>
+      </g>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, b"").expect("overlapping group should convert");
+    let pdf = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let mut groups = pdf.objects.values().filter_map(|object| {
+        let stream = object.as_stream().ok()?;
+        let is_form = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|value| value.as_name().ok())
+            == Some(b"Form");
+        let is_transparency_group = stream
+            .dict
+            .get(b"Group")
+            .ok()
+            .and_then(|value| value.as_dict().ok())
+            .and_then(|group| group.get(b"S").ok())
+            .and_then(|value| value.as_name().ok())
+            == Some(b"Transparency");
+        is_form.then_some(is_transparency_group)
+    });
+    assert!(
+        groups.any(|is_transparency_group| is_transparency_group),
+        "group opacity must be represented by an isolated PDF transparency group"
+    );
 }
 
 #[test]

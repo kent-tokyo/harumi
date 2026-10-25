@@ -155,6 +155,11 @@ impl<'doc> PageHandle<'doc> {
         self.doc.measure_text(text, font, font_size)
     }
 
+    #[cfg(feature = "svg")]
+    pub(crate) fn overlay_with_opacity(&mut self, other: Document, opacity: f32) -> Result<()> {
+        self.doc.overlay_from_with_opacity(other, opacity)
+    }
+
     /// Queues a single invisible text placement on this page.
     ///
     /// The text is rendered with PDF render mode 3 (`Tr 3`): it is not painted

@@ -1044,6 +1044,24 @@ impl Document {
     /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save) or if
     /// `other` has unflushed pending operations (call `save_to_bytes()+from_bytes()` first).
     pub fn overlay_from(&mut self, other: Document) -> Result<()> {
+        self.overlay_from_internal(other, None)
+    }
+
+    /// Overlays a document through an isolated PDF transparency group.
+    ///
+    /// This is crate-private because it is used by the SVG converter to model
+    /// SVG group opacity. The group's children are composited first, then the
+    /// resulting group is blended once with the destination page.
+    #[cfg(feature = "draw")]
+    pub(crate) fn overlay_from_with_opacity(
+        &mut self,
+        other: Document,
+        opacity: f32,
+    ) -> Result<()> {
+        self.overlay_from_internal(other, Some(opacity))
+    }
+
+    fn overlay_from_internal(&mut self, other: Document, opacity: Option<f32>) -> Result<()> {
         if self.finalized {
             return Err(Error::InvalidInput(
                 "overlay_from after save() is not supported; create a new Document".into(),
@@ -1107,6 +1125,13 @@ impl Document {
                 ]),
             );
             form_dict.set("Resources", Object::Dictionary(resources_dict));
+            if opacity.is_some() {
+                let mut group = Dictionary::new();
+                group.set("S", Object::Name(b"Transparency".to_vec()));
+                group.set("I", Object::Boolean(true));
+                group.set("CS", Object::Name(b"DeviceRGB".to_vec()));
+                form_dict.set("Group", Object::Dictionary(group));
+            }
             let form_stream = Stream::new(form_dict, content_bytes);
             let form_id = self.inner.add_object(Object::Stream(form_stream));
 
@@ -1119,11 +1144,29 @@ impl Document {
             wrap_page_contents_in_q_q(&mut self.inner, self_page_id)?;
 
             // Append the Do operator to invoke the overlay.
+            #[cfg(feature = "draw")]
+            let overlay_gs = opacity.map(|value| {
+                let mut registry = crate::draw::ExtGStateRegistry::new();
+                let name = registry.register(value);
+                (name, registry)
+            });
+            #[cfg(feature = "draw")]
+            let do_bytes = if let Some((ref gs_name, _)) = overlay_gs {
+                format!("q\n/{gs_name} gs\n/{xobj_name} Do\nQ\n").into_bytes()
+            } else {
+                format!("/{xobj_name} Do\n").into_bytes()
+            };
+            #[cfg(not(feature = "draw"))]
             let do_bytes = format!("/{xobj_name} Do\n").into_bytes();
             let do_stream_id = self
                 .inner
                 .add_object(Object::Stream(Stream::new(Dictionary::new(), do_bytes)));
             append_to_contents(&mut self.inner, self_page_id, do_stream_id)?;
+
+            #[cfg(feature = "draw")]
+            if let Some((_, registry)) = overlay_gs {
+                add_ext_gstate_to_resources(&mut self.inner, self_page_id, registry)?;
+            }
         }
 
         Ok(())
