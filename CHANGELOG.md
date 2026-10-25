@@ -10,6 +10,12 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 No changes yet.
 
+## 1.23.1 — 2026-10-25
+
+- Fix SVG text anchoring, baseline positioning, short hex colors, and marker definitions.
+- Update `lopdf` to 0.46 and remove its transitive `ttf-parser` dependency.
+- Fix the report-generation CI fixture for the updated `lopdf` API.
+
 ## 1.23.0 — 2026-10-25
 
 - Add optional pure-Rust `svg_to_pdf` conversion for the supported chemical
