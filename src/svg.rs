@@ -75,11 +75,13 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
     let root_transform =
         Transform::translate(-source[0], -source[1]).then(Transform::scale(scale_x, scale_y));
     let inherited = Style::default();
+    let markers = collect_markers(root)?;
     {
         let mut ctx = Context {
             page: &mut page,
             font,
             height,
+            markers,
         };
         for child in root.children().filter(Node::is_element) {
             render_node(child, root_transform, inherited, &mut ctx)?;
@@ -92,6 +94,29 @@ struct Context<'a, 'doc> {
     page: &'a mut crate::PageHandle<'doc>,
     font: crate::FontHandle,
     height: f32,
+    markers: HashMap<String, Marker>,
+}
+
+#[derive(Clone, Debug)]
+struct Marker {
+    ref_x: f32,
+    ref_y: f32,
+    shape: MarkerShape,
+}
+
+#[derive(Clone, Debug)]
+enum MarkerShape {
+    Polygon {
+        points: Vec<[f32; 2]>,
+        style: Style,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        style: Style,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -157,7 +182,7 @@ impl Transform {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Style {
     fill: Option<[f32; 3]>,
     stroke: Option<[f32; 3]>,
@@ -201,7 +226,7 @@ fn render_node(
         "line" => {
             let p1 = transform.point(attr(node, "x1")?, attr(node, "y1")?, ctx.height);
             let p2 = transform.point(attr(node, "x2")?, attr(node, "y2")?, ctx.height);
-            draw_line(ctx, p1, p2, style, has_marker(node))?;
+            draw_line(ctx, p1, p2, style, node.attribute("marker-end"))?;
         }
         "polyline" | "polygon" => {
             let points = parse_points(
@@ -214,7 +239,7 @@ fn render_node(
             if node.tag_name().name() == "polygon" && points.len() >= 2 {
                 draw_polygon(ctx, &points, style)?;
             } else {
-                draw_polyline(ctx, &points, style, has_marker(node))?;
+                draw_polyline(ctx, &points, style, node.attribute("marker-end"))?;
             }
         }
         "rect" => {
@@ -361,7 +386,7 @@ fn draw_line(
     from: [f32; 2],
     to: [f32; 2],
     style: Style,
-    marker: bool,
+    marker: Option<&str>,
 ) -> Result<()> {
     let color = style.stroke.ok_or_else(|| invalid("line has no stroke"))?;
     if let Some(dash) = style.dash {
@@ -383,12 +408,12 @@ fn draw_line(
             style.opacity * style.stroke_opacity,
         )?;
     }
-    if marker {
-        arrowhead(
+    if let Some(marker) = marker {
+        draw_marker(
             ctx,
+            marker,
             from,
             to,
-            color,
             style.stroke_width,
             style.opacity * style.stroke_opacity,
         )?;
@@ -400,7 +425,7 @@ fn draw_polyline(
     ctx: &mut Context<'_, '_>,
     points: &[[f32; 2]],
     style: Style,
-    marker: bool,
+    marker: Option<&str>,
 ) -> Result<()> {
     let color = style
         .stroke
@@ -422,12 +447,14 @@ fn draw_polyline(
             style.opacity * style.stroke_opacity,
         )?;
     }
-    if marker && points.len() >= 2 {
-        arrowhead(
+    if let Some(marker) = marker
+        && points.len() >= 2
+    {
+        draw_marker(
             ctx,
+            marker,
             points[points.len() - 2],
             points[points.len() - 1],
-            color,
             style.stroke_width,
             style.opacity * style.stroke_opacity,
         )?;
@@ -453,14 +480,26 @@ fn draw_polygon(ctx: &mut Context<'_, '_>, points: &[[f32; 2]], style: Style) ->
     )
 }
 
-fn arrowhead(
+fn draw_marker(
     ctx: &mut Context<'_, '_>,
+    reference: &str,
     from: [f32; 2],
     to: [f32; 2],
-    color: [f32; 3],
-    width: f32,
+    stroke_width: f32,
     opacity: f32,
 ) -> Result<()> {
+    if reference == "none" {
+        return Ok(());
+    }
+    let Some(id) = reference
+        .strip_prefix("url(#")
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return Err(invalid("marker-end must be none or url(#id)"));
+    };
+    let Some(marker) = ctx.markers.get(id) else {
+        return Err(invalid(format!("marker definition not found: {id}")));
+    };
     let dx = to[0] - from[0];
     let dy = to[1] - from[1];
     let len = (dx * dx + dy * dy).sqrt();
@@ -469,16 +508,104 @@ fn arrowhead(
     }
     let ux = dx / len;
     let uy = dy / len;
-    let size = (width * 5.0).max(4.0);
-    let base = [to[0] - ux * size, to[1] - uy * size];
-    let left = [base[0] - uy * size * 0.45, base[1] + ux * size * 0.45];
-    let right = [base[0] + uy * size * 0.45, base[1] - ux * size * 0.45];
-    ctx.page
-        .add_polygon(&[to, left, right], color, opacity, true, 0.0)
+    let scale = stroke_width.max(1.0);
+    let origin = [
+        to[0] - ux * marker.ref_x * scale + uy * marker.ref_y * scale,
+        to[1] - uy * marker.ref_x * scale - ux * marker.ref_y * scale,
+    ];
+    let map = |x: f32, y: f32| {
+        [
+            origin[0] + (ux * x - uy * y) * scale,
+            origin[1] + (uy * x + ux * y) * scale,
+        ]
+    };
+    let (points, style) = match &marker.shape {
+        MarkerShape::Polygon { points, style } => (
+            points.iter().map(|p| map(p[0], p[1])).collect::<Vec<_>>(),
+            *style,
+        ),
+        MarkerShape::Rect {
+            x,
+            y,
+            width,
+            height,
+            style,
+        } => (
+            vec![
+                map(*x, *y),
+                map(*x + *width, *y),
+                map(*x + *width, *y + *height),
+                map(*x, *y + *height),
+            ],
+            *style,
+        ),
+    };
+    let color = style
+        .fill
+        .or(style.stroke)
+        .ok_or_else(|| invalid("marker has no fill or stroke"))?;
+    ctx.page.add_path(
+        &points,
+        true,
+        color,
+        style.fill.is_some(),
+        style
+            .stroke
+            .filter(|_| true)
+            .map(|_| style.stroke_width * scale)
+            .unwrap_or(0.0),
+        opacity
+            * style.opacity
+            * if style.fill.is_some() {
+                style.fill_opacity
+            } else {
+                style.stroke_opacity
+            },
+    )
 }
 
-fn has_marker(node: Node<'_, '_>) -> bool {
-    node.attribute("marker-end").is_some()
+fn collect_markers(root: Node<'_, '_>) -> Result<HashMap<String, Marker>> {
+    let mut markers = HashMap::new();
+    for node in root
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "marker")
+    {
+        let Some(id) = node.attribute("id") else {
+            continue;
+        };
+        let marker = Marker {
+            ref_x: parse_length(node.attribute("refX").unwrap_or("0")).unwrap_or(0.0),
+            ref_y: parse_length(node.attribute("refY").unwrap_or("0")).unwrap_or(0.0),
+            shape: node
+                .children()
+                .find(Node::is_element)
+                .map(|shape| -> Result<MarkerShape> {
+                    let style = style_for(shape, Style::default())?;
+                    match shape.tag_name().name() {
+                        "polygon" => Ok(MarkerShape::Polygon {
+                            points: parse_points(
+                                shape
+                                    .attribute("points")
+                                    .ok_or_else(|| invalid("marker polygon missing points"))?,
+                            )?,
+                            style,
+                        }),
+                        "rect" => Ok(MarkerShape::Rect {
+                            x: attr(shape, "x").unwrap_or(0.0),
+                            y: attr(shape, "y").unwrap_or(0.0),
+                            width: attr(shape, "width")?,
+                            height: attr(shape, "height")?,
+                            style,
+                        }),
+                        other => Err(invalid(format!("unsupported marker element <{other}>"))),
+                    }
+                })
+                .transpose()?
+                .ok_or_else(|| invalid("marker has no shape"))?,
+        };
+        markers.insert(id.to_owned(), marker);
+    }
+    Ok(markers)
 }
 
 fn scaled_stroke_width(transform: Transform, style: Style) -> f32 {

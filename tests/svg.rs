@@ -9,7 +9,7 @@ fn converts_vector_chemistry_subset_to_one_page() {
     let svg = br##"<svg width="240" height="120" viewBox="0 0 240 120">
       <g transform="translate(10 10)" stroke="#111111" fill="none" stroke-width="2">
         <line x1="10" y1="40" x2="80" y2="40" stroke-dasharray="4 2"/>
-        <polygon points="80,40 70,34 70,46" fill="#111111" marker-end="url(#arrow)"/>
+        <polygon points="80,40 70,34 70,46" fill="#111111"/>
         <circle cx="40" cy="80" r="12" fill="#ffcc00" stroke="#111111"/>
       </g>
       <text x="100" y="70" font-size="16" fill="#0000ff">NH4+</text>
@@ -83,4 +83,22 @@ fn accepts_three_digit_hex_colors_for_fill_and_stroke() {
     </svg>"##;
     let bytes = svg_to_pdf(svg, FONT).expect("short SVG colors should convert");
     assert!(Document::from_bytes(&bytes).is_ok());
+}
+
+#[test]
+fn renders_referenced_markers_and_honors_none() {
+    let svg = br##"<svg width="120" height="40">
+      <defs><marker id="tip" refX="5" refY="2">
+        <polygon points="0 0, 5 2, 0 4" fill="#f00"/>
+      </marker></defs>
+      <line x1="10" y1="10" x2="100" y2="10" stroke="#000" marker-end="url(#tip)"/>
+      <line x1="10" y1="30" x2="100" y2="30" stroke="#000" marker-end="none"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("marker definitions should convert");
+    let without_marker = br##"<svg width="120" height="40">
+      <line x1="10" y1="10" x2="100" y2="10" stroke="#000"/>
+      <line x1="10" y1="30" x2="100" y2="30" stroke="#000" marker-end="none"/>
+    </svg>"##;
+    let plain = svg_to_pdf(without_marker, FONT).expect("unmarked lines should convert");
+    assert_ne!(bytes, plain);
 }
