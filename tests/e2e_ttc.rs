@@ -1,14 +1,14 @@
 //! E2E tests for TTC (TrueType Collection) font embedding.
 //!
 //! TTC files contain multiple font faces in one file.
-//! harumi uses face index 0 via ttf-parser and allsorts.
+//! harumi uses face index 0 via its internal OpenType metadata adapter.
 //!
 //! Instead of bundling a large TTC fixture, we synthesize a valid 2-face TTC
 //! at runtime by wrapping the existing NotoSansJP fixture in a TTC container.
 //! Both faces point to the same underlying TTF data, which is legal per the
 //! TTC spec and exercises the full TTC code path.
 
-use harumi::Document;
+use harumi::{Document, Face};
 
 const NOTO_TTF: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -102,10 +102,10 @@ fn ttc_visible_text_roundtrip() {
 #[test]
 fn ttc_face1_same_as_face0() {
     // Both faces in our synthetic TTC are identical — face index 0 is what
-    // harumi uses; verify ttf-parser can parse both.
+    // Verify the same parser used by harumi can parse both faces.
     let ttc = make_ttc(NOTO_TTF);
-    let face0 = ttf_parser::Face::parse(&ttc, 0).expect("face 0 should parse");
-    let face1 = ttf_parser::Face::parse(&ttc, 1).expect("face 1 should parse");
+    let face0 = Face::parse(&ttc, 0).expect("face 0 should parse");
+    let face1 = Face::parse(&ttc, 1).expect("face 1 should parse");
     assert_eq!(face0.units_per_em(), face1.units_per_em());
 }
 

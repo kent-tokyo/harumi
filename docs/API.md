@@ -159,9 +159,13 @@ NotoSansCJKkr-Regular.ttf  (Korean)
 ```
 harumi
 ├── lopdf v0.42          — parse and modify existing PDF object graph
-├── ttf-parser           — font metadata (bbox, units_per_em, ascender)
+├── skrifa                — OpenType metadata (bbox, units_per_em, ascender)
 └── [internal TTF subsetter] — pure-Rust TrueType subsetting (no external crates)
 ```
+
+`harumi` no longer depends directly on `ttf-parser`. Current `lopdf` releases
+may still bring it transitively; that residual dependency is outside harumi's
+font parsing path and is tracked through the `lopdf` dependency.
 
 Flow/HTML generation is a new-document typesetting path. It does not promise
 pixel-identical reproduction of an existing PDF. For translation overlays,

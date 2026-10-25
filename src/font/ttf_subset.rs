@@ -3,8 +3,8 @@
 //! Replaces the `subsetter` crate to minimize dependencies.
 //! Handles TrueType (glyf-based) fonts; CFF fonts are rejected as unsupported.
 
+use super::face::Face;
 use std::collections::{BTreeMap, BTreeSet};
-use ttf_parser::Face;
 
 /// Tracks which glyphs (by original GID) should be preserved in the subset.
 /// Provides GID remapping: original GID → new GID (0..N after subsetting).

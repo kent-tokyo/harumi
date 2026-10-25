@@ -635,7 +635,7 @@ fn rewrite_stream_preserve_font(
                     // Check if wrapping is requested for this replacement.
                     if let Some(wp) = wrap_params_by_old_text.and_then(|m| m.get(&r.old_text)) {
                         // Parse TTF font and wrap the replacement text.
-                        let face = match ttf_parser::Face::parse(&wp.font_bytes, 0) {
+                        let face = match crate::font::face::Face::parse(&wp.font_bytes, 0) {
                             Ok(f) => f,
                             Err(_) => {
                                 // If font parsing fails, fall back to single-line replacement.

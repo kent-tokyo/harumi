@@ -1,5 +1,6 @@
 pub mod cmap;
 pub mod embed;
+pub(crate) mod face;
 pub mod subset;
 mod ttf_subset;
 
