@@ -6,7 +6,7 @@ jobs and must not be reduced to one ranking.
 
 ## Current position
 
-harumi **v1.23.7** extracts positioned text from existing PDFs and writes translated,
+harumi **v1.23.8** extracts positioned text from existing PDFs and writes translated,
 replaced, or OCR-searchable CJK text back using Pure Rust. The default build has no
 native PDF rendering runtime.
 

@@ -107,7 +107,7 @@ harumi-mcp
 - harumi does not rasterize or display PDF pages by itself.
 - Always inspect complex edited output with a renderer.
 
-Current releases: **harumi v1.23.7**, **harumi-ai v0.10.1**.
+Current releases: **harumi v1.23.8**, **harumi-ai v0.10.1**.
 See [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), and the
 [documentation index](docs/README.md) for priorities and history.
 

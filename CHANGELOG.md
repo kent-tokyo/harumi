@@ -7,10 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.23.8] — 2026-10-26
 
 - Inherit presentation attributes and inline styles from the root `<svg>` element.
 - Compose nested SVG `opacity` values when rendering child primitives.
+- Shorten the crates.io guide and examples, and align the reference documents.
 
 ## [1.23.7] — 2026-10-25
 
