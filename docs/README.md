@@ -12,16 +12,15 @@ Use the shortest document that answers the question:
 | Compare harumi with other PDF tools | [`PDF_ECOSYSTEM.md`](PDF_ECOSYSTEM.md) |
 | Read release history | [`../CHANGELOG.md`](../CHANGELOG.md) |
 
-The translated README files cover the same public positioning in Japanese,
-Korean, and Simplified Chinese. They intentionally omit the full API matrix;
-the API and examples documents are the single source of truth for code snippets.
+Translated READMEs cover the public positioning only. API signatures and code
+snippets live in `API.md` and `EXAMPLES.md`.
 
 ## Scope and support boundaries
 
-harumi is an existing-PDF extraction and write-back library. It is not an OCR
-engine, PDF viewer, general SVG renderer, or pixel-perfect document converter.
-Complex rotation, vertical writing, image-backed text, malformed PDFs, and
-font-specific behavior require renderer-based visual review.
+harumi extracts and writes back existing PDF content. It is not an OCR engine,
+PDF viewer, general SVG renderer, or pixel-perfect converter. Review complex
+rotation, vertical writing, image-backed text, and malformed PDFs with a
+renderer.
 
 The normal build is pure Rust and WASM-compatible. Optional host-side renderer
 checks and external OCR tools are verification or input workflows, not runtime

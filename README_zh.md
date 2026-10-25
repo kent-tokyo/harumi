@@ -13,6 +13,7 @@
 - 页面合并、拆分、旋转、排序、注释、表单和加密
 - `draw` 功能的图形与虚线，`image` 功能的图像嵌入
 - `flow` / `html` 功能的报告和 HTML 转 PDF
+- `svg` 功能将受支持的 SVG 图形转换为矢量 PDF
 - 支持 WASM、Lambda、Tauri 和 MCP
 
 它不是 OCR 引擎或 PDF 查看器。复杂分栏、旋转/竖排文字以及图片背景文档应使用

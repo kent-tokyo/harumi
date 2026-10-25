@@ -107,6 +107,17 @@ let pdf = flow.render()?;
 
 For HTML, use `render_html_to_pdf(html, options)` with the `html` feature.
 
+## SVG (`svg` feature)
+
+`svg_to_pdf` converts the documented self-contained SVG subset to one vector
+PDF page. It accepts paths, transforms, markers, CSS named colors, `rgb()`,
+and non-rendering `metadata` elements.
+
+```rust
+let pdf = harumi::svg_to_pdf(svg_bytes, font_bytes)?;
+std::fs::write("figure.pdf", pdf)?;
+```
+
 ## Metadata, forms, and security
 
 ```rust

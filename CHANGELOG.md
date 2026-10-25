@@ -10,6 +10,8 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 - Ignore non-rendering SVG `<metadata>` subtrees, including application-specific children.
 - Accept CSS named colors and `rgb()` color values in SVG conversion.
+- Consolidate the API, examples, feature, roadmap, and ecosystem documents.
+- Clarify the SVG metadata and CSS color support boundaries.
 
 ## 1.23.4 — 2026-10-25
 

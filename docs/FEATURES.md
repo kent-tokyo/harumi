@@ -1,38 +1,17 @@
-# harumi — Full Feature List
+# harumi — Feature map
 
-| Challenge | harumi's answer |
+## Core API
+
+`Document` loads, edits, saves, merges, splits, rotates, and reorders PDFs.
+Use `embed_font` with `add_text` or `add_invisible_text` for CJK text; use
+`extract_text_runs` and `replace_text` for positioned extraction and editing.
+`draw`, `image`, `flow`, `html`, `svg`, `ocr`, and `digital-signature` add the
+capabilities listed in [`API.md`](API.md).
+
+## Advanced API index
+
+| Need | API |
 |---|---|
-| CJK font subsetting is complex | One `embed_font()` call — only used glyphs are included, GIDs correctly remapped; GSUB/GPOS/variable-font tables stripped for macOS Preview and PSPDFKit compatibility |
-| Need to preserve existing page content | Overlay mode appends new content; replacement modes rewrite only targeted content streams |
-| Need to run in WASM / Lambda / cross-compile | Pure Rust — zero C/C++ dependencies |
-| Need OCR text at specific coordinates | `add_invisible_text` / batch `add_invisible_text_runs` |
-| Need to stamp a watermark on PDFs | `add_text(color)` overlays visible text in any RGB color |
-| Need to position text relative to page size | `page.size()` reads the MediaBox |
-| Need in-memory output for Tauri / WASM | `save_to_bytes()` returns a `Vec<u8>` directly |
-| Need to draw highlight rectangles or lines | `add_rect` / `add_line` (`draw` feature, no extra deps) |
-| Need dashed vector strokes | `add_line_dashed` / `add_polyline_dashed` emit native PDF dash patterns (`draw` feature) |
-| Need to draw a box border or polygon (callout) | `add_rect_stroke` / `add_polygon` (`draw` feature) |
-| Need multi-line wrapped text in a box | `add_text_box` (no feature gate needed) |
-| Need to embed JPEG / PNG images | `add_image` / `add_image_with_opacity` (`image` feature) |
-| Need PNG transparency (signatures, watermarks) | Transparent PNGs use PDF SMask automatically — no white background |
-| Need to rotate, remove, or reorder pages | `rotate_page` / `remove_page` / `insert_blank_page` / `reorder_pages` (no feature gate) |
-| Need to merge two PDFs into one | `merge_from` appends all pages from another document; content and fonts preserved |
-| Need to create a PDF from scratch (no existing file) | `Document::new(size)` creates a blank 1-page PDF; add pages with `insert_blank_page` |
-| Need to split a PDF into separate files | `extract_pages` returns a new `Document` with the specified pages in any order |
-| Need to extract text positions from an existing PDF | `extract_text_runs` decodes CID fonts and standard simple fonts (Type1, TrueType, Type3, WinAnsi, etc.) |
-| Need to read or write PDF metadata (title, author…) | `doc.metadata()` reads `/Info`; `doc.set_metadata(&meta)` writes it |
-| Need to replace text in an existing PDF (new font) | `page.replace_text(old, new, font)` rewrites the content stream in-place; returns the match count as `usize`; automatic font-switching and width compensation |
-| Need to replace text using the original font | `page.replace_text_preserve_font(old, new)` — no `FontHandle` needed; returns match count; validates glyphs eagerly (not at `save()`) |
-| Need to check replaceability without modifying | `page.can_replace_text(old, new)` — pure read-only scan; returns match count or `Err(FontCharNotMapped)` |
-| Need to draw an ellipse or circle | `add_ellipse(rect, color, opacity, filled, stroke_width)` (`draw` feature) |
-| Need fill + stroke on same shape | pass `filled=true` and `stroke_width>0` to `add_ellipse` / `add_polygon` / `add_path` — uses PDF `B` operator |
-| Need open or closed path (polyline + polygon unified) | `add_path(points, closed, color, filled, stroke_width, opacity)` (`draw` feature) |
-| Need rotated text (watermarks, stamps at an angle) | `add_text_with_rotation(text, font, pos, size, color, opacity, degrees)` |
-| Need to replace text spanning multiple Tj operators or font runs | `replace_text` / `replace_text_preserve_font` — cross-operator **and** cross-Tf matching supported |
-| Need to extract an embedded image from a scanned PDF | `extract_page_image` returns JPEG or PNG bytes (`image` feature); scanned PDFs only |
-| Need clickable URL links in a PDF | `add_link_url([x, y, w, h], url)` — invisible URI annotation; click opens the URL in any viewer |
-| Need internal navigation links (TOC) | `add_link_internal([x, y, w, h], target_page)` — jumps to a page within the same document |
-| Need a bookmarks / navigation outline | `add_bookmark(title, page, y)` — flat PDF outline entries; CJK titles stored as UTF-16BE automatically |
 | Need page numbers / running headers–footers on every page | `FlowOptions { header: Some(hf), footer: Some(hf), .. }` with `HeaderFooter` (`flow` feature); `{{page}}` / `{{total}}` substituted at render |
 | Need headings to auto-generate outline entries | `FlowOptions { auto_bookmarks: true, .. }` (default) — every `push_heading` creates a bookmark |
 | Need a named bookmark at a Flow position | `FlowDocument::push_bookmark(title, level)` records a deterministic outline destination at the current page position |
@@ -82,3 +61,7 @@
 | Need to preserve 90°/270° text direction during overlay | `TextFragment::rotation_degrees` is propagated by `harumi-ai` for common vertical lines |
 | Need basic CJK vertical extraction | Type0 `/Identity-V` with `/DW2`/`/W2` metrics and common 90°/270° placement; complex mixed composition remains best-effort |
 | Need source text opacity in extraction | `TextFragment::opacity` from page or directly processed Form XObject `/ExtGState /ca` |
+
+For the current limits and supported SVG subset, see [`API.md`](API.md) and
+[`ROADMAP.md`](../ROADMAP.md). This table is an index, not a compatibility
+promise for every PDF producer or viewer.
