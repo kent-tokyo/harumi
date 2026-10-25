@@ -25,6 +25,7 @@ paginated HTML/report output.
 - Use the [API guide](docs/API.md) for feature flags and signatures.
 - Use the [examples](docs/EXAMPLES.md) for copyable code.
 - Use the [feature list](docs/FEATURES.md) for capability discovery.
+- Use the [roadmap](ROADMAP.md) for current scope, priorities, and evidence gates.
 - Use the [PDF ecosystem contract](docs/PDF_ECOSYSTEM.md) for comparisons and
   evidence boundaries.
 
@@ -122,6 +123,8 @@ The core PDF write-back, extraction, CJK font, layout, Flow, HTML, and WASM
 paths are maintained. Extraction of malformed PDFs, complex vertical writing,
 deeply nested Form XObjects, and pixel-identical translation remains
 best-effort. Review output with a renderer when fidelity matters.
+
+See [ROADMAP.md](ROADMAP.md) for the planned work and completion criteria.
 
 ## Contributing and license
 
