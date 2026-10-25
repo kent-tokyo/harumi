@@ -186,6 +186,12 @@ text that intersects an image preserves the image and is reported as a Major
 `image_overlap` issue; background restoration and automatic relocation are not
 performed.
 
+Paragraph wrapping has a deterministic boundary subset: CJK and selected
+space-free scripts may break between characters; combining marks, emoji ZWJ
+sequences, no-break spaces, common numeric units, and a small kinsoku set stay
+together. Full UAX #14 line breaking, dictionary hyphenation, visual bidi/RTL
+shaping, and vertical reflow are not provided.
+
 Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
 collects all characters used across every page, subsets once per font, and writes everything
 in one pass.

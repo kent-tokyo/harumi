@@ -1,0 +1,21 @@
+{
+  "name": "layout-boundaries-v1",
+  "version": 1,
+  "command": "cargo test --lib wrap_paragraph_",
+  "checks": [
+    "grapheme_extensions",
+    "emoji_zwj_sequences",
+    "cjk_kinsoku",
+    "space_free_scripts",
+    "soft_hyphen_and_zero_width_space",
+    "non_breaking_spaces",
+    "numeric_unit_boundaries"
+  ],
+  "non_goals": [
+    "full_uax_14",
+    "dictionary_hyphenation",
+    "visual_bidi_shaping",
+    "vertical_reflow"
+  ],
+  "comparison_policy": "These tests define deterministic boundary preservation, not full Unicode line-breaking or renderer parity."
+}

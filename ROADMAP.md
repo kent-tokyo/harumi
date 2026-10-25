@@ -24,6 +24,7 @@
 - CJK/Latin 帳票の固定比較で、保存・再読込後のヘッダー・ページ番号フッター再利用
 - ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
 - CJK・画像・URLリンク・メタデータを含む最小writerのsave/reload・決定性fixture
+- Unicode改行境界の固定fixtureと、UAX #14・辞書hyphenation・視覚的RTL/縦書きを分けた制約
 
 ## 現在の対応範囲
 
