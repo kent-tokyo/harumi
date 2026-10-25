@@ -25,9 +25,7 @@ jobs:
             local package="$1"
             local version
             version="$(cargo metadata --no-deps --format-version 1 | jq -r --arg package "$package" '.packages[] | select(.name == $package) | .version')"
-            local endpoint="https://crates.io/api/v1/crates/${package}/${version}"
-
-            if curl --fail --silent --show-error --location "$endpoint" >/dev/null; then
+            if cargo info "${package}@${version}" --registry crates-io >/dev/null 2>&1; then
               echo "$package $version is already published; skipping"
             else
               cargo publish -p "$package" --no-verify
@@ -46,9 +44,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "harumi-ai") | .version')"
-          endpoint="https://crates.io/api/v1/crates/harumi-ai/${version}"
 
-          if curl --fail --silent --show-error --location "$endpoint" >/dev/null; then
+          if cargo info "harumi-ai@${version}" --registry crates-io >/dev/null 2>&1; then
             echo "harumi-ai $version is already published; skipping"
           else
             cargo publish -p harumi-ai --no-verify
