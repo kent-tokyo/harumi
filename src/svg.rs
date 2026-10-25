@@ -80,7 +80,11 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
     let scale_y = height / source[3];
     let root_transform =
         Transform::translate(-source[0], -source[1]).then(Transform::scale(scale_x, scale_y));
-    let inherited = Style::default();
+    // Presentation attributes and inline styles on the root <svg> element are
+    // inherited by its descendants just like styles on a group.  Starting at
+    // the root also makes root-level `stroke`, `fill`, and `style` useful for
+    // SVGs emitted by tools that put all presentation properties on <svg>.
+    let inherited = style_for(root, Style::default())?;
     let markers = collect_markers(root)?;
     {
         let mut ctx = Context {
@@ -728,7 +732,10 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
                     style.stroke_width =
                         parse_length(value).ok_or_else(|| invalid("invalid stroke-width"))?
                 }
-                "opacity" => style.opacity = parse_number(value)?,
+                // Opacity is inherited multiplicatively.  The converter emits
+                // one graphics state per primitive, so multiplying here keeps
+                // nested group/child opacity correct for the flattened subset.
+                "opacity" => style.opacity *= parse_number(value)?,
                 "fill-opacity" => style.fill_opacity = parse_number(value)?,
                 "stroke-opacity" => style.stroke_opacity = parse_number(value)?,
                 "font-size" => {

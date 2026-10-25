@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+- Inherit presentation attributes and inline styles from the root `<svg>` element.
+- Compose nested SVG `opacity` values when rendering child primitives.
+
 ## [1.23.7] — 2026-10-25
 
 - Remove the unmaintained `ttf-parser` dependency from the published SVG and

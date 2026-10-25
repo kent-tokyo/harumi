@@ -183,6 +183,62 @@ fn inline_style_overrides_presentation_attributes_and_supports_current_color() {
 }
 
 #[test]
+fn inherits_root_presentation_and_inline_styles() {
+    let presentation = br#"<svg width="80" height="40" stroke="red" fill="none">
+      <line x1="5" y1="20" x2="75" y2="20"/>
+    </svg>"#;
+    let inline = br#"<svg width="80" height="40" style="stroke: red; fill: none">
+      <line x1="5" y1="20" x2="75" y2="20"/>
+    </svg>"#;
+
+    for svg in [presentation.as_slice(), inline.as_slice()] {
+        let bytes = svg_to_pdf(svg, FONT).expect("root styles should be inherited");
+        let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+        let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+        let content_bytes = document.get_page_content(page_id);
+        let content = String::from_utf8_lossy(&content_bytes);
+        assert!(content.contains("1.0000 0.0000 0.0000 RG"));
+    }
+}
+
+#[test]
+fn multiplies_nested_group_and_child_opacity() {
+    let svg = br#"<svg width="40" height="20">
+      <g opacity="0.5"><rect x="0" y="0" width="40" height="20" opacity="0.5"/></g>
+    </svg>"#;
+    let bytes = svg_to_pdf(svg, FONT).expect("nested opacity should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let page = document
+        .get_object(page_id)
+        .expect("page should exist")
+        .as_dict()
+        .unwrap();
+    let resources = match page.get(b"Resources").unwrap() {
+        lopdf::Object::Reference(reference) => document
+            .get_object(*reference)
+            .expect("resources should exist")
+            .as_dict()
+            .unwrap(),
+        lopdf::Object::Dictionary(resources) => resources,
+        other => panic!("unexpected resources object: {other:?}"),
+    };
+    let ext_gstate = resources
+        .get(b"ExtGState")
+        .expect("ExtGState should exist")
+        .as_dict()
+        .unwrap();
+    assert!(ext_gstate.iter().any(|(_, object)| {
+        object
+            .as_dict()
+            .ok()
+            .and_then(|dict| dict.get(b"ca").ok())
+            .and_then(|value| value.as_float().ok())
+            .is_some_and(|opacity| (opacity - 0.25).abs() < 0.001)
+    }));
+}
+
+#[test]
 fn renders_referenced_markers_and_honors_none() {
     let svg = br##"<svg width="120" height="40">
       <defs><marker id="tip" refX="5" refY="2">
