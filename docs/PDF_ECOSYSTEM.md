@@ -54,7 +54,7 @@ source; prose summaries should not introduce stronger claims.
 - CJK TrueType/TTC embedding, ToUnicode maps, and subsetting
 - Existing-PDF extraction, overlays, replacement, and page operations
 - Flow/HTML paragraphs, tables, templates, footnotes, and page breaks
-- Basic SVG shapes, curves, ellipses, transforms, and colors
+- Basic SVG shapes, curves, ellipses, transforms, colors, root styles, and nested primitive opacity
 - Page-scoped extraction, JSON/Markdown handoff, and structure audits
 - WASM dependency checks and post-save Poppler smoke tests
 
@@ -63,7 +63,7 @@ source; prose summaries should not introduce stronger claims.
 - There is no built-in PDF page renderer; use Pdfium or Poppler separately.
 - Full Unicode line breaking, RTL, vertical writing, and HTML/CSS compatibility
   remain incomplete.
-- Complex SVG paths, fill rules, and text transforms need input-specific review.
+- Complex SVG paths, fill rules, group compositing, and text transforms need input-specific review.
 - Pixel-level rendering parity, a pinned Pdfium golden image, and same-corpus
   competitor measurements remain open.
 - Peak RSS and real-document CJK write-back quality need larger measurements.
