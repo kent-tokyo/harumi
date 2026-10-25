@@ -19,6 +19,15 @@ doc.page(1)?.add_invisible_text(text, font, [x, y], size)?;
 // Visible text — for watermarks, stamps, annotations
 doc.page(1)?.add_text(text, font, [x, y], size, [r, g, b])?;
 
+// Vector drawing (`draw` feature)
+doc.page(1)?.add_line([x1, y1], [x2, y2], color, width, opacity)?;
+doc.page(1)?.add_line_dashed(
+    [x1, y1], [x2, y2], color, width, opacity, &[6.0, 3.0], 0.0,
+)?;
+doc.page(1)?.add_polyline_dashed(
+    &[[x1, y1], [x2, y2], [x3, y3]], color, width, opacity, &[4.0, 2.0], 0.0,
+)?;
+
 // Batch placement (one subsetting pass — efficient for OCR output)
 doc.page(1)?.add_invisible_text_runs(&[
     TextRun { text: "line one".into(), font, x: 72.0, y: 700.0, font_size: 11.0, render_mode: 3, color: [0.0; 3] },
@@ -117,7 +126,7 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | Flag | What it enables |
 |---|---|
 | *(default)* | Text overlay, font embedding, `add_text_box`, metadata, annotations, AcroForm, page ops |
-| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
+| `draw` | `add_rect`, `add_line`, `add_line_dashed`, `add_polyline_dashed`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
 | `image` | `add_image`, `add_image_with_opacity`, `extract_page_image`, `extract_page_images` (enables `draw`) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, tables, nested blocks, headers/footers, page footnotes, inline styling, fallback fonts, and widow/orphan controls |

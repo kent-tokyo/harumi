@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed page `/Resources` repair so inherited resources from the `/Pages` tree are
+  preserved instead of being replaced with an empty dictionary.
+- Added dashed line and polyline drawing APIs (`add_line_dashed` and
+  `add_polyline_dashed`) with validation and native PDF dash operators.
+- Updated the CI artifact action and the audited dependency lockfile.
+
 ## [1.22.1] — 2026-09-07
 
 - **HTML paragraph keep-together**: `break-inside: avoid` and

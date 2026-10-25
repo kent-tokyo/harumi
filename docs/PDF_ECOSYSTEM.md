@@ -6,7 +6,7 @@ object editing, extraction, and layout-aware write-back are different jobs.
 
 ## Version snapshot
 
-The versions below are a reproducible documentation snapshot taken on 2026-09-06.
+The versions below are a reproducible documentation snapshot taken on 2026-10-25.
 Update the snapshot date and rerun the comparison before using it as a benchmark.
 
 | Role | Project | Pinned reference | Default boundary for this comparison |
@@ -18,7 +18,7 @@ Update the snapshot date and rerun the comparison before using it as a benchmark
 | Bulk extraction and Markdown | `unpdf` | 0.17.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.77 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
-| Existing-PDF CJK write-back | `harumi` | 1.22.1 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
+| Existing-PDF CJK write-back | `harumi` | 1.22.1 in this repository | extraction, CJK font embedding, overlay, replacement, drawing, page operations, and quality diagnostics |
 
 The external references are the package documentation pages:
 
