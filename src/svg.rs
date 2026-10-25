@@ -318,17 +318,32 @@ fn render_node(
                 .map(|node| node.text().unwrap_or_default())
                 .collect::<String>();
             if !text.is_empty() {
-                let p = transform.point(
-                    attr(node, "x").unwrap_or(0.0),
-                    attr(node, "y").unwrap_or(0.0),
-                    ctx.height,
-                );
+                let x = attr(node, "x").unwrap_or(0.0);
+                let mut y = attr(node, "y").unwrap_or(0.0);
+                let font_size = style.font_size;
+                let width = ctx.page.measure_text(&text, ctx.font, font_size)?;
+                let x = match node.attribute("text-anchor").unwrap_or("start") {
+                    "start" => x,
+                    "middle" => x - width / 2.0,
+                    "end" => x - width,
+                    other => return Err(invalid(format!("unsupported text-anchor {other}"))),
+                };
+                match node.attribute("dominant-baseline").unwrap_or("alphabetic") {
+                    "auto" | "alphabetic" | "baseline" => {}
+                    "central" | "middle" => y += font_size * 0.35,
+                    "text-before-edge" | "before-edge" | "hanging" => y += font_size * 0.9,
+                    "text-after-edge" | "after-edge" => y -= font_size * 0.1,
+                    "ideographic" => y += font_size * 0.2,
+                    "mathematical" => y += font_size * 0.45,
+                    other => return Err(invalid(format!("unsupported dominant-baseline {other}"))),
+                }
+                let p = transform.point(x, y, ctx.height);
                 let color = style.fill.or(style.stroke).unwrap_or([0.0; 3]);
                 ctx.page.add_text_with_rotation(
                     &text,
                     ctx.font,
                     p,
-                    style.font_size * transform.y_scale(),
+                    font_size * transform.y_scale(),
                     color,
                     style.opacity * style.fill_opacity,
                     transform.rotation_degrees(),
@@ -745,9 +760,19 @@ fn parse_color(raw: &str) -> Result<Option<[f32; 3]>> {
         return Ok(None);
     }
     if let Some(hex) = value.strip_prefix('#') {
-        if hex.len() != 6 {
-            return Err(invalid("color hex must be six digits"));
-        }
+        let hex = match hex.len() {
+            3 => format!(
+                "{}{}{}{}{}{}",
+                &hex[0..1],
+                &hex[0..1],
+                &hex[1..2],
+                &hex[1..2],
+                &hex[2..3],
+                &hex[2..3]
+            ),
+            6 => hex.to_owned(),
+            _ => return Err(invalid("color hex must be three or six digits")),
+        };
         return Ok(Some([
             u8::from_str_radix(&hex[0..2], 16).map_err(|_| invalid("invalid color"))? as f32
                 / 255.0,

@@ -145,6 +145,10 @@ fn suppress_ops_in_object(
 }
 
 impl<'doc> PageHandle<'doc> {
+    pub(crate) fn measure_text(&self, text: &str, font: FontHandle, font_size: f32) -> Result<f32> {
+        self.doc.measure_text(text, font, font_size)
+    }
+
     /// Queues a single invisible text placement on this page.
     ///
     /// The text is rendered with PDF render mode 3 (`Tr 3`): it is not painted

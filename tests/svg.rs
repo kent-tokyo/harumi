@@ -64,3 +64,23 @@ fn applies_affine_transforms_to_shapes_and_text() {
     let document = Document::from_bytes(&bytes).expect("output should be a PDF");
     assert_eq!(document.page_count(), 1);
 }
+
+#[test]
+fn honors_text_anchor_and_dominant_baseline() {
+    let svg = br##"<svg width="80" height="80" viewBox="-20 -20 80 80">
+      <text x="0" y="0" font-size="12" text-anchor="middle" dominant-baseline="central" fill="#3050F8">H4N+</text>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("anchored text should convert");
+    let document = Document::from_bytes(&bytes).expect("output should be a PDF");
+    assert_eq!(document.page_count(), 1);
+}
+
+#[test]
+fn accepts_three_digit_hex_colors_for_fill_and_stroke() {
+    let svg = br##"<svg width="80" height="40">
+      <rect x="5" y="5" width="20" height="20" fill="#333" stroke="#abc"/>
+      <line x1="0" y1="30" x2="80" y2="30" stroke="#f0a"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("short SVG colors should convert");
+    assert!(Document::from_bytes(&bytes).is_ok());
+}
