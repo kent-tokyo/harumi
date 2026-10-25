@@ -48,6 +48,12 @@ Document::new((w, h))?;                   // blank 1-page PDF
 // Merge documents
 doc.merge_from(other)?;             // append other's pages to end
 
+// Structure audit and mutation evidence
+let before = doc.audit_structure()?;
+doc.remove_page(2)?;
+let report = doc.mutation_report(&before)?;
+assert_eq!(report.page_count_delta, -1);
+
 // Save
 doc.save("output.pdf")?;
 doc.save_to_bytes()?;   // in-memory variant

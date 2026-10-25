@@ -1,0 +1,12 @@
+{
+  "name": "structure-operations-v1",
+  "version": 1,
+  "command": "cargo test --test page_ops structure_audit_reports_page_mutation",
+  "checks": [
+    "page_count_delta",
+    "content_stream_count",
+    "page_tree_depth",
+    "mutation_report_after_snapshot"
+  ],
+  "comparison_policy": "Use the report to verify intended structural mutations. It is not a rendering or viewer-compatibility oracle."
+}

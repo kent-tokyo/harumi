@@ -139,6 +139,34 @@ pub struct PdfMetadata {
     pub creator: Option<String>,
 }
 
+/// A compact, renderer-independent snapshot of the PDF object structure.
+///
+/// Use this before and after page mutations to verify that the intended
+/// structure changed while unrelated page resources remained present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructureReport {
+    pub page_count: u32,
+    pub object_count: usize,
+    pub page_tree_depth: usize,
+    pub content_stream_count: usize,
+    pub font_count: usize,
+    pub image_count: usize,
+    pub outline_count: usize,
+}
+
+/// Difference between two [`StructureReport`] snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MutationReport {
+    pub before: StructureReport,
+    pub after: StructureReport,
+    pub page_count_delta: i64,
+    pub object_count_delta: i64,
+    pub content_stream_count_delta: i64,
+    pub font_count_delta: i64,
+    pub image_count_delta: i64,
+    pub outline_count_delta: i64,
+}
+
 /// The type of a PDF form field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {

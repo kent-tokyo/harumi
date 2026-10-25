@@ -9,8 +9,8 @@ pub use helpers::{
 pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
-    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, OverflowPolicy, PdfMetadata,
-    PlacementStatus, ReplaceOptions, TextFieldOptions, TextRun,
+    FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, MutationReport, OverflowPolicy,
+    PdfMetadata, PlacementStatus, ReplaceOptions, StructureReport, TextFieldOptions, TextRun,
 };
 
 #[cfg(feature = "draw")]
@@ -123,10 +123,164 @@ fn allocate_pdf_font_name(used: &mut HashSet<Vec<u8>>, font_idx: u32) -> Vec<u8>
     unreachable!("font resource name suffix range is finite")
 }
 
+fn resolve_dict<'a>(doc: &'a lopdf::Document, object: &'a Object) -> Option<&'a Dictionary> {
+    match object {
+        Object::Dictionary(dict) => Some(dict),
+        Object::Reference(id) => doc.get_object(*id).ok()?.as_dict().ok(),
+        _ => None,
+    }
+}
+
+fn count_content_streams(doc: &lopdf::Document, object: Option<&Object>) -> usize {
+    let Some(object) = object else { return 0 };
+    match object {
+        Object::Array(items) => items
+            .iter()
+            .map(|item| count_content_streams(doc, Some(item)))
+            .sum(),
+        Object::Reference(id) => count_content_streams(doc, doc.get_object(*id).ok()),
+        Object::Stream(_) => 1,
+        _ => 0,
+    }
+}
+
+fn collect_page_resource_ids(
+    doc: &lopdf::Document,
+    resources: Option<&Dictionary>,
+    font_ids: &mut HashSet<lopdf::ObjectId>,
+    image_ids: &mut HashSet<lopdf::ObjectId>,
+) {
+    let Some(resources) = resources else { return };
+    if let Ok(fonts) = resources.get(b"Font")
+        && let Some(fonts) = resolve_dict(doc, fonts)
+    {
+        for (_, object) in fonts.iter() {
+            if let Object::Reference(id) = object {
+                font_ids.insert(*id);
+            }
+        }
+    }
+    if let Ok(xobjects) = resources.get(b"XObject")
+        && let Some(xobjects) = resolve_dict(doc, xobjects)
+    {
+        for (_, object) in xobjects.iter() {
+            let Some(id) = object.as_reference().ok() else {
+                continue;
+            };
+            let Some(Object::Stream(stream)) = doc.get_object(id).ok() else {
+                continue;
+            };
+            if stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|value| value.as_name().ok())
+                == Some(b"Image")
+            {
+                image_ids.insert(id);
+            }
+        }
+    }
+}
+
+fn page_parent_depth(doc: &lopdf::Document, page: &Dictionary) -> Result<usize> {
+    let mut depth = 0;
+    let mut parent = page.get(b"Parent").ok();
+    while let Some(Object::Reference(id)) = parent {
+        depth += 1;
+        let parent_dict = doc.get_object(*id)?.as_dict()?;
+        parent = parent_dict.get(b"Parent").ok();
+    }
+    Ok(depth)
+}
+
+fn count_outline_items(doc: &lopdf::Document, object: &Object) -> usize {
+    let Some(dict) = resolve_dict(doc, object) else {
+        return 0;
+    };
+    let mut count = 0;
+    let mut next = dict.get(b"First").ok();
+    while let Some(Object::Reference(id)) = next {
+        count += 1;
+        let Some(item) = doc
+            .get_object(*id)
+            .ok()
+            .and_then(|object| object.as_dict().ok())
+        else {
+            break;
+        };
+        if let Ok(first) = item.get(b"First") {
+            count += count_outline_items(doc, first);
+        }
+        next = item.get(b"Next").ok();
+    }
+    count
+}
+
 #[cfg(feature = "draw")]
 use helpers::add_ext_gstate_to_resources;
 
 impl Document {
+    /// Audits the current PDF structure without rendering it.
+    ///
+    /// The report is intended for mutation contracts and diagnostics. Counts
+    /// are structural observations, not a guarantee that every viewer will
+    /// render the document identically.
+    pub fn audit_structure(&self) -> Result<StructureReport> {
+        let pages = self.inner.get_pages();
+        let mut content_stream_count = 0;
+        let mut font_ids = HashSet::new();
+        let mut image_ids = HashSet::new();
+        let mut page_tree_depth = 0;
+
+        for page_id in pages.values() {
+            let page = self.inner.get_object(*page_id)?.as_dict()?;
+            content_stream_count += count_content_streams(&self.inner, page.get(b"Contents").ok());
+            let resources = inherited_resources(&self.inner, *page_id);
+            collect_page_resource_ids(
+                &self.inner,
+                resources.as_ref(),
+                &mut font_ids,
+                &mut image_ids,
+            );
+            page_tree_depth = page_tree_depth.max(page_parent_depth(&self.inner, page)?);
+        }
+
+        let outline_count = self
+            .inner
+            .catalog()
+            .ok()
+            .and_then(|catalog| catalog.get(b"Outlines").ok())
+            .map(|object| count_outline_items(&self.inner, object))
+            .unwrap_or(0);
+
+        Ok(StructureReport {
+            page_count: pages.len() as u32,
+            object_count: self.inner.objects.len(),
+            page_tree_depth,
+            content_stream_count,
+            font_count: font_ids.len(),
+            image_count: image_ids.len(),
+            outline_count,
+        })
+    }
+
+    /// Compares the current structure with a snapshot from [`audit_structure`].
+    pub fn mutation_report(&self, before: &StructureReport) -> Result<MutationReport> {
+        let after = self.audit_structure()?;
+        Ok(MutationReport {
+            before: *before,
+            after,
+            page_count_delta: after.page_count as i64 - before.page_count as i64,
+            object_count_delta: after.object_count as i64 - before.object_count as i64,
+            content_stream_count_delta: after.content_stream_count as i64
+                - before.content_stream_count as i64,
+            font_count_delta: after.font_count as i64 - before.font_count as i64,
+            image_count_delta: after.image_count as i64 - before.image_count as i64,
+            outline_count_delta: after.outline_count as i64 - before.outline_count as i64,
+        })
+    }
+
     /// Loads a PDF from a file path.
     ///
     /// # Errors

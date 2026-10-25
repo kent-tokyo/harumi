@@ -22,6 +22,7 @@
 - 表、結合セル、ページ分割、ヘッダー・フッター、脚注、TOC、layout diagnostics
 - Poppler を使った固定 fixture の仕様・帳票検証と、比較用の機械可読 manifest
 - CJK/Latin 帳票の固定比較で、保存・再読込後のヘッダー・ページ番号フッター再利用
+- ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
 
 ## 現在の対応範囲
 
