@@ -561,8 +561,7 @@ fn rewrite_stream_preserve_font(
                             continue;
                         }
                     };
-                    let char_to_gid: HashMap<char, u16> =
-                        fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
+                    let char_to_gid = font_char_to_gid(fi);
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
@@ -611,8 +610,7 @@ fn rewrite_stream_preserve_font(
                         Some(fi) => fi,
                         None => continue,
                     };
-                    let char_to_gid: HashMap<char, u16> =
-                        fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
+                    let char_to_gid = font_char_to_gid(fi);
                     let font_name_str = String::from_utf8_lossy(&cur_font).into_owned();
                     for ch in r.new_text.chars() {
                         if !char_to_gid.contains_key(&ch) {
@@ -710,8 +708,7 @@ fn rewrite_stream_preserve_font(
                             continue;
                         }
                     };
-                    let char_to_gid: HashMap<char, u16> =
-                        fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
+                    let char_to_gid = font_char_to_gid(fi);
                     out.extend_from_slice(&bytes[last_copied..op.start]);
                     match role {
                         0 => {
@@ -763,8 +760,7 @@ fn rewrite_stream_preserve_font(
                         Some(fi) => fi,
                         None => continue,
                     };
-                    let char_to_gid: HashMap<char, u16> =
-                        fi.to_unicode.iter().map(|(&gid, &ch)| (ch, gid)).collect();
+                    let char_to_gid = font_char_to_gid(fi);
                     let font_name_str = String::from_utf8_lossy(&cur_font).into_owned();
                     for elem in &arr {
                         if let ArrElem::Str(b) = elem {
@@ -1398,6 +1394,13 @@ fn encode_chars_as_bytes(
         }
     }
     out
+}
+
+fn font_char_to_gid(font: &FontInfo) -> HashMap<char, u16> {
+    font.to_unicode
+        .iter()
+        .map(|(&gid, &ch)| (ch, gid))
+        .collect()
 }
 
 fn emit_tj_array_preserve(
