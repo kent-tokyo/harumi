@@ -4,8 +4,8 @@
 
 Current release: **1.23.4**. harumi reads existing PDFs, extracts positioned
 text, and writes translated or replaced text back into inferred regions. It also
-supports page operations, annotations, forms, vector drawing, images, and
-paginated HTML/report output.
+supports page operations, annotations, forms, vector drawing, images, SVG
+conversion, and paginated HTML/report output.
 
 [![crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)

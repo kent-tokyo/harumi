@@ -144,7 +144,7 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, tables, nested blocks, headers/footers, page footnotes, inline styling, fallback fonts, and widow/orphan controls |
 | `html` | `render_html_to_pdf` — HTML → PDF with shared Flow paragraph controls (enables `flow`) |
-| `svg` | `svg_to_pdf` — self-contained SVG subset to one vector PDF page (enables `draw`) |
+| `svg` | `svg_to_pdf` — self-contained SVG subset with paths, metadata, CSS colors, and `rgb()` (enables `draw`) |
 | `digital-signature` | `verify_signatures`, `add_signature_field`, `sign_document` |
 
 ---
@@ -172,7 +172,7 @@ NotoSansCJKkr-Regular.ttf  (Korean)
 
 ```
 harumi
-├── lopdf v0.42          — parse and modify existing PDF object graph
+├── lopdf v0.46          — parse and modify existing PDF object graph
 ├── skrifa                — OpenType metadata (bbox, units_per_em, ascender)
 └── [internal TTF subsetter] — pure-Rust TrueType subsetting (no external crates)
 ```
@@ -181,32 +181,12 @@ harumi
 may still bring it transitively; that residual dependency is outside harumi's
 font parsing path and is tracked through the `lopdf` dependency.
 
-Flow/HTML generation is a new-document typesetting path. It does not promise
-pixel-identical reproduction of an existing PDF. For translation overlays,
-text that intersects an image preserves the image and is reported as a Major
-`image_overlap` issue; background restoration and automatic relocation are not
-performed.
+Flow/HTML creates new documents and does not promise pixel-identical output.
+The SVG feature is a vector subset, not a browser renderer; it supports paths,
+curves, transforms, markers, CSS named colors, `rgb()`, and non-rendering
+`metadata`.
 
-Paragraph wrapping has a deterministic boundary subset: CJK and selected
-space-free scripts may break between characters; combining marks, emoji ZWJ
-sequences, no-break spaces, common numeric units, and a small kinsoku set stay
-together. Full UAX #14 line breaking, dictionary hyphenation, visual bidi/RTL
-shaping, and vertical reflow are not provided.
-
-Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
-collects all characters used across every page, subsets once per font, and writes everything
-in one pass.
-
-Extraction is best-effort for malformed or underspecified PDFs. In particular, a Type0/CIDFont
-without a usable `/ToUnicode` CMap may use an Identity-H/V fallback. Use
-`extract_text_runs_verbose()` when the distinction between decoded text and inferred text matters.
-The verbose API also reports `WarningKind::UnsupportedFontSubtype` when a font resource has a
-missing or unsupported `/Subtype`; text using that font is skipped rather than reported as
-successfully decoded. It reports `WarningKind::UnsupportedVerticalWriting` for Type0 fonts using
-`/Identity-V` as a boundary diagnostic. Basic `/DW2`/`/W2` vertical metrics and common 90°/270°
-placement are supported; complex vertical reflow and mixed composition remain best-effort.
-The `TextFragment` bounding box is axis-aligned and may require visual verification.
-
-`TextFragment::opacity` is the effective non-stroking alpha from `/ExtGState /ca` at the page or
-directly processed Form XObject level. Deeply nested XObjects and mixed per-glyph styles remain
-best-effort and should be checked with a renderer.
+Font subsetting is deferred until `save()`. Extraction is best-effort for
+malformed PDFs, missing `/ToUnicode`, deeply nested XObjects, complex vertical
+writing, and mixed per-glyph styles. Use the verbose extraction API to inspect
+warnings, and render output when fidelity matters.

@@ -6,25 +6,20 @@ extraction, and existing-PDF write-back are different jobs.
 
 ## Version snapshot
 
-Snapshot: **2026-10-25**. Refresh versions and rerun fixtures before using this
-as a benchmark.
+Snapshot: **2026-10-25**. This is a role guide, not a ranking. Pin versions and
+rerun fixtures before making benchmark claims.
 
 | Role | Reference | Boundary |
 |---|---|---|
-| Rendering/viewer editing | `pdfium-render 0.9.3` | Host Pdfium runtime and native deployment |
-| New reports | `printpdf 0.12.6`, `genpdf 0.2.0` | Document model and pagination |
-| Low-level object editing | `lopdf 0.42.0` | PDF object graph and streams |
-| Bulk extraction | `unpdf 0.17.0`, `pdf_oxide 0.3.77` | Text/Markdown extraction and broader lifecycle |
+| Rendering/viewer editing | `pdfium-render` | Host Pdfium runtime and native deployment |
+| New reports | `printpdf`, `genpdf` | Document model and pagination |
+| Low-level object editing | `lopdf` | PDF object graph and streams |
+| Bulk extraction | `unpdf`, `pdf_oxide` | Text/Markdown extraction and broader lifecycle |
 | Low-level PDF writing | `pdf-writer 0.15.0` | Typed construction of new PDF objects |
-| Existing-PDF CJK write-back | `harumi 1.23.0` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
+| Existing-PDF CJK write-back | `harumi 1.23.4` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
 
-Reference documentation: [pdfium-render](https://docs.rs/crate/pdfium-render/0.9.3),
-[printpdf](https://docs.rs/crate/printpdf/0.12.6),
-[genpdf](https://docs.rs/crate/genpdf/0.2.0),
-[lopdf](https://docs.rs/crate/lopdf/0.42.0),
-[unpdf](https://docs.rs/crate/unpdf/0.17.0),
-[pdf_oxide](https://docs.rs/crate/pdf_oxide/0.3.77), and
-[pdf-writer](https://docs.rs/crate/pdf-writer/0.15.0).
+Use the current releases when measuring. Version-pinned results belong in a
+fixture report, not in this role guide.
 
 ## Evaluation axes
 
@@ -65,5 +60,4 @@ collapsed into one score.
 - [`check-pdfium-render-fixture.sh`](../scripts/check-pdfium-render-fixture.sh)
   reproduces the renderer probe.
 
-These checks are bounded evidence, not universal proof of compatibility with
-every PDF producer or viewer.
+These checks are bounded evidence, not universal proof of compatibility.

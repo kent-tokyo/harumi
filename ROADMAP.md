@@ -29,7 +29,7 @@
 
 ## 現在の対応範囲
 
-v1.23.0 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
+v1.23.4 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
 基本的な HTML break semantics を対象とします。次の機能は未対応または
 best effort です。
 
@@ -38,6 +38,7 @@ best effort です。
 - 任意の block grouping と、完全な HTML/CSS 互換
 - Pdfium、Chrome、Acrobat と同一の pixel parity
 - 競合ライブラリの全 API の再実装
+- SVG の完全なブラウザ互換（対応範囲は `docs/API.md` を参照）
 
 ## 次の優先順位
 
@@ -51,9 +52,8 @@ Phase 52 の五領域を同一条件で比較できる状態にします。
 - bulk extraction / Markdown / JSON
 - 軽量 Pure Rust writer
 
-各領域で fixture、runner、artifact report、正しさの oracle、runtime boundary を
-固定します。速度・メモリ・成果物サイズは同じ入力と環境で測り、workflow fit と
-性能を混同しません。画像差分は診断情報として扱い、単一の総合点にはしません。
+fixture、runner、artifact report、正しさの oracle、runtime boundary を固定します。
+速度・メモリ・成果物サイズは同じ入力と環境で測り、用途適合度と混同しません。
 
 ### 2. 組版の境界を明確にする
 
@@ -72,8 +72,8 @@ best effort の範囲を保ちます。
 4. 大規模抽出の page batch、JSON/Markdown、警告、再開可能な失敗を検証する
 5. 最小 writer の CJK、画像、リンク、メタデータ、決定的 save/reload を検証する
 
-機能追加は、fixture と保存後の検証で再現できる欠陥に限定します。未知の PDF
-構造を暗黙に正規化せず、未対応部分は警告またはエラーとして返します。
+機能追加は、fixture と保存後の検証で再現できる欠陥に限定します。未知の構造は
+暗黙に正規化せず、未対応部分は警告またはエラーとして返します。
 
 ## 完了条件
 
@@ -81,7 +81,7 @@ Phase 52 の各領域は、次を満たした時点で完了とします。
 
 - 固定 fixture、実行コマンド、artifact report が保存されている
 - 抽出文字列・順序・座標・ページ geometry・構造保存を検証できる
-- renderer と native runtime のバージョン、feature flag、依存境界が明記されている
+- renderer/native runtime の版、feature flag、依存境界が明記されている
 - 同一条件の結果を再現でき、性能主張の対象 workload が明確である
 - README と API docs が実装済み範囲と non-goal に一致している
 
