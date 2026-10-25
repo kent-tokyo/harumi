@@ -9,6 +9,7 @@ paginated HTML/report output.
 
 [![crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
+[![codecov](https://codecov.io/gh/kent-tokyo/harumi/branch/master/graph/badge.svg)](https://codecov.io/gh/kent-tokyo/harumi)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://kent-tokyo.github.io/harumi/)
 
