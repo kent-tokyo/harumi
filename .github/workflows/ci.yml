@@ -74,6 +74,17 @@ jobs:
       - name: Reject native runtime dependencies from WASM graph
         run: bash scripts/check-wasm-deps.sh
 
+  svg-dependency-boundary:
+    name: SVG dependency boundary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Reject unmaintained font parser from SVG graph
+        run: bash scripts/check-svg-dependency-boundary.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
