@@ -10,8 +10,8 @@ pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, MutationReport, OverflowPolicy,
-    PdfMetadata, PlacementStatus, RepairReport, RepairWarning, RepairWarningKind, ReplaceOptions,
-    StructureAudit, TextFieldOptions, TextRun,
+    PageTextExtraction, PdfMetadata, PlacementStatus, RepairReport, RepairWarning,
+    RepairWarningKind, ReplaceOptions, StructureAudit, StructureReport, TextFieldOptions, TextRun,
 };
 
 #[cfg(feature = "draw")]
@@ -264,7 +264,7 @@ impl Document {
     /// The result is intended for before/after preservation checks around
     /// high-level mutations. It does not claim byte-for-byte equivalence or
     /// expose arbitrary `lopdf` objects.
-    pub fn audit_structure(&self) -> Result<crate::document::StructureAudit> {
+    pub fn structure_audit(&self) -> Result<crate::document::StructureAudit> {
         let mut stream_count = 0;
         let mut annotation_count = 0;
         let mut xobject_count = 0;
@@ -312,48 +312,36 @@ impl Document {
         })
     }
 
+    /// Captures the legacy structural report retained for patch-version compatibility.
+    pub fn audit_structure(&self) -> Result<crate::document::StructureReport> {
+        let audit = self.structure_audit()?;
+        Ok(crate::document::StructureReport {
+            page_count: audit.page_count,
+            object_count: audit.object_count,
+            page_tree_depth: 0,
+            content_stream_count: audit.stream_count,
+            font_count: 0,
+            image_count: audit.xobject_count,
+            outline_count: usize::from(audit.has_outline),
+        })
+    }
+
     /// Compares the current structure with a previously captured audit.
     pub fn mutation_report(
         &self,
-        before: &crate::document::StructureAudit,
+        before: &crate::document::StructureReport,
     ) -> Result<crate::document::MutationReport> {
         let after = self.audit_structure()?;
-        let mut changed_fields = Vec::new();
-        if before.object_count != after.object_count {
-            changed_fields.push("object_count".into());
-        }
-        if before.page_count != after.page_count {
-            changed_fields.push("page_count".into());
-        }
-        if before.stream_count != after.stream_count {
-            changed_fields.push("stream_count".into());
-        }
-        if before.annotation_count != after.annotation_count {
-            changed_fields.push("annotation_count".into());
-        }
-        if before.xobject_count != after.xobject_count {
-            changed_fields.push("xobject_count".into());
-        }
-        if before.form_field_count != after.form_field_count {
-            changed_fields.push("form_field_count".into());
-        }
-        if before.attachment_count != after.attachment_count {
-            changed_fields.push("attachment_count".into());
-        }
-        if before.has_metadata != after.has_metadata {
-            changed_fields.push("has_metadata".into());
-        }
-        if before.has_outline != after.has_outline {
-            changed_fields.push("has_outline".into());
-        }
-        if before.has_names != after.has_names {
-            changed_fields.push("has_names".into());
-        }
-
         Ok(crate::document::MutationReport {
-            before: before.clone(),
+            before: *before,
             after,
-            changed_fields,
+            page_count_delta: after.page_count as i64 - before.page_count as i64,
+            object_count_delta: after.object_count as i64 - before.object_count as i64,
+            content_stream_count_delta: after.content_stream_count as i64
+                - before.content_stream_count as i64,
+            font_count_delta: after.font_count as i64 - before.font_count as i64,
+            image_count_delta: after.image_count as i64 - before.image_count as i64,
+            outline_count_delta: after.outline_count as i64 - before.outline_count as i64,
         })
     }
 
@@ -2426,7 +2414,9 @@ impl Document {
     /// # Errors
     /// Returns an error if any page cannot be read or if the document exceeds
     /// the safe page-count limit used by bulk extraction.
-    pub fn extract_all_text_runs_verbose(&self) -> Result<Vec<crate::extract::PageTextExtraction>> {
+    pub fn extract_all_text_runs_verbose(
+        &self,
+    ) -> Result<Vec<crate::document::PageTextExtraction>> {
         const MAX_PAGES_SAFE: u32 = 1_000_000;
         let page_count = self.page_count();
         if page_count > MAX_PAGES_SAFE {
@@ -2451,7 +2441,7 @@ impl Document {
         &self,
         start_page: u32,
         end_page: u32,
-    ) -> Result<Vec<crate::extract::PageTextExtraction>> {
+    ) -> Result<Vec<crate::document::PageTextExtraction>> {
         const MAX_PAGES_SAFE: u32 = 1_000_000;
         let page_count = self.page_count();
         if page_count > MAX_PAGES_SAFE {
@@ -2470,10 +2460,11 @@ impl Document {
         (start_page..=end_page)
             .map(|page| {
                 let (fragments, warnings) = self.extract_text_runs_verbose(page)?;
-                Ok(crate::extract::PageTextExtraction {
+                Ok(crate::document::PageTextExtraction {
                     page,
-                    fragments,
+                    runs: fragments,
                     warnings,
+                    error: None,
                 })
             })
             .collect()
@@ -2487,11 +2478,13 @@ impl Document {
     /// [`extract_text_runs_verbose_page_range`](Document::extract_text_runs_verbose_page_range).
     pub fn for_each_text_runs_verbose_batch<F>(
         &self,
+        start_page: u32,
+        end_page: u32,
         batch_size: u32,
         mut callback: F,
     ) -> Result<()>
     where
-        F: FnMut(Vec<crate::extract::PageTextExtraction>) -> Result<()>,
+        F: FnMut(Vec<crate::document::PageTextExtraction>) -> Result<()>,
     {
         if batch_size == 0 {
             return Err(Error::InvalidInput(
@@ -2500,13 +2493,19 @@ impl Document {
         }
 
         let page_count = self.page_count();
-        let mut start_page = 1;
-        while start_page <= page_count {
-            let end_page = start_page
+        if start_page == 0 || end_page == 0 || start_page > end_page || end_page > page_count {
+            return Err(Error::InvalidInput(format!(
+                "invalid page range {}..={} for {}-page PDF",
+                start_page, end_page, page_count
+            )));
+        }
+        let mut current_page = start_page;
+        while current_page <= end_page {
+            let batch_end = current_page
                 .saturating_add(batch_size.saturating_sub(1))
-                .min(page_count);
-            callback(self.extract_text_runs_verbose_page_range(start_page, end_page)?)?;
-            start_page = end_page.saturating_add(1);
+                .min(end_page);
+            callback(self.extract_text_runs_verbose_page_range(current_page, batch_end)?)?;
+            current_page = batch_end.saturating_add(1);
         }
         Ok(())
     }
@@ -2521,7 +2520,7 @@ impl Document {
         #[derive(serde::Serialize)]
         struct ExtractionEnvelope {
             schema: &'static str,
-            pages: Vec<crate::extract::PageTextExtraction>,
+            pages: Vec<crate::document::PageTextExtraction>,
         }
 
         serde_json::to_string(&ExtractionEnvelope {

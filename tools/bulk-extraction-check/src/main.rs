@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let report = CorpusReport {
         corpus: "bulk-extraction-corpus-v1",
-        version: 1,
+        version: 2,
         tool: "harumi",
         inputs,
     };

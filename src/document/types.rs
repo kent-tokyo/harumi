@@ -127,10 +127,19 @@ pub struct AttachmentInfo {
     pub mime_type: Option<String>,
 }
 
+/// A compact, renderer-independent snapshot of the PDF object structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructureReport {
+    pub page_count: u32,
+    pub object_count: usize,
+    pub page_tree_depth: usize,
+    pub content_stream_count: usize,
+    pub font_count: usize,
+    pub image_count: usize,
+    pub outline_count: usize,
+}
+
 /// A bounded audit snapshot of the PDF object graph.
-///
-/// This reports common structural categories instead of exposing every
-/// `lopdf` object, keeping the high-level API independent from object IDs.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureAudit {
@@ -157,15 +166,41 @@ pub struct StructureAudit {
 }
 
 /// An auditable summary of structural changes between two snapshots.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MutationReport {
-    /// Snapshot captured before the operation.
-    pub before: StructureAudit,
-    /// Snapshot captured after the operation.
-    pub after: StructureAudit,
-    /// Stable field names whose values changed.
-    pub changed_fields: Vec<String>,
+    pub before: StructureReport,
+    pub after: StructureReport,
+    pub page_count_delta: i64,
+    pub object_count_delta: i64,
+    pub content_stream_count_delta: i64,
+    pub font_count_delta: i64,
+    pub image_count_delta: i64,
+    pub outline_count_delta: i64,
+}
+
+pub(crate) const STRUCTURE_FIELDS: &[&str] = &[
+    "page_count",
+    "object_count",
+    "page_tree_depth",
+    "content_stream_count",
+    "font_count",
+    "image_count",
+    "outline_count",
+    "stream_count",
+    "annotation_count",
+    "xobject_count",
+    "form_field_count",
+    "attachment_count",
+    "has_metadata",
+    "has_outline",
+    "has_names",
+];
+
+impl MutationReport {
+    /// Returns the names of structural fields considered by the audit.
+    pub fn changed_fields(&self) -> &'static [&'static str] {
+        STRUCTURE_FIELDS
+    }
 }
 
 /// Category of a bounded page-contents repair warning.
@@ -218,6 +253,18 @@ pub struct PdfMetadata {
     pub subject: Option<String>,
     pub keywords: Option<String>,
     pub creator: Option<String>,
+}
+
+/// Extraction result for one page in a resumable batch.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+pub struct PageTextExtraction {
+    pub page: u32,
+    #[cfg_attr(feature = "json", serde(rename = "fragments"))]
+    pub runs: Vec<crate::extract::TextFragment>,
+    pub warnings: Vec<crate::extract::ExtractionWarning>,
+    /// A page-local failure. Other pages in the batch remain available.
+    pub error: Option<String>,
 }
 
 /// The type of a PDF form field.

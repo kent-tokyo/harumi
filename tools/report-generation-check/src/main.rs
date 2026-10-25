@@ -363,7 +363,7 @@ fn dump_extraction_inputs(bytes: &[u8], backend: &str) -> Result<(), Box<dyn std
     for (page, page_id) in pdf.get_pages() {
         eprintln!(
             "page {page}: content={:?}",
-            String::from_utf8_lossy(&pdf.get_page_content(page_id)?)
+            String::from_utf8_lossy(&pdf.get_page_content(page_id))
         );
         for (name, font) in pdf.get_page_fonts(page_id)? {
             let subtype = font

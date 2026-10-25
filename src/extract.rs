@@ -217,23 +217,6 @@ pub struct ExtractionWarning {
     pub message: String,
 }
 
-/// Text fragments and non-fatal diagnostics for one page in a bulk extraction.
-///
-/// The page number is 1-based and empty pages are represented with empty
-/// vectors. Keeping warnings beside their page prevents a bulk caller from
-/// losing provenance when it retries or persists page batches.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "json", derive(serde::Serialize))]
-pub struct PageTextExtraction {
-    /// 1-based page number in the source document.
-    pub page: u32,
-    /// Position-aware text fragments in content-stream order.
-    pub fragments: Vec<TextFragment>,
-    /// Non-fatal issues encountered while decoding this page.
-    pub warnings: Vec<ExtractionWarning>,
-}
-
 // ---------------------------------------------------------------------------
 // Internal font data
 // ---------------------------------------------------------------------------

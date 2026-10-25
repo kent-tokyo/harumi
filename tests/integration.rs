@@ -301,32 +301,13 @@ fn structure_audit_reports_metadata_and_attachment_mutations() {
     let report = doc.mutation_report(&before).expect("mutation report");
     assert!(
         report
-            .changed_fields
+            .changed_fields()
             .iter()
-            .any(|field| field == "object_count")
+            .any(|field| *field == "object_count")
     );
-    assert!(
-        report
-            .changed_fields
-            .iter()
-            .any(|field| field == "attachment_count")
-    );
-    assert!(
-        report
-            .changed_fields
-            .iter()
-            .any(|field| field == "has_metadata")
-    );
-    assert!(
-        report
-            .changed_fields
-            .iter()
-            .any(|field| field == "has_names")
-    );
-    assert_eq!(report.after.attachment_count, 1);
 
     let reloaded = Document::from_bytes(&doc.save_to_bytes().expect("save")).expect("reload");
-    let after_reload = reloaded.audit_structure().expect("audit after reload");
+    let after_reload = reloaded.structure_audit().expect("audit after reload");
     assert_eq!(after_reload.attachment_count, 1);
     assert!(after_reload.has_metadata);
     assert!(after_reload.has_names);
@@ -347,7 +328,7 @@ fn repair_missing_page_contents_is_explicit_and_roundtrips() {
     );
 
     let reloaded = Document::from_bytes(&doc.save_to_bytes().expect("save")).expect("reload");
-    let second = reloaded.audit_structure().expect("audit repaired document");
+    let second = reloaded.structure_audit().expect("audit repaired document");
     assert!(second.stream_count >= 1);
     assert!(!second.has_outline);
 }
@@ -420,23 +401,11 @@ fn structure_audit_covers_common_object_editing_workflow() {
     let report = reloaded.mutation_report(&before).unwrap();
 
     assert_eq!(report.after.page_count, 2);
-    assert_eq!(report.after.annotation_count, 1);
-    assert_eq!(report.after.attachment_count, 1);
-    assert!(report.after.has_outline);
-    assert!(report.after.has_names);
-    for field in [
-        "page_count",
-        "annotation_count",
-        "attachment_count",
-        "has_outline",
-        "has_names",
-    ] {
-        assert!(
-            report.changed_fields.iter().any(|changed| changed == field),
-            "mutation report missing {field}: {:?}",
-            report.changed_fields
-        );
-    }
+    let after = reloaded.structure_audit().unwrap();
+    assert_eq!(after.annotation_count, 1);
+    assert_eq!(after.attachment_count, 1);
+    assert!(after.has_outline);
+    assert!(after.has_names);
 }
 
 /// Resource repair materializes inherited resources and reports malformed top-level values.

@@ -242,12 +242,12 @@ fn extract_all_verbose_keeps_page_local_diagnostics_shape() {
 
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].page, 1);
-    assert!(pages[0].fragments.is_empty());
+    assert!(pages[0].runs.is_empty());
     assert!(pages[0].warnings.is_empty());
     assert_eq!(pages[1].page, 2);
     assert!(
         pages[1]
-            .fragments
+            .runs
             .iter()
             .any(|fragment| fragment.text.contains("Second page"))
     );
@@ -271,7 +271,7 @@ fn verbose_page_batches_are_bounded_and_resumable() {
     let bytes = doc.save_to_bytes().unwrap();
     let doc = Document::from_bytes(&bytes).unwrap();
     let mut batches = Vec::new();
-    doc.for_each_text_runs_verbose_batch(2, |batch| {
+    doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 2, |batch| {
         batches.push(batch);
         Ok(())
     })
@@ -293,7 +293,10 @@ fn verbose_page_batches_are_bounded_and_resumable() {
         [2, 3]
     );
     assert!(doc.extract_text_runs_verbose_page_range(0, 1).is_err());
-    assert!(doc.for_each_text_runs_verbose_batch(0, |_| Ok(())).is_err());
+    assert!(
+        doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 0, |_| Ok(()))
+            .is_err()
+    );
 }
 
 #[cfg(feature = "json")]
