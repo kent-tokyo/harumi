@@ -43,7 +43,7 @@ For in-memory output, use `save_to_bytes()`. For positioned extraction, use
 ```toml
 [dependencies]
 harumi = "1"
-# Optional: draw, image, ocr, flow, html, digital-signature
+# Optional: draw, image, svg, ocr, flow, html, digital-signature
 ```
 
 The default build is pure Rust and WASM-compatible. `pdfium-render` is only an

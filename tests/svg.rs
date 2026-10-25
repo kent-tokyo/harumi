@@ -1,0 +1,35 @@
+#![cfg(feature = "svg")]
+
+use harumi::{Document, svg_to_pdf};
+
+const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
+
+#[test]
+fn converts_vector_chemistry_subset_to_one_page() {
+    let svg = br##"<svg width="240" height="120" viewBox="0 0 240 120">
+      <g transform="translate(10 10)" stroke="#111111" fill="none" stroke-width="2">
+        <line x1="10" y1="40" x2="80" y2="40" stroke-dasharray="4 2"/>
+        <polygon points="80,40 70,34 70,46" fill="#111111" marker-end="url(#arrow)"/>
+        <circle cx="40" cy="80" r="12" fill="#ffcc00" stroke="#111111"/>
+      </g>
+      <text x="100" y="70" font-size="16" fill="#0000ff">NH4+</text>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("SVG should convert");
+    let document = Document::from_bytes(&bytes).expect("output should be a PDF");
+    assert_eq!(document.page_count(), 1);
+    assert!(bytes.windows(2).any(|window| window == b" m"));
+    assert!(bytes.windows(2).any(|window| window == b" l"));
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_svg() {
+    let malformed = svg_to_pdf(b"<svg>", FONT).expect_err("malformed SVG must fail");
+    assert!(malformed.to_string().contains("malformed SVG"));
+
+    let unsupported = svg_to_pdf(
+        br#"<svg width="10" height="10"><image href="x"/></svg>"#,
+        FONT,
+    )
+    .expect_err("unsupported SVG element must fail");
+    assert!(unsupported.to_string().contains("unsupported SVG element"));
+}

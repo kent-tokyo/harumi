@@ -8,6 +8,9 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 ## Unreleased
 
+- Add optional pure-Rust `svg_to_pdf` conversion for the supported chemical
+  drawing subset, including vector shapes, text, transforms, opacity, dashes,
+  and arrowheads.
 - Preserve inherited page `/Resources` during repair instead of replacing a
   valid parent resource dictionary with an empty one.
 - Replace direct `ttf-parser` usage with maintained `skrifa` font metadata APIs;
