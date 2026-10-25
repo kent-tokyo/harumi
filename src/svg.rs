@@ -217,6 +217,12 @@ fn render_node(
     parent: Style,
     ctx: &mut Context<'_, '_>,
 ) -> Result<()> {
+    // Metadata is descriptive XML, not a rendered SVG element.  Return before
+    // parsing styles or transforms so arbitrary application-specific children
+    // (for example Chematic's <smiles>) cannot affect rendering.
+    if node.tag_name().name() == "metadata" {
+        return Ok(());
+    }
     let style = style_for(node, parent)?;
     let transform = transform.then(parse_transform(node.attribute("transform"))?);
     match node.tag_name().name() {
@@ -1229,10 +1235,23 @@ fn parse_length(raw: &str) -> Option<f32> {
 }
 fn parse_color(raw: &str) -> Result<Option<[f32; 3]>> {
     let value = raw.trim();
-    if value == "none" {
+    let normalized = value.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "none" | "transparent") {
         return Ok(None);
     }
-    if let Some(hex) = value.strip_prefix('#') {
+    if let Some(rgb) = normalized.strip_prefix("rgb(")
+        && let Some(rgb) = rgb.strip_suffix(')')
+    {
+        let channels = rgb
+            .split(',')
+            .map(parse_rgb_channel)
+            .collect::<Result<Vec<_>>>()?;
+        if channels.len() != 3 {
+            return Err(invalid("rgb() must contain three channels"));
+        }
+        return Ok(Some([channels[0], channels[1], channels[2]]));
+    }
+    if let Some(hex) = normalized.strip_prefix('#') {
         let hex = match hex.len() {
             3 => format!(
                 "{}{}{}{}{}{}",
@@ -1255,15 +1274,176 @@ fn parse_color(raw: &str) -> Result<Option<[f32; 3]>> {
                 / 255.0,
         ]));
     }
-    let named = match value {
-        "black" => [0.0, 0.0, 0.0],
-        "white" => [1.0, 1.0, 1.0],
-        "red" => [1.0, 0.0, 0.0],
-        "green" => [0.0, 0.5, 0.0],
-        "blue" => [0.0, 0.0, 1.0],
-        _ => return Err(invalid(format!("unsupported color: {value}"))),
-    };
-    Ok(Some(named))
+    css_named_color(&normalized)
+        .map(|rgb| {
+            Some([
+                rgb[0] as f32 / 255.0,
+                rgb[1] as f32 / 255.0,
+                rgb[2] as f32 / 255.0,
+            ])
+        })
+        .ok_or_else(|| invalid(format!("unsupported color: {value}")))
+}
+
+fn parse_rgb_channel(raw: &str) -> Result<f32> {
+    let raw = raw.trim();
+    if let Some(percent) = raw.strip_suffix('%') {
+        let value = percent
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| invalid(format!("invalid rgb channel: {raw}")))?;
+        if !(0.0..=100.0).contains(&value) {
+            return Err(invalid("rgb percentage must be between 0 and 100"));
+        }
+        return Ok(value / 100.0);
+    }
+    let value = raw
+        .parse::<f32>()
+        .map_err(|_| invalid(format!("invalid rgb channel: {raw}")))?;
+    if !(0.0..=255.0).contains(&value) {
+        return Err(invalid("rgb channel must be between 0 and 255"));
+    }
+    Ok(value / 255.0)
+}
+
+fn css_named_color(name: &str) -> Option<[u8; 3]> {
+    // CSS Color named colors. Keep this table local so SVG support
+    // remains dependency-free and works in WASM builds.
+    const COLORS: &[(&str, [u8; 3])] = &[
+        ("black", [0, 0, 0]),
+        ("silver", [192, 192, 192]),
+        ("gray", [128, 128, 128]),
+        ("grey", [128, 128, 128]),
+        ("white", [255, 255, 255]),
+        ("maroon", [128, 0, 0]),
+        ("red", [255, 0, 0]),
+        ("purple", [128, 0, 128]),
+        ("fuchsia", [255, 0, 255]),
+        ("magenta", [255, 0, 255]),
+        ("green", [0, 128, 0]),
+        ("lime", [0, 255, 0]),
+        ("olive", [128, 128, 0]),
+        ("yellow", [255, 255, 0]),
+        ("navy", [0, 0, 128]),
+        ("blue", [0, 0, 255]),
+        ("teal", [0, 128, 128]),
+        ("aqua", [0, 255, 255]),
+        ("cyan", [0, 255, 255]),
+        ("orange", [255, 165, 0]),
+        ("aliceblue", [240, 248, 255]),
+        ("antiquewhite", [250, 235, 215]),
+        ("aquamarine", [127, 255, 212]),
+        ("azure", [240, 255, 255]),
+        ("beige", [245, 245, 220]),
+        ("bisque", [255, 228, 196]),
+        ("blanchedalmond", [255, 235, 205]),
+        ("brown", [165, 42, 42]),
+        ("burlywood", [222, 184, 135]),
+        ("cadetblue", [95, 158, 160]),
+        ("chartreuse", [127, 255, 0]),
+        ("chocolate", [210, 105, 30]),
+        ("coral", [255, 127, 80]),
+        ("crimson", [220, 20, 60]),
+        ("cornflowerblue", [100, 149, 237]),
+        ("cornsilk", [255, 248, 220]),
+        ("darkblue", [0, 0, 139]),
+        ("darkcyan", [0, 139, 139]),
+        ("darkgoldenrod", [184, 134, 11]),
+        ("darkgray", [169, 169, 169]),
+        ("darkgrey", [169, 169, 169]),
+        ("darkgreen", [0, 100, 0]),
+        ("darkkhaki", [189, 183, 107]),
+        ("darkmagenta", [139, 0, 139]),
+        ("darkolivegreen", [85, 107, 47]),
+        ("darkorange", [255, 140, 0]),
+        ("darkorchid", [153, 50, 204]),
+        ("darkred", [139, 0, 0]),
+        ("darksalmon", [233, 150, 122]),
+        ("darkseagreen", [143, 188, 143]),
+        ("darkslateblue", [72, 61, 139]),
+        ("darkslategray", [47, 79, 79]),
+        ("darkslategrey", [47, 79, 79]),
+        ("darkturquoise", [0, 206, 209]),
+        ("darkviolet", [148, 0, 211]),
+        ("deeppink", [255, 20, 147]),
+        ("deepskyblue", [0, 191, 255]),
+        ("dimgray", [105, 105, 105]),
+        ("dimgrey", [105, 105, 105]),
+        ("dodgerblue", [30, 144, 255]),
+        ("gold", [255, 215, 0]),
+        ("goldenrod", [218, 165, 32]),
+        ("greenyellow", [173, 255, 47]),
+        ("honeydew", [240, 255, 240]),
+        ("indigo", [75, 0, 130]),
+        ("ivory", [255, 255, 240]),
+        ("khaki", [240, 230, 140]),
+        ("lavender", [230, 230, 250]),
+        ("lightblue", [173, 216, 230]),
+        ("lightcoral", [240, 128, 128]),
+        ("lightcyan", [224, 255, 255]),
+        ("lightgray", [211, 211, 211]),
+        ("lightgrey", [211, 211, 211]),
+        ("lightgreen", [144, 238, 144]),
+        ("lightpink", [255, 182, 193]),
+        ("lightsalmon", [255, 160, 122]),
+        ("lightseagreen", [32, 178, 170]),
+        ("lightskyblue", [135, 206, 250]),
+        ("lightslategray", [119, 136, 153]),
+        ("lightslategrey", [119, 136, 153]),
+        ("lightsteelblue", [176, 196, 222]),
+        ("lightyellow", [255, 255, 224]),
+        ("limegreen", [50, 205, 50]),
+        ("linen", [250, 240, 230]),
+        ("mediumblue", [0, 0, 205]),
+        ("mediumpurple", [147, 112, 219]),
+        ("mediumseagreen", [60, 179, 113]),
+        ("mediumslateblue", [123, 104, 238]),
+        ("mediumspringgreen", [0, 250, 154]),
+        ("mediumturquoise", [72, 209, 204]),
+        ("mediumvioletred", [199, 21, 133]),
+        ("midnightblue", [25, 25, 112]),
+        ("mintcream", [245, 255, 250]),
+        ("mistyrose", [255, 228, 225]),
+        ("moccasin", [255, 228, 181]),
+        ("navajowhite", [255, 222, 173]),
+        ("oldlace", [253, 245, 230]),
+        ("olivedrab", [107, 142, 35]),
+        ("orangered", [255, 69, 0]),
+        ("orchid", [218, 112, 214]),
+        ("palegreen", [152, 251, 152]),
+        ("paleturquoise", [175, 238, 238]),
+        ("palevioletred", [219, 112, 147]),
+        ("papayawhip", [255, 239, 213]),
+        ("peachpuff", [255, 218, 185]),
+        ("pink", [255, 192, 203]),
+        ("plum", [221, 160, 221]),
+        ("powderblue", [176, 224, 230]),
+        ("rosybrown", [188, 143, 143]),
+        ("royalblue", [65, 105, 225]),
+        ("salmon", [250, 128, 114]),
+        ("sandybrown", [244, 164, 96]),
+        ("seagreen", [46, 139, 87]),
+        ("seashell", [255, 245, 238]),
+        ("sienna", [160, 82, 45]),
+        ("skyblue", [135, 206, 235]),
+        ("slateblue", [106, 90, 205]),
+        ("slategray", [112, 128, 144]),
+        ("slategrey", [112, 128, 144]),
+        ("snow", [255, 250, 250]),
+        ("springgreen", [0, 255, 127]),
+        ("steelblue", [70, 130, 180]),
+        ("tan", [210, 180, 140]),
+        ("tomato", [255, 99, 71]),
+        ("turquoise", [64, 224, 208]),
+        ("violet", [238, 130, 238]),
+        ("wheat", [245, 222, 179]),
+        ("whitesmoke", [245, 245, 245]),
+        ("yellowgreen", [154, 205, 50]),
+    ];
+    COLORS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, rgb)| *rgb)
 }
 fn attr(node: Node<'_, '_>, name: &str) -> Result<f32> {
     node.attribute(name)

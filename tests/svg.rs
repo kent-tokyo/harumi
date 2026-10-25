@@ -35,6 +35,21 @@ fn rejects_malformed_and_unsupported_svg() {
 }
 
 #[test]
+fn ignores_metadata_subtrees_during_rendering() {
+    let svg = br#"<svg width="80" height="40">
+      <metadata><smiles>CCO</smiles><unsupported data="anything"/></metadata>
+      <line x1="10" y1="20" x2="70" y2="20" stroke="black"/>
+    </svg>"#;
+    let bytes = svg_to_pdf(svg, FONT).expect("metadata must not affect conversion");
+    assert_eq!(
+        Document::from_bytes(&bytes)
+            .expect("output should be a PDF")
+            .page_count(),
+        1
+    );
+}
+
+#[test]
 fn supports_horizontal_vertical_closed_paths_and_relative_numbers() {
     let svg = br##"<svg width="100" height="100">
       <path d="M 10 10 H 90 V 90 h -80 z" fill="#00aa00"/>
@@ -99,6 +114,23 @@ fn accepts_three_digit_hex_colors_for_fill_and_stroke() {
     </svg>"##;
     let bytes = svg_to_pdf(svg, FONT).expect("short SVG colors should convert");
     assert!(Document::from_bytes(&bytes).is_ok());
+}
+
+#[test]
+fn accepts_css_named_and_rgb_colors() {
+    let svg = br#"<svg width="80" height="40">
+      <rect x="0" y="0" width="20" height="20" fill="yellow"/>
+      <rect x="20" y="0" width="20" height="20" fill="rgb(255, 165, 0)"/>
+      <line x1="0" y1="30" x2="80" y2="30" stroke="rgb(0%, 50%, 100%)"/>
+    </svg>"#;
+    let bytes = svg_to_pdf(svg, FONT).expect("CSS colors should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+    assert!(content.contains("1.0000 1.0000 0.0000 rg"));
+    assert!(content.contains("1.0000 0.6471 0.0000 rg"));
+    assert!(content.contains("0.0000 0.5000 1.0000 RG"));
 }
 
 #[test]
