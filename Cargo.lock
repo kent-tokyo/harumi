@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "harumi"
-version = "1.23.1"
+version = "1.23.2"
 dependencies = [
  "aes",
  "axum",
