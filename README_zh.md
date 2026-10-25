@@ -5,7 +5,7 @@
 harumi 从现有 PDF 提取文本和坐标，再写回译文、替换文本或 OCR 搜索层。它会自动
 处理 CJK 字体、ToUnicode CMap、字体子集和布局诊断。它不是 OCR 引擎，也不是 PDF 查看器。
 
-当前版本为 **v1.23.7**。
+当前版本为 **v1.23.8**。
 
 [English](README.md) | [日本語](README_ja.md) | [한국어](README_kr.md)
 

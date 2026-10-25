@@ -6,7 +6,7 @@ harumiは既存PDFから文字と座標を抽出し、翻訳文・置換文・OC
 書き戻します。CJKフォント、ToUnicode CMap、サブセット化、レイアウト診断を
 自動処理します。OCRエンジンやPDFビューアではありません。
 
-現在のリリースは **v1.23.7** です。
+現在のリリースは **v1.23.8** です。
 
 [![crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
