@@ -519,14 +519,7 @@ fn rewrite_stream_preserve_font(
 
     // Pre-compute cross-op matches.
     let cross_op = find_cross_op_matches_preserve(&ops, replacements, existing_fonts);
-    let mut op_role: HashMap<usize, (usize, u8)> = HashMap::new();
-    for (co_idx, co) in cross_op.iter().enumerate() {
-        op_role.insert(co.first_op, (co_idx, 0));
-        for mid in co.first_op + 1..co.last_op {
-            op_role.insert(mid, (co_idx, 1));
-        }
-        op_role.insert(co.last_op, (co_idx, 2));
-    }
+    let op_role = build_cross_op_roles(&cross_op);
 
     let mut in_bt = false;
     let mut cur_font: Vec<u8> = Vec::new();
@@ -834,14 +827,7 @@ pub(crate) fn rewrite_content_stream(
     // Pre-compute cross-op matches (first_op != last_op).
     let cross_op = find_cross_op_matches(&ops, replacements, existing_fonts);
     // Map each op_idx to (cross_op index, role: 0=first 1=middle 2=last).
-    let mut op_role: HashMap<usize, (usize, u8)> = HashMap::new();
-    for (co_idx, co) in cross_op.iter().enumerate() {
-        op_role.insert(co.first_op, (co_idx, 0));
-        for mid in co.first_op + 1..co.last_op {
-            op_role.insert(mid, (co_idx, 1));
-        }
-        op_role.insert(co.last_op, (co_idx, 2));
-    }
+    let op_role = build_cross_op_roles(&cross_op);
 
     // Pre-compute Tz scale for each cross-op match.
     // Tz compresses/expands the replacement text so it occupies the same horizontal
@@ -1513,6 +1499,21 @@ struct CrossOpMatch {
     orig_width: f32,
     font_size: f32,
     font_name: Vec<u8>,
+}
+
+/// Convert cross-operation matches into the roles consumed by the stream
+/// rewriter. Keeping this indexing step separate from matching prevents the
+/// rewrite loop from also owning match bookkeeping.
+fn build_cross_op_roles(matches: &[CrossOpMatch]) -> HashMap<usize, (usize, u8)> {
+    let mut roles = HashMap::new();
+    for (match_index, matched) in matches.iter().enumerate() {
+        roles.insert(matched.first_op, (match_index, 0));
+        for op_index in matched.first_op + 1..matched.last_op {
+            roles.insert(op_index, (match_index, 1));
+        }
+        roles.insert(matched.last_op, (match_index, 2));
+    }
+    roles
 }
 
 /// A replacement match that spans multiple BT/ET blocks (Chrome/Skia Type3 pattern:

@@ -4585,6 +4585,54 @@ struct ParseCarryState {
     text_rise: f32,
 }
 
+struct TextShowGeometry {
+    ctm: [f32; 6],
+    scale: f32,
+    x_font_size: f32,
+    tm_ox: Option<f32>,
+    tm_oy: Option<f32>,
+    tm_xs: Option<f32>,
+    tm_lm_ox: Option<f32>,
+    tm_lm_oy: Option<f32>,
+}
+
+impl TextShowGeometry {
+    fn new(
+        state: &ParseCarryState,
+        tm_origin_set: bool,
+        tm_x_scale: f32,
+        tm_lm_x: f32,
+        tm_lm_y: f32,
+        tf_font_size: f32,
+        horizontal_scale: f32,
+    ) -> Self {
+        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+        let scale = ctm_scale(ctm);
+        let (tm_ox, tm_oy) = if tm_origin_set {
+            let (x, y) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
+            (Some(x), Some(y))
+        } else {
+            (None, None)
+        };
+        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
+            let (x, y) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
+            (Some(x), Some(y))
+        } else {
+            (None, None)
+        };
+        Self {
+            ctm,
+            scale,
+            x_font_size: tf_font_size * tm_x_scale * horizontal_scale * scale,
+            tm_ox,
+            tm_oy,
+            tm_xs: tm_origin_set.then_some(tm_x_scale),
+            tm_lm_ox,
+            tm_lm_oy,
+        }
+    }
+}
+
 impl Default for ParseCarryState {
     fn default() -> Self {
         Self {
@@ -4820,83 +4868,8 @@ fn parse_content_stream(
                     }
                     stack.clear();
                 }
-                b"rg" => {
-                    let b_val = stack.pop();
-                    let g_val = stack.pop();
-                    let r_val = stack.pop();
-                    if let (
-                        Some((Token::Number(bv), _)),
-                        Some((Token::Number(gv), _)),
-                        Some((Token::Number(rv), _)),
-                    ) = (b_val, g_val, r_val)
-                    {
-                        state.cur_color = [rv, gv, bv];
-                    }
-                    stack.clear();
-                }
-                b"g" => {
-                    if let Some((Token::Number(gray), _)) = stack.pop() {
-                        state.cur_color = [gray, gray, gray];
-                    }
-                    stack.clear();
-                }
-                b"q" => {
-                    state
-                        .ctm_stack
-                        .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
-                    state.opacity_stack.push(state.cur_opacity);
-                    stack.clear();
-                }
-                b"Q" => {
-                    if state.ctm_stack.len() > 1 {
-                        state.ctm_stack.pop();
-                    }
-                    if let Some(opacity) = state.opacity_stack.pop() {
-                        state.cur_opacity = opacity;
-                    }
-                    stack.clear();
-                }
-                b"gs" => {
-                    if let Some((Token::Name(name), _)) = stack.pop()
-                        && let Some(opacity) = extgstates.get(&name)
-                    {
-                        state.cur_opacity = *opacity;
-                    }
-                    stack.clear();
-                }
-                b"Do" => {
-                    let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
-                    state.ctm = ctm;
-                    // Record the XObject name (top of stack) paired with the CTM active
-                    // at this invocation so extract_text_from_xobjects() can apply the
-                    // correct per-Do CTM rather than the last one in the stream.
-                    if let Some((Token::Name(name), _)) = stack.last() {
-                        state.do_ctm_map.push((name.clone(), ctm));
-                    }
-                    stack.clear();
-                }
-                b"cm" => {
-                    // Stack layout (bottom→top): a b c d e f  then  cm
-                    let fv = stack.pop();
-                    let ev = stack.pop();
-                    let dv = stack.pop();
-                    let cv = stack.pop();
-                    let bv = stack.pop();
-                    let av = stack.pop();
-                    if let (
-                        Some((Token::Number(f), _)),
-                        Some((Token::Number(e), _)),
-                        Some((Token::Number(d), _)),
-                        Some((Token::Number(c), _)),
-                        Some((Token::Number(b), _)),
-                        Some((Token::Number(a), _)),
-                    ) = (fv, ev, dv, cv, bv, av)
-                    {
-                        let mat = [a, b, c, d, e, f];
-                        let top = state.ctm_stack.last_mut().unwrap();
-                        *top = multiply_ctm(*top, mat);
-                    }
-                    stack.clear();
+                b"rg" | b"g" | b"q" | b"Q" | b"gs" | b"Do" | b"cm" => {
+                    handle_graphics_operator(kw.as_slice(), &mut stack, state, extgstates);
                 }
                 b"Tj" if in_bt => {
                     let op_start = Some(tok_pos);
@@ -4978,26 +4951,18 @@ fn parse_content_stream(
                     let op_start = Some(tok_pos);
                     let op_end = Some(tok_pos + 2); // "TJ" is 2 bytes
                     if let Some((Token::Array(items), _)) = stack.pop() {
-                        let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
-                        let scale = ctm_scale(ctm);
-                        let (tm_ox, tm_oy) = if tm_origin_set {
-                            let (ox, oy) = apply_ctm(ctm, state.tm_origin_x, state.tm_origin_y);
-                            (Some(ox), Some(oy))
-                        } else {
-                            (None, None)
-                        };
-                        let tm_xs = if tm_origin_set {
-                            Some(tm_x_scale)
-                        } else {
-                            None
-                        };
-                        let (tm_lm_ox, tm_lm_oy) = if tm_origin_set {
-                            let (lx, ly) = apply_ctm(ctm, tm_lm_x, tm_lm_y);
-                            (Some(lx), Some(ly))
-                        } else {
-                            (None, None)
-                        };
-                        let x_font_size = tf_font_size * tm_x_scale * horizontal_scale * scale;
+                        let geometry = TextShowGeometry::new(
+                            state,
+                            tm_origin_set,
+                            tm_x_scale,
+                            tm_lm_x,
+                            tm_lm_y,
+                            tf_font_size,
+                            horizontal_scale,
+                        );
+                        let ctm = geometry.ctm;
+                        let scale = geometry.scale;
+                        let x_font_size = geometry.x_font_size;
                         let mut cur_x = x; // local-space cursor
                         for item in items {
                             match item {
@@ -5023,11 +4988,11 @@ fn parse_content_stream(
                                         op_start,
                                         op_end,
                                         xobj_id,
-                                        tm_ox,
-                                        tm_oy,
-                                        tm_xs,
-                                        tm_lm_ox,
-                                        tm_lm_oy,
+                                        geometry.tm_ox,
+                                        geometry.tm_oy,
+                                        geometry.tm_xs,
+                                        geometry.tm_lm_ox,
+                                        geometry.tm_lm_oy,
                                     ) {
                                         let local_advance = if scale > 0.0 {
                                             frag.width / scale
@@ -5093,6 +5058,88 @@ fn parse_content_stream(
     state.word_spacing = word_spacing;
     state.horizontal_scale = horizontal_scale;
     state.text_rise = text_rise;
+}
+
+/// Handle graphics-state and resource operators independently from text-state
+/// parsing. Content streams commonly interleave these operators with text, so
+/// keeping the state mutations in one small dispatcher makes the main parser
+/// easier to audit without changing PDF operator order semantics.
+fn handle_graphics_operator(
+    keyword: &[u8],
+    stack: &mut Vec<(Token, usize)>,
+    state: &mut ParseCarryState,
+    extgstates: &HashMap<Vec<u8>, f32>,
+) {
+    match keyword {
+        b"rg" => {
+            let b_val = stack.pop();
+            let g_val = stack.pop();
+            let r_val = stack.pop();
+            if let (
+                Some((Token::Number(bv), _)),
+                Some((Token::Number(gv), _)),
+                Some((Token::Number(rv), _)),
+            ) = (b_val, g_val, r_val)
+            {
+                state.cur_color = [rv, gv, bv];
+            }
+        }
+        b"g" => {
+            if let Some((Token::Number(gray), _)) = stack.pop() {
+                state.cur_color = [gray, gray, gray];
+            }
+        }
+        b"q" => {
+            state
+                .ctm_stack
+                .push(*state.ctm_stack.last().unwrap_or(&IDENTITY_CTM));
+            state.opacity_stack.push(state.cur_opacity);
+        }
+        b"Q" => {
+            if state.ctm_stack.len() > 1 {
+                state.ctm_stack.pop();
+            }
+            if let Some(opacity) = state.opacity_stack.pop() {
+                state.cur_opacity = opacity;
+            }
+        }
+        b"gs" => {
+            if let Some((Token::Name(name), _)) = stack.pop()
+                && let Some(opacity) = extgstates.get(&name)
+            {
+                state.cur_opacity = *opacity;
+            }
+        }
+        b"Do" => {
+            let ctm = *state.ctm_stack.last().unwrap_or(&IDENTITY_CTM);
+            state.ctm = ctm;
+            if let Some((Token::Name(name), _)) = stack.last() {
+                state.do_ctm_map.push((name.clone(), ctm));
+            }
+        }
+        b"cm" => {
+            let fv = stack.pop();
+            let ev = stack.pop();
+            let dv = stack.pop();
+            let cv = stack.pop();
+            let bv = stack.pop();
+            let av = stack.pop();
+            if let (
+                Some((Token::Number(f), _)),
+                Some((Token::Number(e), _)),
+                Some((Token::Number(d), _)),
+                Some((Token::Number(c), _)),
+                Some((Token::Number(b), _)),
+                Some((Token::Number(a), _)),
+            ) = (fv, ev, dv, cv, bv, av)
+            {
+                let top = state.ctm_stack.last_mut().unwrap();
+                *top = multiply_ctm(*top, [a, b, c, d, e, f]);
+            }
+        }
+        _ => unreachable!("graphics operator dispatcher received {keyword:?}"),
+    }
+    stack.clear();
 }
 
 #[allow(clippy::too_many_arguments)] // All args are logically required; a ctx struct would add ceremony
@@ -6221,11 +6268,7 @@ pub fn extract_layout_regions(
     }
 
     // ---- 1. Visible, sorted fragments -----------------------------------------
-    let visible: Vec<TextFragment> = fragments
-        .iter()
-        .filter(|f| !f.invisible && !f.text.trim().is_empty() && f.font_size.is_finite())
-        .cloned()
-        .collect();
+    let visible = visible_layout_fragments(fragments);
     if visible.is_empty() {
         return vec![];
     }
@@ -6252,17 +6295,7 @@ pub fn extract_layout_regions(
     }
 
     // ---- 4. Median font size for heading classification ----------------------
-    let mut font_sizes: Vec<f32> = visible
-        .iter()
-        .map(|f| f.font_size)
-        .filter(|&fs| (4.0_f32..=48.0).contains(&fs))
-        .collect();
-    font_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median_fs = if font_sizes.is_empty() {
-        10.0_f32
-    } else {
-        font_sizes[font_sizes.len() / 2]
-    };
+    let median_fs = median_layout_font_size(&visible);
 
     // ---- 5. Row-top map (row_idx → max ascender y in that row) ---------------
     let mut row_top_map: std::collections::BTreeMap<usize, f32> = std::collections::BTreeMap::new();
@@ -6410,6 +6443,27 @@ pub fn extract_layout_regions(
     // Sort by (row asc, col asc) — stable reading order
     regions.sort_by_key(|r| (r.row.unwrap_or(usize::MAX), r.col.unwrap_or(usize::MAX)));
     regions
+}
+
+fn visible_layout_fragments(fragments: &[TextFragment]) -> Vec<TextFragment> {
+    fragments
+        .iter()
+        .filter(|f| !f.invisible && !f.text.trim().is_empty() && f.font_size.is_finite())
+        .cloned()
+        .collect()
+}
+
+fn median_layout_font_size(fragments: &[TextFragment]) -> f32 {
+    let mut font_sizes: Vec<f32> = fragments
+        .iter()
+        .map(|f| f.font_size)
+        .filter(|&fs| (4.0_f32..=48.0).contains(&fs))
+        .collect();
+    font_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    font_sizes
+        .get(font_sizes.len() / 2)
+        .copied()
+        .unwrap_or(10.0)
 }
 
 // ---------------------------------------------------------------------------
