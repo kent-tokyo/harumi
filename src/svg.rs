@@ -19,8 +19,10 @@ pub struct SvgOptions<'a> {
 ///
 /// The converter intentionally accepts one documented subset: groups,
 /// translations/scales, lines, polylines, polygons, rectangles, circles,
-/// paths made of `M/L/H/V/Z`, text, fills, strokes, opacity, dash arrays, and
-/// `marker-end` arrowheads. Text uses the supplied TrueType/OpenType font.
+/// paths made of `M/L/H/V/C/S/Q/T/A/Z`, ellipses, text, fills, strokes,
+/// opacity, dash arrays, and `marker-end` arrowheads. Curves and arcs are
+/// flattened to vector line segments; text uses the supplied
+/// TrueType/OpenType font.
 pub fn svg_to_pdf(svg: &[u8], font_bytes: &[u8]) -> Result<Vec<u8>> {
     svg_to_pdf_with_options(
         svg,
@@ -282,6 +284,41 @@ fn render_node(
                 .map(|index| {
                     let angle = index as f32 * std::f32::consts::TAU / 32.0;
                     transform.point(cx + r * angle.cos(), cy + r * angle.sin(), ctx.height)
+                })
+                .collect::<Vec<_>>();
+            if let Some(color) = style.fill {
+                ctx.page.add_path(
+                    &points,
+                    true,
+                    color,
+                    true,
+                    0.0,
+                    style.opacity * style.fill_opacity,
+                )?;
+            }
+            if let Some(color) = style.stroke {
+                ctx.page.add_path(
+                    &points,
+                    true,
+                    color,
+                    false,
+                    scaled_stroke_width(transform, style),
+                    style.opacity * style.stroke_opacity,
+                )?;
+            }
+        }
+        "ellipse" => {
+            let cx = attr(node, "cx").unwrap_or(0.0);
+            let cy = attr(node, "cy").unwrap_or(0.0);
+            let rx = attr(node, "rx")?;
+            let ry = attr(node, "ry")?;
+            if rx <= 0.0 || ry <= 0.0 {
+                return Err(invalid("ellipse radii must be positive"));
+            }
+            let points = (0..32)
+                .map(|index| {
+                    let angle = index as f32 * std::f32::consts::TAU / 32.0;
+                    transform.point(cx + rx * angle.cos(), cy + ry * angle.sin(), ctx.height)
                 })
                 .collect::<Vec<_>>();
             if let Some(color) = style.fill {
@@ -709,6 +746,9 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
     let mut subpath_start = [0.0, 0.0];
     let mut current_subpath: Option<ParsedSubpath> = None;
     let mut subpaths = Vec::new();
+    let mut previous_command = 'M';
+    let mut last_cubic_control = None;
+    let mut last_quadratic_control = None;
 
     while index < tokens.len() {
         if let PathToken::Command(next) = tokens[index] {
@@ -719,6 +759,9 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
                 if let Some(subpath) = current_subpath.as_mut() {
                     subpath.closed = true;
                 }
+                last_cubic_control = None;
+                last_quadratic_control = None;
+                previous_command = command;
                 continue;
             }
         }
@@ -748,6 +791,8 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
                 } else {
                     return Err(invalid("path must start with a move-to command"));
                 }
+                last_cubic_control = None;
+                last_quadratic_control = None;
             }
             'H' | 'h' => {
                 let x = number_token(&tokens, &mut index)?;
@@ -757,6 +802,8 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
                     .ok_or_else(|| invalid("path must start with a move-to command"))?
                     .points
                     .push(current);
+                last_cubic_control = None;
+                last_quadratic_control = None;
             }
             'V' | 'v' => {
                 let y = number_token(&tokens, &mut index)?;
@@ -766,9 +813,127 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
                     .ok_or_else(|| invalid("path must start with a move-to command"))?
                     .points
                     .push(current);
+                last_cubic_control = None;
+                last_quadratic_control = None;
             }
-            _ => return Err(invalid("path supports only M/L/H/V/Z commands")),
+            'C' | 'c' => {
+                let mut values = [0.0; 6];
+                for value in &mut values {
+                    *value = number_token(&tokens, &mut index)?;
+                }
+                let relative = command == 'c';
+                let control1 = relative_point(current, [values[0], values[1]], relative);
+                let control2 = relative_point(current, [values[2], values[3]], relative);
+                let endpoint = relative_point(current, [values[4], values[5]], relative);
+                append_curve(
+                    current_subpath
+                        .as_mut()
+                        .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                    cubic_points(current, control1, control2, endpoint),
+                );
+                current = endpoint;
+                last_cubic_control = Some(control2);
+                last_quadratic_control = None;
+            }
+            'S' | 's' => {
+                let mut values = [0.0; 4];
+                for value in &mut values {
+                    *value = number_token(&tokens, &mut index)?;
+                }
+                let relative = command == 's';
+                let control1 = if matches!(previous_command, 'C' | 'c' | 'S' | 's') {
+                    reflect_control(current, last_cubic_control.unwrap_or(current))
+                } else {
+                    current
+                };
+                let control2 = relative_point(current, [values[0], values[1]], relative);
+                let endpoint = relative_point(current, [values[2], values[3]], relative);
+                append_curve(
+                    current_subpath
+                        .as_mut()
+                        .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                    cubic_points(current, control1, control2, endpoint),
+                );
+                current = endpoint;
+                last_cubic_control = Some(control2);
+                last_quadratic_control = None;
+            }
+            'Q' | 'q' => {
+                let mut values = [0.0; 4];
+                for value in &mut values {
+                    *value = number_token(&tokens, &mut index)?;
+                }
+                let relative = command == 'q';
+                let control = relative_point(current, [values[0], values[1]], relative);
+                let endpoint = relative_point(current, [values[2], values[3]], relative);
+                append_curve(
+                    current_subpath
+                        .as_mut()
+                        .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                    quadratic_points(current, control, endpoint),
+                );
+                current = endpoint;
+                last_quadratic_control = Some(control);
+                last_cubic_control = None;
+            }
+            'T' | 't' => {
+                let values = [
+                    number_token(&tokens, &mut index)?,
+                    number_token(&tokens, &mut index)?,
+                ];
+                let relative = command == 't';
+                let control = if matches!(previous_command, 'Q' | 'q' | 'T' | 't') {
+                    reflect_control(current, last_quadratic_control.unwrap_or(current))
+                } else {
+                    current
+                };
+                let endpoint = relative_point(current, values, relative);
+                append_curve(
+                    current_subpath
+                        .as_mut()
+                        .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                    quadratic_points(current, control, endpoint),
+                );
+                current = endpoint;
+                last_quadratic_control = Some(control);
+                last_cubic_control = None;
+            }
+            'A' | 'a' => {
+                let rx = number_token(&tokens, &mut index)?.abs();
+                let ry = number_token(&tokens, &mut index)?.abs();
+                let rotation = number_token(&tokens, &mut index)?;
+                let large_arc = number_token(&tokens, &mut index)? != 0.0;
+                let sweep = number_token(&tokens, &mut index)? != 0.0;
+                let endpoint = relative_point(
+                    current,
+                    [
+                        number_token(&tokens, &mut index)?,
+                        number_token(&tokens, &mut index)?,
+                    ],
+                    command == 'a',
+                );
+                if rx <= f32::EPSILON || ry <= f32::EPSILON {
+                    append_line(
+                        current_subpath
+                            .as_mut()
+                            .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                        endpoint,
+                    );
+                } else {
+                    append_curve(
+                        current_subpath
+                            .as_mut()
+                            .ok_or_else(|| invalid("path must start with a move-to command"))?,
+                        arc_points(current, endpoint, rx, ry, rotation, large_arc, sweep),
+                    );
+                }
+                current = endpoint;
+                last_cubic_control = None;
+                last_quadratic_control = None;
+            }
+            _ => return Err(invalid("unsupported path command")),
         }
+        previous_command = command;
     }
     if let Some(subpath) = current_subpath {
         subpaths.push(subpath);
@@ -788,6 +953,137 @@ struct ParsedPath {
 struct ParsedSubpath {
     points: Vec<[f32; 2]>,
     closed: bool,
+}
+
+const CURVE_SEGMENTS: usize = 12;
+
+fn relative_point(current: [f32; 2], point: [f32; 2], relative: bool) -> [f32; 2] {
+    if relative {
+        [current[0] + point[0], current[1] + point[1]]
+    } else {
+        point
+    }
+}
+
+fn reflect_control(current: [f32; 2], control: [f32; 2]) -> [f32; 2] {
+    [2.0 * current[0] - control[0], 2.0 * current[1] - control[1]]
+}
+
+fn append_line(subpath: &mut ParsedSubpath, point: [f32; 2]) {
+    subpath.points.push(point);
+}
+
+fn append_curve(subpath: &mut ParsedSubpath, points: Vec<[f32; 2]>) {
+    subpath.points.extend(points);
+}
+
+fn quadratic_points(start: [f32; 2], control: [f32; 2], end: [f32; 2]) -> Vec<[f32; 2]> {
+    (1..=CURVE_SEGMENTS)
+        .map(|step| {
+            let t = step as f32 / CURVE_SEGMENTS as f32;
+            let mt = 1.0 - t;
+            [
+                mt * mt * start[0] + 2.0 * mt * t * control[0] + t * t * end[0],
+                mt * mt * start[1] + 2.0 * mt * t * control[1] + t * t * end[1],
+            ]
+        })
+        .collect()
+}
+
+fn cubic_points(
+    start: [f32; 2],
+    control1: [f32; 2],
+    control2: [f32; 2],
+    end: [f32; 2],
+) -> Vec<[f32; 2]> {
+    (1..=CURVE_SEGMENTS)
+        .map(|step| {
+            let t = step as f32 / CURVE_SEGMENTS as f32;
+            let mt = 1.0 - t;
+            [
+                mt.powi(3) * start[0]
+                    + 3.0 * mt.powi(2) * t * control1[0]
+                    + 3.0 * mt * t.powi(2) * control2[0]
+                    + t.powi(3) * end[0],
+                mt.powi(3) * start[1]
+                    + 3.0 * mt.powi(2) * t * control1[1]
+                    + 3.0 * mt * t.powi(2) * control2[1]
+                    + t.powi(3) * end[1],
+            ]
+        })
+        .collect()
+}
+
+fn arc_points(
+    start: [f32; 2],
+    end: [f32; 2],
+    mut rx: f32,
+    mut ry: f32,
+    rotation_degrees: f32,
+    large_arc: bool,
+    sweep: bool,
+) -> Vec<[f32; 2]> {
+    if (start[0] - end[0]).abs() <= f32::EPSILON && (start[1] - end[1]).abs() <= f32::EPSILON {
+        return Vec::new();
+    }
+    let phi = rotation_degrees.to_radians();
+    let (cos_phi, sin_phi) = (phi.cos(), phi.sin());
+    let dx = (start[0] - end[0]) / 2.0;
+    let dy = (start[1] - end[1]) / 2.0;
+    let x1p = cos_phi * dx + sin_phi * dy;
+    let y1p = -sin_phi * dx + cos_phi * dy;
+    let radii_scale = (x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry)).sqrt();
+    if radii_scale > 1.0 {
+        rx *= radii_scale;
+        ry *= radii_scale;
+    }
+    let rx2 = rx * rx;
+    let ry2 = ry * ry;
+    let x1p2 = x1p * x1p;
+    let y1p2 = y1p * y1p;
+    let numerator = (rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2).max(0.0);
+    let denominator = rx2 * y1p2 + ry2 * x1p2;
+    let mut coefficient = if denominator <= f32::EPSILON {
+        0.0
+    } else {
+        (numerator / denominator).sqrt()
+    };
+    if large_arc == sweep {
+        coefficient = -coefficient;
+    }
+    let cxp = coefficient * rx * y1p / ry;
+    let cyp = coefficient * -ry * x1p / rx;
+    let center = [
+        cos_phi * cxp - sin_phi * cyp + (start[0] + end[0]) / 2.0,
+        sin_phi * cxp + cos_phi * cyp + (start[1] + end[1]) / 2.0,
+    ];
+    let unit = |x: f32, y: f32| [x / rx, y / ry];
+    let from = unit(
+        cos_phi * (start[0] - center[0]) + sin_phi * (start[1] - center[1]),
+        -sin_phi * (start[0] - center[0]) + cos_phi * (start[1] - center[1]),
+    );
+    let to = unit(
+        cos_phi * (end[0] - center[0]) + sin_phi * (end[1] - center[1]),
+        -sin_phi * (end[0] - center[0]) + cos_phi * (end[1] - center[1]),
+    );
+    let angle =
+        |a: [f32; 2], b: [f32; 2]| (a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]);
+    let mut delta = angle(from, to);
+    if !sweep && delta > 0.0 {
+        delta -= std::f32::consts::TAU;
+    } else if sweep && delta < 0.0 {
+        delta += std::f32::consts::TAU;
+    }
+    let segments = ((delta.abs() / (std::f32::consts::PI / 12.0)).ceil() as usize).max(1);
+    (1..=segments)
+        .map(|step| {
+            let theta = angle([1.0, 0.0], from) + delta * step as f32 / segments as f32;
+            [
+                center[0] + rx * theta.cos() * cos_phi - ry * theta.sin() * sin_phi,
+                center[1] + rx * theta.cos() * sin_phi + ry * theta.sin() * cos_phi,
+            ]
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -819,7 +1115,25 @@ fn tokenize_path(raw: &str) -> Result<Vec<PathToken>> {
             let command = chars[index];
             if !matches!(
                 command,
-                'M' | 'm' | 'L' | 'l' | 'H' | 'h' | 'V' | 'v' | 'Z' | 'z'
+                'M' | 'm'
+                    | 'L'
+                    | 'l'
+                    | 'H'
+                    | 'h'
+                    | 'V'
+                    | 'v'
+                    | 'C'
+                    | 'c'
+                    | 'S'
+                    | 's'
+                    | 'Q'
+                    | 'q'
+                    | 'T'
+                    | 't'
+                    | 'A'
+                    | 'a'
+                    | 'Z'
+                    | 'z'
             ) {
                 return Err(invalid(format!("unsupported path command {command}")));
             }
