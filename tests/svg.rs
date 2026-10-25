@@ -44,6 +44,19 @@ fn supports_horizontal_vertical_closed_paths_and_relative_numbers() {
 }
 
 #[test]
+fn keeps_path_subpaths_disconnected() {
+    let svg = br##"<svg width="100" height="40">
+      <path d="M 10 10 L 30 10 M 60 30 L 90 30" fill="none" stroke="#000"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("multiple path subpaths should convert");
+    let move_count = bytes.windows(2).filter(|window| *window == b" m").count();
+    assert!(
+        move_count >= 2,
+        "expected separate PDF moves for each SVG subpath, got {move_count}"
+    );
+}
+
+#[test]
 fn rejects_empty_transform_arguments_without_panicking() {
     let translate = br#"<svg width="10" height="10"><g transform="translate()"/></svg>"#;
     let scale = br#"<svg width="10" height="10"><g transform="scale()"/></svg>"#;

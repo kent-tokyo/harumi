@@ -310,30 +310,35 @@ fn render_node(
                 node.attribute("d")
                     .ok_or_else(|| invalid("missing path data"))?,
             )?;
-            let points = path
-                .points
-                .into_iter()
-                .map(|p| transform.point(p[0], p[1], ctx.height))
-                .collect::<Vec<_>>();
-            if let Some(color) = style.fill {
-                ctx.page.add_path(
-                    &points,
-                    path.closed,
-                    color,
-                    true,
-                    0.0,
-                    style.opacity * style.fill_opacity,
-                )?;
-            }
-            if let Some(color) = style.stroke {
-                ctx.page.add_path(
-                    &points,
-                    path.closed,
-                    color,
-                    false,
-                    scaled_stroke_width(transform, style),
-                    style.opacity * style.stroke_opacity,
-                )?;
+            for subpath in path.subpaths {
+                if subpath.points.len() < 2 {
+                    continue;
+                }
+                let points = subpath
+                    .points
+                    .into_iter()
+                    .map(|p| transform.point(p[0], p[1], ctx.height))
+                    .collect::<Vec<_>>();
+                if let Some(color) = style.fill {
+                    ctx.page.add_path(
+                        &points,
+                        subpath.closed,
+                        color,
+                        true,
+                        0.0,
+                        style.opacity * style.fill_opacity,
+                    )?;
+                }
+                if let Some(color) = style.stroke {
+                    ctx.page.add_path(
+                        &points,
+                        subpath.closed,
+                        color,
+                        false,
+                        scaled_stroke_width(transform, style),
+                        style.opacity * style.stroke_opacity,
+                    )?;
+                }
             }
         }
         "text" => {
@@ -705,6 +710,7 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
     let mut subpath_start = [0.0, 0.0];
     let mut closed = false;
     let mut points = Vec::new();
+    let mut subpaths = Vec::new();
 
     while index < tokens.len() {
         if let PathToken::Command(next) = tokens[index] {
@@ -728,6 +734,13 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
                     current = [x, y];
                 }
                 if command == 'M' || command == 'm' {
+                    if !points.is_empty() {
+                        subpaths.push(ParsedSubpath {
+                            points: std::mem::take(&mut points),
+                            closed,
+                        });
+                        closed = false;
+                    }
                     subpath_start = current;
                     command = if command == 'm' { 'l' } else { 'L' };
                 }
@@ -746,14 +759,22 @@ fn parse_path(raw: &str) -> Result<ParsedPath> {
             _ => return Err(invalid("path supports only M/L/H/V/Z commands")),
         }
     }
-    if points.len() < 2 {
+    if !points.is_empty() {
+        subpaths.push(ParsedSubpath { points, closed });
+    }
+    if subpaths.iter().all(|subpath| subpath.points.len() < 2) {
         return Err(invalid("path needs at least two points"));
     }
-    Ok(ParsedPath { points, closed })
+    Ok(ParsedPath { subpaths })
 }
 
 #[derive(Debug)]
 struct ParsedPath {
+    subpaths: Vec<ParsedSubpath>,
+}
+
+#[derive(Debug)]
+struct ParsedSubpath {
     points: Vec<[f32; 2]>,
     closed: bool,
 }
