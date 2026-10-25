@@ -6228,11 +6228,7 @@ pub fn extract_layout_regions(
     }
 
     // ---- 1. Visible, sorted fragments -----------------------------------------
-    let visible: Vec<TextFragment> = fragments
-        .iter()
-        .filter(|f| !f.invisible && !f.text.trim().is_empty() && f.font_size.is_finite())
-        .cloned()
-        .collect();
+    let visible = visible_layout_fragments(fragments);
     if visible.is_empty() {
         return vec![];
     }
@@ -6259,17 +6255,7 @@ pub fn extract_layout_regions(
     }
 
     // ---- 4. Median font size for heading classification ----------------------
-    let mut font_sizes: Vec<f32> = visible
-        .iter()
-        .map(|f| f.font_size)
-        .filter(|&fs| (4.0_f32..=48.0).contains(&fs))
-        .collect();
-    font_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median_fs = if font_sizes.is_empty() {
-        10.0_f32
-    } else {
-        font_sizes[font_sizes.len() / 2]
-    };
+    let median_fs = median_layout_font_size(&visible);
 
     // ---- 5. Row-top map (row_idx → max ascender y in that row) ---------------
     let mut row_top_map: std::collections::BTreeMap<usize, f32> = std::collections::BTreeMap::new();
@@ -6417,6 +6403,27 @@ pub fn extract_layout_regions(
     // Sort by (row asc, col asc) — stable reading order
     regions.sort_by_key(|r| (r.row.unwrap_or(usize::MAX), r.col.unwrap_or(usize::MAX)));
     regions
+}
+
+fn visible_layout_fragments(fragments: &[TextFragment]) -> Vec<TextFragment> {
+    fragments
+        .iter()
+        .filter(|f| !f.invisible && !f.text.trim().is_empty() && f.font_size.is_finite())
+        .cloned()
+        .collect()
+}
+
+fn median_layout_font_size(fragments: &[TextFragment]) -> f32 {
+    let mut font_sizes: Vec<f32> = fragments
+        .iter()
+        .map(|f| f.font_size)
+        .filter(|&fs| (4.0_f32..=48.0).contains(&fs))
+        .collect();
+    font_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    font_sizes
+        .get(font_sizes.len() / 2)
+        .copied()
+        .unwrap_or(10.0)
 }
 
 // ---------------------------------------------------------------------------
