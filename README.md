@@ -2,7 +2,7 @@
 
 **Position-aware CJK PDF write-back in pure Rust.**
 
-Current release: **1.23.4**. harumi reads existing PDFs, extracts positioned
+Current release: **1.23.5**. harumi reads existing PDFs, extracts positioned
 text, and writes translated or replaced text back into inferred regions. It also
 supports page operations, annotations, forms, vector drawing, images, SVG
 conversion, and paginated HTML/report output.

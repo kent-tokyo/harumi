@@ -16,7 +16,7 @@ rerun fixtures before making benchmark claims.
 | Low-level object editing | `lopdf` | PDF object graph and streams |
 | Bulk extraction | `unpdf`, `pdf_oxide` | Text/Markdown extraction and broader lifecycle |
 | Low-level PDF writing | `pdf-writer 0.15.0` | Typed construction of new PDF objects |
-| Existing-PDF CJK write-back | `harumi 1.23.4` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
+| Existing-PDF CJK write-back | `harumi 1.23.5` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
 
 Use the current releases when measuring. Version-pinned results belong in a
 fixture report, not in this role guide.
