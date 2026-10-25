@@ -1,6 +1,6 @@
 #![cfg(feature = "svg")]
 
-use harumi::{Document, svg_to_pdf};
+use harumi::{Document, SvgOptions, svg_to_pdf, svg_to_pdf_with_options};
 
 const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -47,6 +47,39 @@ fn ignores_metadata_subtrees_during_rendering() {
             .page_count(),
         1
     );
+}
+
+#[test]
+fn geometry_only_svg_does_not_require_or_embed_a_font() {
+    let svg = br#"<svg width="120" height="80">
+      <metadata><text>metadata is not rendered</text></metadata>
+      <path d="M 10 40 Q 30 10 50 40 A 12 8 0 0 1 80 40" fill="none" stroke="black"/>
+      <ellipse cx="100" cy="40" rx="12" ry="8" fill="blue"/>
+    </svg>"#;
+    let bytes = svg_to_pdf_with_options(
+        svg,
+        SvgOptions {
+            font_bytes: &[],
+            page_size: None,
+        },
+    )
+    .expect("geometry-only SVG should not require a font");
+    assert!(!bytes.windows(5).any(|window| window == b"/Font"));
+    assert!(Document::from_bytes(&bytes).is_ok());
+}
+
+#[test]
+fn rendered_svg_text_still_requires_a_font() {
+    let svg = br#"<svg width="80" height="40"><text x="5" y="20">text</text></svg>"#;
+    let error = svg_to_pdf_with_options(
+        svg,
+        SvgOptions {
+            font_bytes: &[],
+            page_size: None,
+        },
+    )
+    .expect_err("rendered text must require a font");
+    assert!(error.to_string().contains("requires non-empty font_bytes"));
 }
 
 #[test]
@@ -131,6 +164,22 @@ fn accepts_css_named_and_rgb_colors() {
     assert!(content.contains("1.0000 1.0000 0.0000 rg"));
     assert!(content.contains("1.0000 0.6471 0.0000 rg"));
     assert!(content.contains("0.0000 0.5000 1.0000 RG"));
+}
+
+#[test]
+fn inline_style_overrides_presentation_attributes_and_supports_current_color() {
+    let svg = br##"<svg width="80" height="40">
+      <g color="#00ff00">
+        <rect x="0" y="0" width="20" height="20" fill="#ff0000" style="fill: currentColor"/>
+      </g>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("currentColor should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+    assert!(content.contains("0.0000 1.0000 0.0000 rg"));
+    assert!(!content.contains("1.0000 0.0000 0.0000 rg"));
 }
 
 #[test]

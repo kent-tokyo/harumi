@@ -9,7 +9,8 @@ use crate::{Document, Error, Result};
 /// Options for [`svg_to_pdf_with_options`].
 #[derive(Clone, Debug)]
 pub struct SvgOptions<'a> {
-    /// Font bytes used for every SVG `<text>` element.
+    /// Font bytes used for SVG `<text>` elements. Empty bytes are allowed when
+    /// the SVG contains no rendered text.
     pub font_bytes: &'a [u8],
     /// Override the SVG-derived page size when present.
     pub page_size: Option<[f32; 2]>,
@@ -43,12 +44,6 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
     if root.tag_name().name() != "svg" {
         return Err(Error::InvalidInput("SVG root element must be <svg>".into()));
     }
-    if options.font_bytes.is_empty() {
-        return Err(Error::InvalidInput(
-            "SVG text conversion requires non-empty font_bytes".into(),
-        ));
-    }
-
     let view_box = parse_view_box(root.attribute("viewBox"))?;
     let width = options
         .page_size
@@ -69,7 +64,16 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
     }
 
     let mut document = Document::new((width, height))?;
-    let font = document.embed_font(options.font_bytes)?;
+    let font = if contains_rendered_text(root) {
+        if options.font_bytes.is_empty() {
+            return Err(Error::InvalidInput(
+                "SVG text conversion requires non-empty font_bytes".into(),
+            ));
+        }
+        Some(document.embed_font(options.font_bytes)?)
+    } else {
+        None
+    };
     let mut page = document.page(1)?;
     let source = view_box.unwrap_or([0.0, 0.0, width, height]);
     let scale_x = width / source[2];
@@ -94,7 +98,7 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
 
 struct Context<'a, 'doc> {
     page: &'a mut crate::PageHandle<'doc>,
-    font: crate::FontHandle,
+    font: Option<crate::FontHandle>,
     height: f32,
     markers: HashMap<String, Marker>,
 }
@@ -186,6 +190,8 @@ impl Transform {
 
 #[derive(Clone, Copy, Debug)]
 struct Style {
+    /// The inherited `color` property used by `currentColor` paints.
+    color: [f32; 3],
     fill: Option<[f32; 3]>,
     stroke: Option<[f32; 3]>,
     stroke_width: f32,
@@ -199,6 +205,7 @@ struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
+            color: [0.0; 3],
             fill: Some([0.0; 3]),
             stroke: None,
             stroke_width: 1.0,
@@ -388,10 +395,13 @@ fn render_node(
                 .map(|node| node.text().unwrap_or_default())
                 .collect::<String>();
             if !text.is_empty() {
+                let font = ctx
+                    .font
+                    .ok_or_else(|| invalid("SVG text conversion requires non-empty font_bytes"))?;
                 let x = attr(node, "x").unwrap_or(0.0);
                 let mut y = attr(node, "y").unwrap_or(0.0);
                 let font_size = style.font_size;
-                let width = ctx.page.measure_text(&text, ctx.font, font_size)?;
+                let width = ctx.page.measure_text(&text, font, font_size)?;
                 let x = match node.attribute("text-anchor").unwrap_or("start") {
                     "start" => x,
                     "middle" => x - width / 2.0,
@@ -411,7 +421,7 @@ fn render_node(
                 let color = style.fill.or(style.stroke).unwrap_or([0.0; 3]);
                 ctx.page.add_text_with_rotation(
                     &text,
-                    ctx.font,
+                    font,
                     p,
                     font_size * transform.y_scale(),
                     color,
@@ -424,6 +434,26 @@ fn render_node(
         other => return Err(invalid(format!("unsupported SVG element <{other}>"))),
     }
     Ok(())
+}
+
+fn contains_rendered_text(node: Node<'_, '_>) -> bool {
+    let name = node.tag_name().name();
+    if matches!(
+        name,
+        "metadata" | "defs" | "marker" | "title" | "desc" | "style"
+    ) {
+        return false;
+    }
+    if name == "text" {
+        return node
+            .descendants()
+            .filter(Node::is_text)
+            .filter_map(|node| node.text())
+            .any(|text| !text.trim().is_empty());
+    }
+    node.children()
+        .filter(Node::is_element)
+        .any(contains_rendered_text)
 }
 
 fn draw_line(
@@ -669,6 +699,17 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
             values.insert(pair.0.trim(), pair.1.trim());
         }
     }
+    // Inline style declarations have higher precedence than presentation
+    // attributes in SVG.  Parse `color` first because fill/stroke may use
+    // `currentColor` and the property is inherited by descendants.
+    if let Some(value) = values
+        .get("color")
+        .copied()
+        .or_else(|| node.attribute("color"))
+    {
+        style.color = parse_color_value(value, style.color)?
+            .ok_or_else(|| invalid("color cannot be none"))?;
+    }
     for key in [
         "fill",
         "stroke",
@@ -679,10 +720,10 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
         "stroke-dasharray",
         "font-size",
     ] {
-        if let Some(value) = node.attribute(key).or_else(|| values.get(key).copied()) {
+        if let Some(value) = values.get(key).copied().or_else(|| node.attribute(key)) {
             match key {
-                "fill" => style.fill = parse_color(value)?,
-                "stroke" => style.stroke = parse_color(value)?,
+                "fill" => style.fill = parse_color_value(value, style.color)?,
+                "stroke" => style.stroke = parse_color_value(value, style.color)?,
                 "stroke-width" => {
                     style.stroke_width =
                         parse_length(value).ok_or_else(|| invalid("invalid stroke-width"))?
@@ -1233,11 +1274,14 @@ fn parse_length(raw: &str) -> Option<f32> {
         })
         .or_else(|| raw.parse().ok())
 }
-fn parse_color(raw: &str) -> Result<Option<[f32; 3]>> {
+fn parse_color_value(raw: &str, current_color: [f32; 3]) -> Result<Option<[f32; 3]>> {
     let value = raw.trim();
     let normalized = value.to_ascii_lowercase();
     if matches!(normalized.as_str(), "none" | "transparent") {
         return Ok(None);
+    }
+    if normalized == "currentcolor" {
+        return Ok(Some(current_color));
     }
     if let Some(rgb) = normalized.strip_prefix("rgb(")
         && let Some(rgb) = rgb.strip_suffix(')')
