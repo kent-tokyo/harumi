@@ -134,6 +134,22 @@ fn accepts_css_named_and_rgb_colors() {
 }
 
 #[test]
+fn inline_style_overrides_presentation_attributes_and_supports_current_color() {
+    let svg = br##"<svg width="80" height="40">
+      <g color="#00ff00">
+        <rect x="0" y="0" width="20" height="20" fill="#ff0000" style="fill: currentColor"/>
+      </g>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("currentColor should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+    assert!(content.contains("0.0000 1.0000 0.0000 rg"));
+    assert!(!content.contains("1.0000 0.0000 0.0000 rg"));
+}
+
+#[test]
 fn renders_referenced_markers_and_honors_none() {
     let svg = br##"<svg width="120" height="40">
       <defs><marker id="tip" refX="5" refY="2">

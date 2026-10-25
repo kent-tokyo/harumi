@@ -186,6 +186,8 @@ impl Transform {
 
 #[derive(Clone, Copy, Debug)]
 struct Style {
+    /// The inherited `color` property used by `currentColor` paints.
+    color: [f32; 3],
     fill: Option<[f32; 3]>,
     stroke: Option<[f32; 3]>,
     stroke_width: f32,
@@ -199,6 +201,7 @@ struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
+            color: [0.0; 3],
             fill: Some([0.0; 3]),
             stroke: None,
             stroke_width: 1.0,
@@ -669,6 +672,17 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
             values.insert(pair.0.trim(), pair.1.trim());
         }
     }
+    // Inline style declarations have higher precedence than presentation
+    // attributes in SVG.  Parse `color` first because fill/stroke may use
+    // `currentColor` and the property is inherited by descendants.
+    if let Some(value) = values
+        .get("color")
+        .copied()
+        .or_else(|| node.attribute("color"))
+    {
+        style.color = parse_color_value(value, style.color)?
+            .ok_or_else(|| invalid("color cannot be none"))?;
+    }
     for key in [
         "fill",
         "stroke",
@@ -679,10 +693,10 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
         "stroke-dasharray",
         "font-size",
     ] {
-        if let Some(value) = node.attribute(key).or_else(|| values.get(key).copied()) {
+        if let Some(value) = values.get(key).copied().or_else(|| node.attribute(key)) {
             match key {
-                "fill" => style.fill = parse_color(value)?,
-                "stroke" => style.stroke = parse_color(value)?,
+                "fill" => style.fill = parse_color_value(value, style.color)?,
+                "stroke" => style.stroke = parse_color_value(value, style.color)?,
                 "stroke-width" => {
                     style.stroke_width =
                         parse_length(value).ok_or_else(|| invalid("invalid stroke-width"))?
@@ -1233,11 +1247,14 @@ fn parse_length(raw: &str) -> Option<f32> {
         })
         .or_else(|| raw.parse().ok())
 }
-fn parse_color(raw: &str) -> Result<Option<[f32; 3]>> {
+fn parse_color_value(raw: &str, current_color: [f32; 3]) -> Result<Option<[f32; 3]>> {
     let value = raw.trim();
     let normalized = value.to_ascii_lowercase();
     if matches!(normalized.as_str(), "none" | "transparent") {
         return Ok(None);
+    }
+    if normalized == "currentcolor" {
+        return Ok(Some(current_color));
     }
     if let Some(rgb) = normalized.strip_prefix("rgb(")
         && let Some(rgb) = rgb.strip_suffix(')')
