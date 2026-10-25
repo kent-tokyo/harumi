@@ -16,6 +16,17 @@ use super::types::{
     PendingText, ReplaceOptions, TextRun,
 };
 
+fn validate_dash_pattern(array: &[f32], phase: f32, label: &str) -> Result<()> {
+    if array.is_empty() || array.iter().any(|value| *value <= 0.0) {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "{label} requires a non-empty dash array with positive values"
+        )));
+    }
+    let mut values = array.to_vec();
+    values.push(phase);
+    check_finite(&values, label)
+}
+
 /// Vertical alignment for [`PageHandle::add_text_box_aligned`].
 pub enum VerticalAlign {
     /// Text starts at the top of the box (default).
@@ -2237,6 +2248,40 @@ impl<'doc> PageHandle<'doc> {
             color,
             width: line_width,
             opacity,
+            dash: None,
+        }));
+        Ok(())
+    }
+
+    /// Overlays a dashed stroked line segment. `dash_array` contains alternating
+    /// dash and gap lengths in PDF points; odd-length arrays follow PDF rules
+    /// and are repeated to form an even pattern. `dash_phase` is in points.
+    pub fn add_line_dashed(
+        &mut self,
+        from: [f32; 2],
+        to: [f32; 2],
+        color: impl Into<Color>,
+        line_width: f32,
+        opacity: f32,
+        dash_array: &[f32],
+        dash_phase: f32,
+    ) -> Result<()> {
+        let color = color.into();
+        check_finite(
+            &[from[0], from[1], to[0], to[1], line_width, opacity],
+            "add_line_dashed",
+        )?;
+        validate_dash_pattern(dash_array, dash_phase, "add_line_dashed")?;
+        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Line {
+            from,
+            to,
+            color,
+            width: line_width,
+            opacity,
+            dash: Some(crate::draw::DashPattern {
+                array: dash_array.to_vec(),
+                phase: dash_phase,
+            }),
         }));
         Ok(())
     }
@@ -2270,6 +2315,41 @@ impl<'doc> PageHandle<'doc> {
             color,
             width: line_width,
             opacity,
+            dash: None,
+        }));
+        Ok(())
+    }
+
+    /// Overlays a dashed open polyline using a PDF vector `d` operator.
+    pub fn add_polyline_dashed(
+        &mut self,
+        points: &[[f32; 2]],
+        color: impl Into<Color>,
+        line_width: f32,
+        opacity: f32,
+        dash_array: &[f32],
+        dash_phase: f32,
+    ) -> Result<()> {
+        let color = color.into();
+        if points.len() < 2 {
+            return Ok(());
+        }
+        let coords: Vec<f32> = points
+            .iter()
+            .flat_map(|point| point.iter().copied())
+            .collect();
+        check_finite(&coords, "add_polyline_dashed points")?;
+        check_finite(&[line_width, opacity], "add_polyline_dashed")?;
+        validate_dash_pattern(dash_array, dash_phase, "add_polyline_dashed")?;
+        self.push_op(PendingOp::Draw(crate::draw::DrawOp::Polyline {
+            points: points.to_vec(),
+            color,
+            width: line_width,
+            opacity,
+            dash: Some(crate::draw::DashPattern {
+                array: dash_array.to_vec(),
+                phase: dash_phase,
+            }),
         }));
         Ok(())
     }
