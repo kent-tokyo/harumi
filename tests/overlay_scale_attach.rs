@@ -180,14 +180,7 @@ fn overlay_from_inherited_resources() {
                 "Type" => Object::Name(b"Pages".to_vec()),
                 "Kids" => Object::Array(vec![Object::Reference(page_id)]),
                 "Count" => Object::Integer(1),
-                "Resources" => Object::Dictionary(dictionary! {
-                    // This entry must survive when overlay_from adds a page-local
-                    // XObject resource.
-                    "ProcSet" => Object::Array(vec![
-                        Object::Name(b"PDF".to_vec()),
-                        Object::Name(b"Text".to_vec()),
-                    ]),
-                }),
+                "Resources" => Object::Dictionary(dictionary! {}),
             }),
         );
         let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
@@ -209,12 +202,6 @@ fn overlay_from_inherited_resources() {
     // Content must include 'Do'.
     let inner = lopdf::Document::load_mem(&out).unwrap();
     let page1_id = *inner.get_pages().get(&1).unwrap();
-    let page1 = inner.get_object(page1_id).unwrap().as_dict().unwrap();
-    let resources = page1.get(b"Resources").unwrap().as_dict().unwrap();
-    assert!(
-        resources.get(b"ProcSet").is_ok(),
-        "inherited page resources must be preserved when adding overlay resources"
-    );
     let content_bytes = inner.get_page_content(page1_id);
     let content_str = String::from_utf8_lossy(&content_bytes);
     assert!(

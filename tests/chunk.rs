@@ -191,3 +191,134 @@ fn extract_as_markdown_empty_page() {
     let markdown = doc.extract_as_markdown(1).unwrap();
     assert_eq!(markdown, "", "empty page should produce empty markdown");
 }
+
+#[test]
+fn extract_all_chunks_and_markdown_preserve_page_boundaries() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+
+    doc.page(1)
+        .unwrap()
+        .add_text("Page one", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_text("Page two", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let pages = doc.extract_all_text_chunks().unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].0, 1);
+    assert_eq!(pages[1].0, 2);
+    assert!(pages[0].1[0].text.contains("Page one"));
+    assert!(pages[1].1[0].text.contains("Page two"));
+
+    let markdown = doc.extract_all_as_markdown().unwrap();
+    assert!(markdown.contains("<!-- page: 1 -->"));
+    assert!(markdown.contains("<!-- page: 2 -->"));
+    assert!(markdown.find("Page one").unwrap() < markdown.find("Page two").unwrap());
+    assert!(!markdown.ends_with('\n'));
+}
+
+#[test]
+fn extract_all_verbose_keeps_page_local_diagnostics_shape() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_text("Second page", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let pages = doc.extract_all_text_runs_verbose().unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].page, 1);
+    assert!(pages[0].fragments.is_empty());
+    assert!(pages[0].warnings.is_empty());
+    assert_eq!(pages[1].page, 2);
+    assert!(
+        pages[1]
+            .fragments
+            .iter()
+            .any(|fragment| fragment.text.contains("Second page"))
+    );
+}
+
+#[test]
+fn verbose_page_batches_are_bounded_and_resumable() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.insert_blank_page(2, (595.0, 842.0)).unwrap();
+
+    for page in 1..=3 {
+        doc.page(page)
+            .unwrap()
+            .add_text(&format!("Page {page}"), font, [72.0, 700.0], 12.0, [0.0; 3])
+            .unwrap();
+    }
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let mut batches = Vec::new();
+    doc.for_each_text_runs_verbose_batch(2, |batch| {
+        batches.push(batch);
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(batches.len(), 2);
+    assert_eq!(
+        batches[0].iter().map(|page| page.page).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        batches[1].iter().map(|page| page.page).collect::<Vec<_>>(),
+        [3]
+    );
+
+    let resumed = doc.extract_text_runs_verbose_page_range(2, 3).unwrap();
+    assert_eq!(
+        resumed.iter().map(|page| page.page).collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert!(doc.extract_text_runs_verbose_page_range(0, 1).is_err());
+    assert!(doc.for_each_text_runs_verbose_batch(0, |_| Ok(())).is_err());
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn extract_all_json_has_versioned_page_envelope() {
+    let font_bytes = font_bytes();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("JSON page", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+
+    let bytes = doc.save_to_bytes().unwrap();
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let json = doc.extract_all_text_runs_json().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["schema"], "harumi-extraction-v1");
+    assert_eq!(value["pages"][0]["page"], 1);
+    assert!(
+        value["pages"][0]["fragments"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("JSON page")
+    );
+    assert!(value["pages"][0]["warnings"].is_array());
+}

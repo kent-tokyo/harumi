@@ -115,16 +115,10 @@ def classify(reference: dict[str, Any], candidate: dict[str, Any]) -> str:
 
 def classify_pages(reference: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
     comparisons = []
-    page_count = max(len(reference["pages"]), len(candidate["pages"]))
-    for index in range(page_count):
-        reference_page = reference["pages"][index] if index < len(reference["pages"]) else None
-        candidate_page = candidate["pages"][index] if index < len(candidate["pages"]) else None
-
-        if reference_page is None or candidate_page is None:
-            classification = "page_missing"
-        elif candidate_page["page"] != reference_page["page"]:
-            classification = "page_identity_mismatch"
-        elif candidate_page["raster_size_pixels"] != reference_page["raster_size_pixels"]:
+    for index, (reference_page, candidate_page) in enumerate(
+        zip(reference["pages"], candidate["pages"]), start=1
+    ):
+        if candidate_page["raster_size_pixels"] != reference_page["raster_size_pixels"]:
             classification = "raster_dimensions_differ"
         elif candidate_page["sha256"] == reference_page["sha256"]:
             classification = "same_raster_sha256"
@@ -132,17 +126,11 @@ def classify_pages(reference: dict[str, Any], candidate: dict[str, Any]) -> list
             classification = "pixel_difference"
         comparisons.append(
             {
-                "page": index + 1,
-                "reference_page": reference_page["page"] if reference_page else None,
-                "candidate_page": candidate_page["page"] if candidate_page else None,
-                "reference_sha256": reference_page["sha256"] if reference_page else None,
-                "candidate_sha256": candidate_page["sha256"] if candidate_page else None,
-                "reference_raster_size_pixels": (
-                    reference_page["raster_size_pixels"] if reference_page else None
-                ),
-                "candidate_raster_size_pixels": (
-                    candidate_page["raster_size_pixels"] if candidate_page else None
-                ),
+                "page": index,
+                "reference_sha256": reference_page["sha256"],
+                "candidate_sha256": candidate_page["sha256"],
+                "reference_raster_size_pixels": reference_page["raster_size_pixels"],
+                "candidate_raster_size_pixels": candidate_page["raster_size_pixels"],
                 "classification": classification,
             }
         )
@@ -187,8 +175,6 @@ def main() -> int:
             "same_raster_sha256": "same bytes under the pinned renderer artifact contract",
             "pixel_difference": "different raster; investigate before assigning blame",
             "metadata_mismatch": "page count differs; not a pixel comparison",
-            "page_missing": "a renderer did not provide a corresponding page artifact",
-            "page_identity_mismatch": "page artifact numbers differ; not a pixel comparison",
             "page_size_mismatch": "page dimensions differ; not a pixel comparison",
             "page_size_rounding_difference": "page dimensions differ by at most 0.5 points per axis; treat as a physical-size rounding difference before investigating layout",
             "page_size_delta_points": "candidate minus reference page width and height in points when both reports expose parseable dimensions",

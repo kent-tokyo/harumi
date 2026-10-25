@@ -1,0 +1,9 @@
+{
+  "schema": "harumi-competitive-domain-fixture-v1",
+  "domain": "bulk-extraction",
+  "reference": "unpdf/pdf_oxide",
+  "input": "docs/fixtures/bulk-extraction.json",
+  "operations": ["extract_pages", "extract_markdown", "extract_json", "resume_failed_range"],
+  "required_checks": ["text_recall", "reading_order", "coordinates", "table_structure", "warning_fidelity"],
+  "runtime": {"native_library": "none"}
+}

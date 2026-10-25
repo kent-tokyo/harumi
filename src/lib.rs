@@ -9,7 +9,7 @@
 //! | Scenario | Key API |
 //! |---|---|
 //! | OCR invisible text layer | `add_invisible_text` · `add_invisible_text_runs` |
-//! | AI / RAG text extraction | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
+//! | AI / RAG text extraction | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` · `extract_all_text_chunks` · `extract_all_as_markdown` · `extract_all_text_runs_verbose` · `extract_all_text_runs_json` (`json`) |
 //! | PDF watermark / stamp | `add_text` · `add_text_with_rotation` |
 //! | Scanned PDF → searchable | `add_invisible_text` + hOCR helpers (`ocr` feature) |
 //! | HTML → PDF | `render_html_to_pdf` (`html` feature) |
@@ -109,27 +109,25 @@ pub use chunk::{ChunkType, TextChunk};
 pub use document::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, GlyphFallbackDiagnostic,
-    GlyphResolution, MutationReport, OverflowPolicy, PageHandle, PageTextExtraction, PdfMetadata,
-    PlacementStatus, ReplaceOptions, StructureReport, TextFieldOptions, TextRun, VerticalAlign,
-    calculate_text_width, diagnose_font_fallback, font_covers_char, glyph_advance_pt,
-    wrap_paragraph,
+    GlyphResolution, MutationReport, OverflowPolicy, PageHandle, PdfMetadata, PlacementStatus,
+    RepairReport, RepairWarning, RepairWarningKind, ReplaceOptions, StructureAudit,
+    TextFieldOptions, TextRun, VerticalAlign, calculate_text_width, diagnose_font_fallback,
+    font_covers_char, glyph_advance_pt, wrap_paragraph,
 };
 pub use error::{Error, Result};
 pub use extract::{
     BaselinePolicy, ClassifiedCollision, Collision, CollisionKind, CollisionSeverity, ColumnZone,
     ExtractionWarning, GroupingStrategy, LabelValuePair, LayoutIssue, LayoutIssueKind,
     LayoutIssueSeverity, LayoutRegion, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
-    PageFitSummary, PageLayoutQuality, PlacedBox, RegionFitPlan, RegionTextFitOptions,
-    SimplePlacement, TableCell, TextFragment, TextGroup, VectorRule, WarningKind, WidthPolicy,
-    classify_collisions, collision_severity, detect_collisions, detect_text_columns,
-    detect_text_vs_rule_collisions, extract_label_value_pairs, extract_layout_regions,
-    extract_table_cells, extract_vector_rules, group_text_fragments, merge_short_cjk_tails,
-    sort_by_reading_order, text_fragment_bounds,
+    PageFitSummary, PageLayoutQuality, PageTextExtraction, PlacedBox, RegionFitPlan,
+    RegionTextFitOptions, SimplePlacement, TableCell, TextFragment, TextGroup, VectorRule,
+    WarningKind, WidthPolicy, classify_collisions, collision_severity, detect_collisions,
+    detect_text_columns, detect_text_vs_rule_collisions, extract_label_value_pairs,
+    extract_layout_regions, extract_table_cells, extract_vector_rules, group_text_fragments,
+    merge_short_cjk_tails, sort_by_reading_order, text_fragment_bounds,
 };
-pub use font::{
-    FontHandle,
-    face::{Face, GlyphId, ParseError},
-};
+pub use font::FontHandle;
+
 #[cfg(feature = "svg")]
 pub use svg::{SvgOptions, svg_to_pdf, svg_to_pdf_with_options};
 

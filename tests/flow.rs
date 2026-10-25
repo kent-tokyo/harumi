@@ -1307,6 +1307,51 @@ fn report_generation_fixture_contract() {
     );
 }
 
+#[test]
+fn complex_typesetting_contract_combines_nested_table_footnote_and_toc() {
+    let mut doc = FlowDocument::new(NOTO, FlowOptions::default()).unwrap();
+    doc.push_heading("Complex report", 1).unwrap();
+    doc.push_footnote("Footnote stays below the body without overlap.")
+        .unwrap();
+    doc.push_paragraph("Body marker before the detail table.")
+        .unwrap();
+    doc.push_bookmark("Detail table", 1).unwrap();
+    doc.push_table_blocks(
+        &[vec![
+            FlowTableBlockCell::new("Summary"),
+            FlowTableBlockCell::nested_table(
+                vec![
+                    vec![FlowTableCell::new("Q1"), FlowTableCell::new("100")],
+                    vec![FlowTableCell::new("Q2"), FlowTableCell::new("120")],
+                ],
+                TableOptions::default(),
+            ),
+        ]],
+        TableOptions::default(),
+    )
+    .unwrap();
+    doc.push_table_of_contents("Contents").unwrap();
+
+    let bytes = doc.render().unwrap();
+    let reloaded = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(reloaded.page_count(), 2);
+    let text: String = (1..=reloaded.page_count())
+        .flat_map(|page| reloaded.extract_text_runs(page).unwrap())
+        .map(|run| run.text)
+        .collect();
+    for marker in [
+        "Complex report",
+        "Footnote stays below",
+        "Summary",
+        "Q1",
+        "Q2",
+        "Contents",
+        "Detail table",
+    ] {
+        assert!(text.contains(marker), "missing marker {marker:?}: {text:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // InlineSpan / push_paragraph_styled tests
 // ---------------------------------------------------------------------------

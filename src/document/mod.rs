@@ -10,8 +10,8 @@ pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, MutationReport, OverflowPolicy,
-    PageTextExtraction, PdfMetadata, PlacementStatus, ReplaceOptions, StructureReport,
-    TextFieldOptions, TextRun,
+    PdfMetadata, PlacementStatus, RepairReport, RepairWarning, RepairWarningKind, ReplaceOptions,
+    StructureAudit, TextFieldOptions, TextRun,
 };
 
 #[cfg(feature = "draw")]
@@ -22,8 +22,8 @@ use std::{
     path::Path,
 };
 
-use crate::font::face::Face;
 use lopdf::{Dictionary, LoadOptions, Object, ObjectId, Stream, StringFormat};
+use ttf_parser::Face;
 
 use crate::{
     content::text::text_stream,
@@ -42,8 +42,9 @@ use helpers::{
     inherited_resources, lopdf_string_to_rust, map_lopdf_password_err, pdf_text_string,
     realize_page_inherited_attrs, root_pages_id, wrap_page_contents_in_q_q,
 };
-use types::{EncAlgorithm, PendingBookmark, PendingOp, RawFont};
+use types::{EncAlgorithm, PendingBookmark, PendingOp, PendingPage, RawFont};
 
+/// Resolved data needed by all finalization passes that emit or replace text.
 struct EmbedState {
     ef: EmbeddedFont,
     char_to_gid: BTreeMap<char, u16>,
@@ -51,237 +52,10 @@ struct EmbedState {
     units_per_em: u16,
 }
 
-fn collect_font_resource_names(doc: &lopdf::Document) -> HashSet<Vec<u8>> {
-    let mut names = HashSet::new();
-    for object in doc.objects.values() {
-        collect_font_resource_names_from_object(doc, object, &mut names);
-    }
-    names
-}
-
-fn collect_font_resource_names_from_object(
-    doc: &lopdf::Document,
-    object: &Object,
-    names: &mut HashSet<Vec<u8>>,
-) {
-    match object {
-        Object::Dictionary(dict) => {
-            if let Ok(fonts) = dict.get(b"Font") {
-                collect_font_dictionary_names(doc, fonts, names);
-            }
-            for (_, value) in dict.iter() {
-                collect_font_resource_names_from_object(doc, value, names);
-            }
-        }
-        Object::Stream(stream) => {
-            collect_font_resource_names_from_object(
-                doc,
-                &Object::Dictionary(stream.dict.clone()),
-                names,
-            );
-        }
-        Object::Array(items) => {
-            for value in items {
-                collect_font_resource_names_from_object(doc, value, names);
-            }
-        }
-        Object::Reference(_)
-        | Object::Null
-        | Object::Boolean(_)
-        | Object::Integer(_)
-        | Object::Real(_)
-        | Object::Name(_)
-        | Object::String(_, _) => {}
-    }
-}
-
-fn collect_font_dictionary_names(
-    doc: &lopdf::Document,
-    object: &Object,
-    names: &mut HashSet<Vec<u8>>,
-) {
-    let object = match object {
-        Object::Reference(id) => doc.get_object(*id).ok(),
-        _ => Some(object),
-    };
-    let Some(Object::Dictionary(fonts)) = object else {
-        return;
-    };
-    names.extend(fonts.iter().map(|(name, _)| name.clone()));
-}
-
-fn allocate_pdf_font_name(used: &mut HashSet<Vec<u8>>, font_idx: u32) -> Vec<u8> {
-    let base = format!("HR{font_idx}").into_bytes();
-    if used.insert(base.clone()) {
-        return base;
-    }
-    for suffix in 1.. {
-        let candidate = format!("HR{font_idx}_{suffix}").into_bytes();
-        if used.insert(candidate.clone()) {
-            return candidate;
-        }
-    }
-    unreachable!("font resource name suffix range is finite")
-}
-
-fn resolve_dict<'a>(doc: &'a lopdf::Document, object: &'a Object) -> Option<&'a Dictionary> {
-    match object {
-        Object::Dictionary(dict) => Some(dict),
-        Object::Reference(id) => doc.get_object(*id).ok()?.as_dict().ok(),
-        _ => None,
-    }
-}
-
-fn count_content_streams(doc: &lopdf::Document, object: Option<&Object>) -> usize {
-    let Some(object) = object else { return 0 };
-    match object {
-        Object::Array(items) => items
-            .iter()
-            .map(|item| count_content_streams(doc, Some(item)))
-            .sum(),
-        Object::Reference(id) => count_content_streams(doc, doc.get_object(*id).ok()),
-        Object::Stream(_) => 1,
-        _ => 0,
-    }
-}
-
-fn collect_page_resource_ids(
-    doc: &lopdf::Document,
-    resources: Option<&Dictionary>,
-    font_ids: &mut HashSet<lopdf::ObjectId>,
-    image_ids: &mut HashSet<lopdf::ObjectId>,
-) {
-    let Some(resources) = resources else { return };
-    if let Ok(fonts) = resources.get(b"Font")
-        && let Some(fonts) = resolve_dict(doc, fonts)
-    {
-        for (_, object) in fonts.iter() {
-            if let Object::Reference(id) = object {
-                font_ids.insert(*id);
-            }
-        }
-    }
-    if let Ok(xobjects) = resources.get(b"XObject")
-        && let Some(xobjects) = resolve_dict(doc, xobjects)
-    {
-        for (_, object) in xobjects.iter() {
-            let Some(id) = object.as_reference().ok() else {
-                continue;
-            };
-            let Some(Object::Stream(stream)) = doc.get_object(id).ok() else {
-                continue;
-            };
-            if stream
-                .dict
-                .get(b"Subtype")
-                .ok()
-                .and_then(|value| value.as_name().ok())
-                == Some(b"Image")
-            {
-                image_ids.insert(id);
-            }
-        }
-    }
-}
-
-fn page_parent_depth(doc: &lopdf::Document, page: &Dictionary) -> Result<usize> {
-    let mut depth = 0;
-    let mut parent = page.get(b"Parent").ok();
-    while let Some(Object::Reference(id)) = parent {
-        depth += 1;
-        let parent_dict = doc.get_object(*id)?.as_dict()?;
-        parent = parent_dict.get(b"Parent").ok();
-    }
-    Ok(depth)
-}
-
-fn count_outline_items(doc: &lopdf::Document, object: &Object) -> usize {
-    let Some(dict) = resolve_dict(doc, object) else {
-        return 0;
-    };
-    let mut count = 0;
-    let mut next = dict.get(b"First").ok();
-    while let Some(Object::Reference(id)) = next {
-        count += 1;
-        let Some(item) = doc
-            .get_object(*id)
-            .ok()
-            .and_then(|object| object.as_dict().ok())
-        else {
-            break;
-        };
-        if let Ok(first) = item.get(b"First") {
-            count += count_outline_items(doc, first);
-        }
-        next = item.get(b"Next").ok();
-    }
-    count
-}
-
 #[cfg(feature = "draw")]
 use helpers::add_ext_gstate_to_resources;
 
 impl Document {
-    /// Audits the current PDF structure without rendering it.
-    ///
-    /// The report is intended for mutation contracts and diagnostics. Counts
-    /// are structural observations, not a guarantee that every viewer will
-    /// render the document identically.
-    pub fn audit_structure(&self) -> Result<StructureReport> {
-        let pages = self.inner.get_pages();
-        let mut content_stream_count = 0;
-        let mut font_ids = HashSet::new();
-        let mut image_ids = HashSet::new();
-        let mut page_tree_depth = 0;
-
-        for page_id in pages.values() {
-            let page = self.inner.get_object(*page_id)?.as_dict()?;
-            content_stream_count += count_content_streams(&self.inner, page.get(b"Contents").ok());
-            let resources = inherited_resources(&self.inner, *page_id);
-            collect_page_resource_ids(
-                &self.inner,
-                resources.as_ref(),
-                &mut font_ids,
-                &mut image_ids,
-            );
-            page_tree_depth = page_tree_depth.max(page_parent_depth(&self.inner, page)?);
-        }
-
-        let outline_count = self
-            .inner
-            .catalog()
-            .ok()
-            .and_then(|catalog| catalog.get(b"Outlines").ok())
-            .map(|object| count_outline_items(&self.inner, object))
-            .unwrap_or(0);
-
-        Ok(StructureReport {
-            page_count: pages.len() as u32,
-            object_count: self.inner.objects.len(),
-            page_tree_depth,
-            content_stream_count,
-            font_count: font_ids.len(),
-            image_count: image_ids.len(),
-            outline_count,
-        })
-    }
-
-    /// Compares the current structure with a snapshot from [`audit_structure`].
-    pub fn mutation_report(&self, before: &StructureReport) -> Result<MutationReport> {
-        let after = self.audit_structure()?;
-        Ok(MutationReport {
-            before: *before,
-            after,
-            page_count_delta: after.page_count as i64 - before.page_count as i64,
-            object_count_delta: after.object_count as i64 - before.object_count as i64,
-            content_stream_count_delta: after.content_stream_count as i64
-                - before.content_stream_count as i64,
-            font_count_delta: after.font_count as i64 - before.font_count as i64,
-            image_count_delta: after.image_count as i64 - before.image_count as i64,
-            outline_count_delta: after.outline_count as i64 - before.outline_count as i64,
-        })
-    }
-
     /// Loads a PDF from a file path.
     ///
     /// # Errors
@@ -483,6 +257,279 @@ impl Document {
     /// ```
     pub fn page_count(&self) -> u32 {
         self.inner.get_pages().len() as u32
+    }
+
+    /// Captures a bounded summary of the document's common object-graph areas.
+    ///
+    /// The result is intended for before/after preservation checks around
+    /// high-level mutations. It does not claim byte-for-byte equivalence or
+    /// expose arbitrary `lopdf` objects.
+    pub fn audit_structure(&self) -> Result<crate::document::StructureAudit> {
+        let mut stream_count = 0;
+        let mut annotation_count = 0;
+        let mut xobject_count = 0;
+        let mut form_field_count = 0;
+
+        for object in self.inner.objects.values() {
+            let dict = match object {
+                Object::Dictionary(dict) => Some(dict),
+                Object::Stream(stream) => {
+                    stream_count += 1;
+                    Some(&stream.dict)
+                }
+                _ => None,
+            };
+            let Some(dict) = dict else { continue };
+
+            if matches!(dict.get(b"Type").ok(), Some(Object::Name(name)) if name == b"Annot") {
+                annotation_count += 1;
+            }
+            if matches!(dict.get(b"Type").ok(), Some(Object::Name(name)) if name == b"XObject")
+                || matches!(dict.get(b"Subtype").ok(), Some(Object::Name(name)) if name == b"Form" || name == b"Image")
+            {
+                xobject_count += 1;
+            }
+            if dict.has(b"FT") {
+                form_field_count += 1;
+            }
+        }
+
+        let root = self.inner.trailer.get(b"Root")?.as_reference()?;
+        let catalog = self.inner.get_object(root)?.as_dict()?;
+        let attachment_count = self.list_attachments()?.len();
+
+        Ok(crate::document::StructureAudit {
+            object_count: self.inner.objects.len(),
+            page_count: self.page_count(),
+            stream_count,
+            annotation_count,
+            xobject_count,
+            form_field_count,
+            attachment_count,
+            has_metadata: self.inner.trailer.get(b"Info").is_ok(),
+            has_outline: catalog.get(b"Outlines").is_ok(),
+            has_names: catalog.get(b"Names").is_ok(),
+        })
+    }
+
+    /// Compares the current structure with a previously captured audit.
+    pub fn mutation_report(
+        &self,
+        before: &crate::document::StructureAudit,
+    ) -> Result<crate::document::MutationReport> {
+        let after = self.audit_structure()?;
+        let mut changed_fields = Vec::new();
+        if before.object_count != after.object_count {
+            changed_fields.push("object_count".into());
+        }
+        if before.page_count != after.page_count {
+            changed_fields.push("page_count".into());
+        }
+        if before.stream_count != after.stream_count {
+            changed_fields.push("stream_count".into());
+        }
+        if before.annotation_count != after.annotation_count {
+            changed_fields.push("annotation_count".into());
+        }
+        if before.xobject_count != after.xobject_count {
+            changed_fields.push("xobject_count".into());
+        }
+        if before.form_field_count != after.form_field_count {
+            changed_fields.push("form_field_count".into());
+        }
+        if before.attachment_count != after.attachment_count {
+            changed_fields.push("attachment_count".into());
+        }
+        if before.has_metadata != after.has_metadata {
+            changed_fields.push("has_metadata".into());
+        }
+        if before.has_outline != after.has_outline {
+            changed_fields.push("has_outline".into());
+        }
+        if before.has_names != after.has_names {
+            changed_fields.push("has_names".into());
+        }
+
+        Ok(crate::document::MutationReport {
+            before: before.clone(),
+            after,
+            changed_fields,
+        })
+    }
+
+    /// Repairs only a page's top-level `/Contents` value.
+    ///
+    /// Valid single-stream, direct-array, and indirect-array representations
+    /// are preserved. A missing entry or an invalid/dangling value is replaced
+    /// with a new empty stream and reported; nested stream contents are never
+    /// guessed at or rewritten.
+    pub fn repair_page_contents(&mut self, page: u32) -> Result<crate::document::RepairReport> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "cannot repair page contents after save(); create a new Document".into(),
+            ));
+        }
+        let page_id = self
+            .inner
+            .get_pages()
+            .get(&page)
+            .copied()
+            .ok_or(Error::PageNotFound(page))?;
+        let contents = self
+            .inner
+            .get_object(page_id)?
+            .as_dict()?
+            .get(b"Contents")
+            .ok()
+            .cloned();
+
+        let warning = match contents {
+            None => Some(crate::document::RepairWarning {
+                kind: crate::document::RepairWarningKind::MissingContents,
+                message: "page has no /Contents entry; created an empty stream".into(),
+            }),
+            Some(Object::Reference(reference)) => {
+                let valid = self
+                    .inner
+                    .get_object(reference)
+                    .map(|object| matches!(object, Object::Stream(_) | Object::Array(_)))
+                    .unwrap_or(false);
+                if valid {
+                    None
+                } else {
+                    Some(crate::document::RepairWarning {
+                        kind: crate::document::RepairWarningKind::DanglingContentsReference,
+                        message: format!(
+                            "page /Contents reference {} {} does not resolve to a stream or array",
+                            reference.0, reference.1
+                        ),
+                    })
+                }
+            }
+            Some(Object::Array(_)) | Some(Object::Stream(_)) => None,
+            Some(_) => Some(crate::document::RepairWarning {
+                kind: crate::document::RepairWarningKind::InvalidContentsValue,
+                message: "page /Contents has an unsupported direct value; created an empty stream"
+                    .into(),
+            }),
+        };
+
+        let Some(warning) = warning else {
+            return Ok(crate::document::RepairReport {
+                page,
+                changed: false,
+                warnings: Vec::new(),
+            });
+        };
+
+        let stream_id = self
+            .inner
+            .add_object(Object::Stream(Stream::new(Dictionary::new(), Vec::new())));
+        self.inner
+            .get_object_mut(page_id)?
+            .as_dict_mut()?
+            .set("Contents", Object::Reference(stream_id));
+        Ok(crate::document::RepairReport {
+            page,
+            changed: true,
+            warnings: vec![warning],
+        })
+    }
+
+    /// Repairs only a page's top-level `/Resources` value.
+    ///
+    /// Valid direct and indirect resource dictionaries are preserved. A
+    /// missing entry is materialized from the page-tree inheritance chain when
+    /// possible; only when no valid inherited dictionary exists is an empty
+    /// dictionary created and reported. Invalid/dangling explicit values are
+    /// replaced with an empty dictionary and reported; nested resource entries
+    /// are never guessed at.
+    pub fn repair_page_resources(&mut self, page: u32) -> Result<crate::document::RepairReport> {
+        if self.finalized {
+            return Err(Error::InvalidInput(
+                "cannot repair page resources after save(); create a new Document".into(),
+            ));
+        }
+        let page_id = self
+            .inner
+            .get_pages()
+            .get(&page)
+            .copied()
+            .ok_or(Error::PageNotFound(page))?;
+        let resources = self
+            .inner
+            .get_object(page_id)?
+            .as_dict()?
+            .get(b"Resources")
+            .ok()
+            .cloned();
+
+        let inherited = resources
+            .is_none()
+            .then(|| inherited_resources(&self.inner, page_id));
+        let (replacement, warning) = match resources {
+            None => match inherited.flatten() {
+                Some(resources) => (resources, None),
+                None => (
+                    Dictionary::new(),
+                    Some(crate::document::RepairWarning {
+                        kind: crate::document::RepairWarningKind::MissingResources,
+                        message: "page has no /Resources entry and no valid inherited resources; created an empty dictionary".into(),
+                    }),
+                ),
+            },
+            Some(Object::Reference(reference)) => {
+                let valid = self
+                    .inner
+                    .get_object(reference)
+                    .map(|object| matches!(object, Object::Dictionary(_)))
+                    .unwrap_or(false);
+                if valid {
+                    return Ok(crate::document::RepairReport {
+                        page,
+                        changed: false,
+                        warnings: Vec::new(),
+                    });
+                } else {
+                    (
+                        Dictionary::new(),
+                        Some(crate::document::RepairWarning {
+                            kind: crate::document::RepairWarningKind::DanglingResourcesReference,
+                            message: format!(
+                                "page /Resources reference {} {} does not resolve to a dictionary",
+                                reference.0, reference.1
+                            ),
+                        }),
+                    )
+                }
+            }
+            Some(Object::Dictionary(_)) => {
+                return Ok(crate::document::RepairReport {
+                    page,
+                    changed: false,
+                    warnings: Vec::new(),
+                });
+            }
+            Some(_) => (
+                Dictionary::new(),
+                Some(crate::document::RepairWarning {
+                    kind: crate::document::RepairWarningKind::InvalidResourcesValue,
+                    message:
+                        "page /Resources has an unsupported direct value; created an empty dictionary"
+                            .into(),
+                }),
+            ),
+        };
+
+        self.inner
+            .get_object_mut(page_id)?
+            .as_dict_mut()?
+            .set("Resources", Object::Dictionary(replacement));
+        Ok(crate::document::RepairReport {
+            page,
+            changed: true,
+            warnings: warning.into_iter().collect(),
+        })
     }
 
     /// Registers a TrueType font for later embedding.
@@ -2010,7 +2057,8 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
         Ok(helpers::text_width_with_face(text, &face, font_size))
     }
 
@@ -2039,7 +2087,8 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
         Ok(helpers::plan_text_fit(text, &face, rect, font_size, &opts))
     }
 
@@ -2067,7 +2116,8 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
 
         let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
         let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());
@@ -2159,7 +2209,8 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
+            .map_err(|e| Error::FontParse(e.to_string()))?;
 
         let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
         let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());
@@ -2358,97 +2409,119 @@ impl Document {
         Ok(result)
     }
 
-    /// Extracts a page range while preserving warnings and page-local failures.
+    /// Extracts text and page-local diagnostics from every page.
     ///
-    /// A malformed page does not discard successful pages. Failed page numbers
-    /// are retained in the result and can be retried independently.
+    /// Unlike [`extract_all_text_runs`](Document::extract_all_text_runs), this
+    /// grouped form keeps warnings attached to the page that produced them and
+    /// includes empty pages. It is intended for bulk readers and resumable ETL
+    /// pipelines that need to persist page-level success and warning state.
+    ///
+    /// # Errors
+    /// Returns an error if any page cannot be read or if the document exceeds
+    /// the safe page-count limit used by bulk extraction.
+    pub fn extract_all_text_runs_verbose(&self) -> Result<Vec<crate::extract::PageTextExtraction>> {
+        const MAX_PAGES_SAFE: u32 = 1_000_000;
+        let page_count = self.page_count();
+        if page_count > MAX_PAGES_SAFE {
+            return Err(Error::InvalidInput(format!(
+                "PDF has {} pages, exceeds safe limit of {}",
+                page_count, MAX_PAGES_SAFE
+            )));
+        }
+
+        if page_count == 0 {
+            return Ok(Vec::new());
+        }
+        self.extract_text_runs_verbose_page_range(1, page_count)
+    }
+
+    /// Extracts a bounded page range with page-local diagnostics.
+    ///
+    /// `start_page` and `end_page` are inclusive and 1-based. Callers can
+    /// resume after a failed batch by advancing `start_page`; no pages outside
+    /// the requested range are read.
     pub fn extract_text_runs_verbose_page_range(
         &self,
         start_page: u32,
         end_page: u32,
-    ) -> Result<Vec<crate::document::PageTextExtraction>> {
-        if start_page == 0 || end_page == 0 || start_page > end_page {
+    ) -> Result<Vec<crate::extract::PageTextExtraction>> {
+        const MAX_PAGES_SAFE: u32 = 1_000_000;
+        let page_count = self.page_count();
+        if page_count > MAX_PAGES_SAFE {
             return Err(Error::InvalidInput(format!(
-                "invalid page range {start_page}..={end_page}"
+                "PDF has {} pages, exceeds safe limit of {}",
+                page_count, MAX_PAGES_SAFE
             )));
         }
-        let page_count = self.page_count();
-        if end_page > page_count {
-            return Err(Error::PageNotFound(end_page));
+        if start_page == 0 || end_page == 0 || start_page > end_page || end_page > page_count {
+            return Err(Error::InvalidInput(format!(
+                "invalid page range {}..={} for {}-page PDF",
+                start_page, end_page, page_count
+            )));
         }
-        Ok((start_page..=end_page)
-            .map(|page| match self.extract_text_runs_verbose(page) {
-                Ok((runs, warnings)) => crate::document::PageTextExtraction {
+
+        (start_page..=end_page)
+            .map(|page| {
+                let (fragments, warnings) = self.extract_text_runs_verbose(page)?;
+                Ok(crate::extract::PageTextExtraction {
                     page,
-                    runs,
+                    fragments,
                     warnings,
-                    error: None,
-                },
-                Err(error) => crate::document::PageTextExtraction {
-                    page,
-                    runs: Vec::new(),
-                    warnings: Vec::new(),
-                    error: Some(error.to_string()),
-                },
+                })
             })
-            .collect())
+            .collect()
     }
 
-    /// Processes a page range in bounded batches.
+    /// Streams verbose extraction in bounded page batches.
     ///
-    /// Pages are extracted one at a time and released after their batch is
-    /// delivered. Unlike [`extract_text_runs_verbose_page_range`], this method
-    /// does not retain the complete range in memory.
+    /// The callback receives one owned batch at a time and may persist it before
+    /// the next batch is extracted. Returning an error stops immediately, so a
+    /// caller can record the last successful page and resume with
+    /// [`extract_text_runs_verbose_page_range`](Document::extract_text_runs_verbose_page_range).
     pub fn for_each_text_runs_verbose_batch<F>(
         &self,
-        start_page: u32,
-        end_page: u32,
-        batch_size: usize,
+        batch_size: u32,
         mut callback: F,
     ) -> Result<()>
     where
-        F: FnMut(&[crate::document::PageTextExtraction]) -> Result<()>,
+        F: FnMut(Vec<crate::extract::PageTextExtraction>) -> Result<()>,
     {
         if batch_size == 0 {
-            return Err(Error::InvalidInput("batch_size must be positive".into()));
-        }
-        if start_page == 0 || end_page == 0 || start_page > end_page {
-            return Err(Error::InvalidInput(format!(
-                "invalid page range {start_page}..={end_page}"
-            )));
-        }
-        let page_count = self.page_count();
-        if end_page > page_count {
-            return Err(Error::PageNotFound(end_page));
+            return Err(Error::InvalidInput(
+                "batch_size must be greater than zero".into(),
+            ));
         }
 
-        let page_span = (end_page - start_page + 1) as usize;
-        let mut batch = Vec::with_capacity(batch_size.min(page_span));
-        for page in start_page..=end_page {
-            let extraction = match self.extract_text_runs_verbose(page) {
-                Ok((runs, warnings)) => crate::document::PageTextExtraction {
-                    page,
-                    runs,
-                    warnings,
-                    error: None,
-                },
-                Err(error) => crate::document::PageTextExtraction {
-                    page,
-                    runs: Vec::new(),
-                    warnings: Vec::new(),
-                    error: Some(error.to_string()),
-                },
-            };
-            batch.push(extraction);
-            if batch.len() == batch_size {
-                callback(&batch)?;
-                batch.clear();
-            }
-        }
-        if !batch.is_empty() {
-            callback(&batch)?;
+        let page_count = self.page_count();
+        let mut start_page = 1;
+        while start_page <= page_count {
+            let end_page = start_page
+                .saturating_add(batch_size.saturating_sub(1))
+                .min(page_count);
+            callback(self.extract_text_runs_verbose_page_range(start_page, end_page)?)?;
+            start_page = end_page.saturating_add(1);
         }
         Ok(())
+    }
+
+    /// Extracts all page text and diagnostics as a versioned JSON envelope.
+    ///
+    /// The output has the shape `{ "schema": "harumi-extraction-v1", "pages": [...] }`.
+    /// Each page record contains `page`, `fragments`, and `warnings`; empty pages
+    /// are retained. This method requires the optional `json` feature.
+    #[cfg(feature = "json")]
+    pub fn extract_all_text_runs_json(&self) -> Result<String> {
+        #[derive(serde::Serialize)]
+        struct ExtractionEnvelope {
+            schema: &'static str,
+            pages: Vec<crate::extract::PageTextExtraction>,
+        }
+
+        serde_json::to_string(&ExtractionEnvelope {
+            schema: "harumi-extraction-v1",
+            pages: self.extract_all_text_runs_verbose()?,
+        })
+        .map_err(|error| Error::InvalidInput(format!("JSON serialization failed: {error}")))
     }
 
     /// Extracts the largest raster image embedded on the given page (1-indexed).
@@ -2839,66 +2912,6 @@ impl Document {
         Ok(())
     }
 
-    fn embed_pending_fonts(
-        &mut self,
-        font_chars: &HashMap<u32, Vec<char>>,
-    ) -> Result<HashMap<u32, EmbedState>> {
-        let mut embedded = HashMap::new();
-        let mut used_font_names = collect_font_resource_names(&self.inner);
-        for (&font_idx, chars) in font_chars {
-            let raw = self
-                .raw_fonts
-                .get(font_idx as usize)
-                .ok_or(Error::InvalidFont(font_idx))?;
-            let subset = subset_font(&raw.ttf_bytes, chars)?;
-            let char_to_gid = subset.char_to_gid.clone();
-            let face =
-                Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
-            let bb = face.global_bounding_box();
-            let upm = face.units_per_em() as f64;
-            let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
-            let pdf_name = allocate_pdf_font_name(&mut used_font_names, font_idx);
-            let font_name = format!("HARUMI+{}", String::from_utf8_lossy(&pdf_name));
-            let saved_gid_to_char = subset.gid_to_char.clone();
-            let saved_gid_to_advance = subset.gid_to_advance.clone();
-            let params = EmbedParams {
-                font_name: &font_name,
-                subset_bytes: subset.bytes,
-                gid_to_char: subset.gid_to_char,
-                gid_to_advance: subset.gid_to_advance,
-                units_per_em: subset.units_per_em,
-                font_bbox: [
-                    scale(bb.x_min),
-                    scale(bb.y_min),
-                    scale(bb.x_max),
-                    scale(bb.y_max),
-                ],
-                ascent: scale(face.ascender()),
-                descent: scale(face.descender()),
-                cap_height: scale(face.capital_height().unwrap_or(face.ascender())),
-                font_kind: subset.font_kind,
-            };
-            let type0_id = embed_cid_font(&mut self.inner, params)?;
-            let units_per_em = face.units_per_em();
-            embedded.insert(
-                font_idx,
-                EmbedState {
-                    ef: EmbeddedFont {
-                        type0_id,
-                        pdf_name,
-                        gid_to_char: saved_gid_to_char,
-                        gid_to_advance: saved_gid_to_advance.clone(),
-                        units_per_em,
-                    },
-                    char_to_gid,
-                    gid_to_advance: saved_gid_to_advance,
-                    units_per_em,
-                },
-            );
-        }
-        Ok(embedded)
-    }
-
     /// Subsets fonts, embeds them, and injects all pending content streams.
     fn finalize(&mut self) -> Result<()> {
         if self.finalized && !self.pending.is_empty() {
@@ -3180,219 +3193,7 @@ impl Document {
         // Pass 3: build one content stream per page and update /Resources.
         let pending = std::mem::take(&mut self.pending);
         for page in pending {
-            let page_id = page.page_id;
-            let mut page_stream = Vec::new();
-
-            let mut registered_fonts: Vec<u32> = Vec::new();
-
-            #[cfg(feature = "draw")]
-            let mut gs_registry = crate::draw::ExtGStateRegistry::new();
-            #[cfg(feature = "image")]
-            let mut xobj_entries: Vec<(String, lopdf::ObjectId)> = Vec::new();
-            #[cfg(feature = "image")]
-            let mut xobj_counter: u32 = 0;
-
-            for op in &page.ops {
-                match op {
-                    PendingOp::Replace(_) => {}         // handled in replace pass above
-                    PendingOp::ReplacePreserve(_) => {} // handled in ReplacePreserve pass above
-                    PendingOp::ReplaceResubset(_) => {} // handled in resubset pass above
-                    PendingOp::Text(t) => {
-                        let state = embedded
-                            .get(&t.font.0)
-                            .ok_or(Error::InvalidFont(t.font.0))?;
-                        let chars: Vec<char> = t.text.chars().collect();
-                        #[cfg(feature = "draw")]
-                        let gs_opt = if t.opacity < 1.0 {
-                            Some(gs_registry.register(t.opacity))
-                        } else {
-                            None
-                        };
-                        #[cfg(not(feature = "draw"))]
-                        let gs_opt: Option<String> = None;
-                        let fragment = text_stream(
-                            &state.ef.pdf_name,
-                            t.font_size,
-                            t.x,
-                            t.y,
-                            t.rotation_degrees,
-                            &chars,
-                            &state.char_to_gid,
-                            t.render_mode,
-                            t.color,
-                            gs_opt.as_deref(),
-                            t.bold,
-                            t.italic,
-                            t.char_spacing,
-                        );
-                        page_stream.extend_from_slice(&fragment);
-                        if !registered_fonts.contains(&t.font.0) {
-                            registered_fonts.push(t.font.0);
-                        }
-                    }
-                    #[cfg(feature = "draw")]
-                    PendingOp::Draw(draw_op) => {
-                        use crate::draw::{DrawOp, shapes};
-                        match draw_op {
-                            DrawOp::Rect {
-                                rect,
-                                color,
-                                opacity,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::rect_stream(rect, *color, &gs));
-                            }
-                            DrawOp::RectStroke {
-                                rect,
-                                color,
-                                line_width,
-                                opacity,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::rect_stroke_stream(
-                                    rect,
-                                    *color,
-                                    *line_width,
-                                    &gs,
-                                ));
-                            }
-                            DrawOp::Line {
-                                from,
-                                to,
-                                color,
-                                width,
-                                opacity,
-                                dash,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::line_stream(
-                                    from,
-                                    to,
-                                    *color,
-                                    *width,
-                                    &gs,
-                                    dash.as_ref()
-                                        .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
-                                ));
-                            }
-                            DrawOp::Polygon {
-                                points,
-                                color,
-                                opacity,
-                                filled,
-                                stroke_width,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polygon_stream(
-                                    points,
-                                    *color,
-                                    &gs,
-                                    *filled,
-                                    *stroke_width,
-                                ));
-                            }
-                            DrawOp::Polyline {
-                                points,
-                                color,
-                                width,
-                                opacity,
-                                dash,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::polyline_stream(
-                                    points,
-                                    *color,
-                                    *width,
-                                    &gs,
-                                    dash.as_ref()
-                                        .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
-                                ));
-                            }
-                            DrawOp::Ellipse {
-                                rect,
-                                color,
-                                opacity,
-                                filled,
-                                stroke_width,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::ellipse_stream(
-                                    rect,
-                                    *color,
-                                    &gs,
-                                    *filled,
-                                    *stroke_width,
-                                ));
-                            }
-                            DrawOp::Path {
-                                points,
-                                closed,
-                                color,
-                                opacity,
-                                filled,
-                                stroke_width,
-                            } => {
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(shapes::path_stream(
-                                    points,
-                                    *closed,
-                                    *color,
-                                    &gs,
-                                    *filled,
-                                    *stroke_width,
-                                ));
-                            }
-                            #[cfg(feature = "image")]
-                            DrawOp::Image {
-                                bytes,
-                                rect,
-                                opacity,
-                            } => {
-                                let img = crate::draw::image::prepare(bytes)?;
-                                let xobj_id =
-                                    crate::draw::image::embed_xobject(&mut self.inner, img)?;
-                                let xobj_name = format!("Im{}", xobj_counter);
-                                xobj_counter += 1;
-                                let gs = gs_registry.register(*opacity);
-                                page_stream.extend(crate::draw::image::image_stream(
-                                    &xobj_name, rect, &gs,
-                                ));
-                                xobj_entries.push((xobj_name, xobj_id));
-                            }
-                        }
-                    }
-                }
-            }
-
-            let new_stream_id = self
-                .inner
-                .add_object(Object::Stream(Stream::new(Dictionary::new(), page_stream)));
-            // Isolate existing page CTM before appending, so any unbalanced `cm` in
-            // the existing content doesn't affect the newly appended text/draw stream.
-            wrap_page_contents_in_q_q(&mut self.inner, page_id)?;
-            append_to_contents(&mut self.inner, page_id, new_stream_id)?;
-
-            for font_idx in registered_fonts {
-                let state = embedded
-                    .get(&font_idx)
-                    .ok_or(Error::InvalidFont(font_idx))?;
-                add_font_to_resources(
-                    &mut self.inner,
-                    page_id,
-                    &state.ef.pdf_name,
-                    state.ef.type0_id,
-                )?;
-            }
-
-            #[cfg(feature = "draw")]
-            if !gs_registry.is_empty() {
-                add_ext_gstate_to_resources(&mut self.inner, page_id, gs_registry)?;
-            }
-
-            #[cfg(feature = "image")]
-            for (name, obj_id) in xobj_entries {
-                add_xobject_to_resources(&mut self.inner, page_id, name.as_bytes(), obj_id)?;
-            }
+            self.emit_pending_page(page, &embedded)?;
         }
 
         self.build_outlines_from_bookmarks()?;
@@ -3400,33 +3201,29 @@ impl Document {
         Ok(())
     }
 
-    /// Builds the PDF `/Outlines` tree from `pending_bookmarks` and links it into the `/Catalog`.
+    /// Collects and deduplicates characters needed by pending font-backed operations.
     ///
-    /// If the document already has an `/Outlines` tree (e.g. loaded from an existing PDF), the
-    /// new items are **appended** to the existing flat list rather than replacing it.
-    ///
-    /// **Limitation:** `/Count` merging is only accurate for flat (non-nested) outline trees.
-    /// For PDFs whose existing outlines have nested children, the count may be imprecise, but
-    /// the linked-list structure remains navigable.
-    #[allow(clippy::type_complexity)]
+    /// Kept separate from finalization so font collection remains an independently
+    /// testable, side-effect-free phase of the save pipeline.
     fn collect_pending_font_chars(&self) -> HashMap<u32, Vec<char>> {
         let mut font_chars: HashMap<u32, Vec<char>> = HashMap::new();
         for page in &self.pending {
             for op in &page.ops {
                 match op {
-                    PendingOp::Text(text) => {
+                    PendingOp::Text(t) => {
                         font_chars
-                            .entry(text.font.0)
+                            .entry(t.font.0)
                             .or_default()
-                            .extend(text.text.chars());
+                            .extend(t.text.chars());
                     }
-                    PendingOp::Replace(replace) => {
+                    PendingOp::Replace(r) => {
                         font_chars
-                            .entry(replace.font.0)
+                            .entry(r.font.0)
                             .or_default()
-                            .extend(replace.new_text.chars());
+                            .extend(r.new_text.chars());
                     }
-                    PendingOp::ReplacePreserve(_) | PendingOp::ReplaceResubset(_) => {}
+                    PendingOp::ReplacePreserve(_) => {}
+                    PendingOp::ReplaceResubset(_) => {}
                     #[cfg(feature = "draw")]
                     PendingOp::Draw(_) => {}
                 }
@@ -3439,6 +3236,306 @@ impl Document {
         font_chars
     }
 
+    /// Subsets and embeds every font required by the pending operations once.
+    ///
+    /// Keeping this phase separate from content-stream rewriting makes the
+    /// font contract explicit: all later passes consume the same resolved
+    /// character/GID and advance-width maps.
+    fn embed_pending_fonts(
+        &mut self,
+        font_chars: &HashMap<u32, Vec<char>>,
+    ) -> Result<HashMap<u32, EmbedState>> {
+        let mut embedded = HashMap::new();
+
+        for (&font_idx, chars) in font_chars {
+            let raw = self
+                .raw_fonts
+                .get(font_idx as usize)
+                .ok_or(Error::InvalidFont(font_idx))?;
+            let subset = subset_font(&raw.ttf_bytes, chars)?;
+            let char_to_gid = subset.char_to_gid.clone();
+            let face =
+                Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+            let bb = face.global_bounding_box();
+            let upm = face.units_per_em() as f64;
+            let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
+            let font_name = format!("HARUMI+HR{}", font_idx);
+            let pdf_name = format!("HR{}", font_idx).into_bytes();
+            let saved_gid_to_char = subset.gid_to_char.clone();
+            let saved_gid_to_advance = subset.gid_to_advance.clone();
+            let params = EmbedParams {
+                font_name: &font_name,
+                subset_bytes: subset.bytes,
+                gid_to_char: subset.gid_to_char,
+                gid_to_advance: subset.gid_to_advance,
+                units_per_em: subset.units_per_em,
+                font_bbox: [
+                    scale(bb.x_min),
+                    scale(bb.y_min),
+                    scale(bb.x_max),
+                    scale(bb.y_max),
+                ],
+                ascent: scale(face.ascender()),
+                descent: scale(face.descender()),
+                cap_height: scale(face.capital_height().unwrap_or(face.ascender())),
+                font_kind: subset.font_kind,
+            };
+            let type0_id = embed_cid_font(&mut self.inner, params)?;
+            let units_per_em = face.units_per_em();
+
+            embedded.insert(
+                font_idx,
+                EmbedState {
+                    ef: EmbeddedFont {
+                        type0_id,
+                        pdf_name,
+                        gid_to_char: saved_gid_to_char,
+                        gid_to_advance: saved_gid_to_advance.clone(),
+                        units_per_em,
+                    },
+                    char_to_gid,
+                    gid_to_advance: saved_gid_to_advance,
+                    units_per_em,
+                },
+            );
+        }
+
+        Ok(embedded)
+    }
+
+    /// Emits one page's pending operations and registers the resources it uses.
+    ///
+    /// This is the page-local third pass of [`Self::finalize`]. Keeping it
+    /// isolated makes the ordering contract explicit while leaving font
+    /// collection/embedding independent from stream emission.
+    fn emit_pending_page(
+        &mut self,
+        page: PendingPage,
+        embedded: &HashMap<u32, EmbedState>,
+    ) -> Result<()> {
+        let page_id = page.page_id;
+        let mut page_stream = Vec::new();
+        let mut registered_fonts: Vec<u32> = Vec::new();
+
+        #[cfg(feature = "draw")]
+        let mut gs_registry = crate::draw::ExtGStateRegistry::new();
+        #[cfg(feature = "image")]
+        let mut xobj_entries: Vec<(String, lopdf::ObjectId)> = Vec::new();
+        #[cfg(feature = "image")]
+        let mut xobj_counter: u32 = 0;
+
+        for op in &page.ops {
+            match op {
+                PendingOp::Replace(_) => {}         // handled in the replacement pass
+                PendingOp::ReplacePreserve(_) => {} // handled in the replacement pass
+                PendingOp::ReplaceResubset(_) => {} // handled in the replacement pass
+                PendingOp::Text(t) => {
+                    let state = embedded
+                        .get(&t.font.0)
+                        .ok_or(Error::InvalidFont(t.font.0))?;
+                    let chars: Vec<char> = t.text.chars().collect();
+                    #[cfg(feature = "draw")]
+                    let gs_opt = if t.opacity < 1.0 {
+                        Some(gs_registry.register(t.opacity))
+                    } else {
+                        None
+                    };
+                    #[cfg(not(feature = "draw"))]
+                    let gs_opt: Option<String> = None;
+                    let fragment = text_stream(
+                        &state.ef.pdf_name,
+                        t.font_size,
+                        t.x,
+                        t.y,
+                        t.rotation_degrees,
+                        &chars,
+                        &state.char_to_gid,
+                        t.render_mode,
+                        t.color,
+                        gs_opt.as_deref(),
+                        t.bold,
+                        t.italic,
+                        t.char_spacing,
+                    );
+                    page_stream.extend_from_slice(&fragment);
+                    if !registered_fonts.contains(&t.font.0) {
+                        registered_fonts.push(t.font.0);
+                    }
+                }
+                #[cfg(feature = "draw")]
+                PendingOp::Draw(draw_op) => {
+                    use crate::draw::{DrawOp, shapes};
+                    match draw_op {
+                        DrawOp::Rect {
+                            rect,
+                            color,
+                            opacity,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::rect_stream(rect, *color, &gs));
+                        }
+                        DrawOp::RectStroke {
+                            rect,
+                            color,
+                            line_width,
+                            opacity,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::rect_stroke_stream(
+                                rect,
+                                *color,
+                                *line_width,
+                                &gs,
+                            ));
+                        }
+                        DrawOp::Line {
+                            from,
+                            to,
+                            color,
+                            width,
+                            opacity,
+                            dash,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::line_stream(
+                                from,
+                                to,
+                                *color,
+                                *width,
+                                &gs,
+                                dash.as_ref()
+                                    .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
+                            ));
+                        }
+                        DrawOp::Polygon {
+                            points,
+                            color,
+                            opacity,
+                            filled,
+                            stroke_width,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::polygon_stream(
+                                points,
+                                *color,
+                                &gs,
+                                *filled,
+                                *stroke_width,
+                            ));
+                        }
+                        DrawOp::Polyline {
+                            points,
+                            color,
+                            width,
+                            opacity,
+                            dash,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::polyline_stream(
+                                points,
+                                *color,
+                                *width,
+                                &gs,
+                                dash.as_ref()
+                                    .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
+                            ));
+                        }
+                        DrawOp::Ellipse {
+                            rect,
+                            color,
+                            opacity,
+                            filled,
+                            stroke_width,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::ellipse_stream(
+                                rect,
+                                *color,
+                                &gs,
+                                *filled,
+                                *stroke_width,
+                            ));
+                        }
+                        DrawOp::Path {
+                            points,
+                            closed,
+                            color,
+                            opacity,
+                            filled,
+                            stroke_width,
+                        } => {
+                            let gs = gs_registry.register(*opacity);
+                            page_stream.extend(shapes::path_stream(
+                                points,
+                                *closed,
+                                *color,
+                                &gs,
+                                *filled,
+                                *stroke_width,
+                            ));
+                        }
+                        #[cfg(feature = "image")]
+                        DrawOp::Image {
+                            bytes,
+                            rect,
+                            opacity,
+                        } => {
+                            let img = crate::draw::image::prepare(bytes)?;
+                            let xobj_id = crate::draw::image::embed_xobject(&mut self.inner, img)?;
+                            let xobj_name = format!("Im{}", xobj_counter);
+                            xobj_counter += 1;
+                            let gs = gs_registry.register(*opacity);
+                            page_stream
+                                .extend(crate::draw::image::image_stream(&xobj_name, rect, &gs));
+                            xobj_entries.push((xobj_name, xobj_id));
+                        }
+                    }
+                }
+            }
+        }
+
+        let new_stream_id = self
+            .inner
+            .add_object(Object::Stream(Stream::new(Dictionary::new(), page_stream)));
+        // Isolate existing page CTM before appending, so any unbalanced `cm` in
+        // the existing content doesn't affect the newly appended text/draw stream.
+        wrap_page_contents_in_q_q(&mut self.inner, page_id)?;
+        append_to_contents(&mut self.inner, page_id, new_stream_id)?;
+
+        for font_idx in registered_fonts {
+            let state = embedded
+                .get(&font_idx)
+                .ok_or(Error::InvalidFont(font_idx))?;
+            add_font_to_resources(
+                &mut self.inner,
+                page_id,
+                &state.ef.pdf_name,
+                state.ef.type0_id,
+            )?;
+        }
+
+        #[cfg(feature = "draw")]
+        if !gs_registry.is_empty() {
+            add_ext_gstate_to_resources(&mut self.inner, page_id, gs_registry)?;
+        }
+
+        #[cfg(feature = "image")]
+        for (name, obj_id) in xobj_entries {
+            add_xobject_to_resources(&mut self.inner, page_id, name.as_bytes(), obj_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Builds the PDF `/Outlines` tree from `pending_bookmarks` and links it into the `/Catalog`.
+    ///
+    /// If the document already has an `/Outlines` tree (e.g. loaded from an existing PDF), the
+    /// new items are **appended** to the existing flat list rather than replacing it.
+    ///
+    /// **Limitation:** `/Count` merging is only accurate for flat (non-nested) outline trees.
+    /// For PDFs whose existing outlines have nested children, the count may be imprecise, but
+    /// the linked-list structure remains navigable.
+    #[allow(clippy::type_complexity)]
     fn build_outlines_from_bookmarks(&mut self) -> Result<()> {
         if self.pending_bookmarks.is_empty() {
             return Ok(());
@@ -3455,7 +3552,7 @@ impl Document {
         }
 
         // Hierarchical outline: normalize levels to 1..=6 if any item has level 0 mixed in.
-        let levels = Self::normalized_bookmark_levels(&bookmarks);
+        let levels: Vec<u8> = bookmarks.iter().map(|b| b.level.max(1)).collect();
 
         // Pre-allocate object IDs for all items.
         let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
@@ -3473,8 +3570,8 @@ impl Document {
 
         // Build outline item objects with parent/sibling links.
         // Stack: (level, item_idx, first_child_idx, last_child_idx, child_count)
-        type OutlineStackFrame = (u8, usize, Option<usize>, Option<usize>, u32);
-        let mut stack: Vec<OutlineStackFrame> = vec![(0, usize::MAX, None, None, 0)];
+        let mut stack: Vec<(u8, usize, Option<usize>, Option<usize>, u32)> =
+            vec![(0, usize::MAX, None, None, 0)];
 
         for i in 0..n {
             let curr_level = levels[i];
@@ -3598,13 +3695,6 @@ impl Document {
         }
 
         Ok(())
-    }
-
-    fn normalized_bookmark_levels(bookmarks: &[PendingBookmark]) -> Vec<u8> {
-        bookmarks
-            .iter()
-            .map(|bookmark| bookmark.level.max(1))
-            .collect()
     }
 
     /// Build a flat outline tree (backward compatibility when all levels == 0).

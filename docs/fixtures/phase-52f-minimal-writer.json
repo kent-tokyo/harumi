@@ -1,0 +1,9 @@
+{
+  "schema": "harumi-competitive-domain-fixture-v1",
+  "domain": "minimal-writer",
+  "reference": "pdf-writer",
+  "input": "tests/fixtures/NotoSansJP-Regular.ttf",
+  "operations": ["blank_page", "text", "cjk_font", "image", "link", "metadata", "outline", "save_reload"],
+  "required_checks": ["pdf_validity", "cjk_extraction", "save_reload", "deterministic_objects"],
+  "runtime": {"native_and_wasm": true}
+}

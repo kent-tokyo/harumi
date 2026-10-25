@@ -127,6 +127,87 @@ pub struct AttachmentInfo {
     pub mime_type: Option<String>,
 }
 
+/// A bounded audit snapshot of the PDF object graph.
+///
+/// This reports common structural categories instead of exposing every
+/// `lopdf` object, keeping the high-level API independent from object IDs.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureAudit {
+    /// Total number of indirect objects.
+    pub object_count: usize,
+    /// Number of pages in the page tree.
+    pub page_count: u32,
+    /// Number of stream objects, including page contents and embedded files.
+    pub stream_count: usize,
+    /// Number of annotation dictionaries.
+    pub annotation_count: usize,
+    /// Number of Form/Image XObject dictionaries.
+    pub xobject_count: usize,
+    /// Number of AcroForm field dictionaries.
+    pub form_field_count: usize,
+    /// Number of embedded file attachments.
+    pub attachment_count: usize,
+    /// Whether the catalog references an Info dictionary.
+    pub has_metadata: bool,
+    /// Whether the catalog references an outline tree.
+    pub has_outline: bool,
+    /// Whether the catalog references a Names dictionary.
+    pub has_names: bool,
+}
+
+/// An auditable summary of structural changes between two snapshots.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutationReport {
+    /// Snapshot captured before the operation.
+    pub before: StructureAudit,
+    /// Snapshot captured after the operation.
+    pub after: StructureAudit,
+    /// Stable field names whose values changed.
+    pub changed_fields: Vec<String>,
+}
+
+/// Category of a bounded page-contents repair warning.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepairWarningKind {
+    /// The page had no `/Contents` entry and an empty stream was created.
+    MissingContents,
+    /// The page `/Contents` value had an unsupported direct type.
+    InvalidContentsValue,
+    /// The page `/Contents` reference did not resolve to a stream or array.
+    DanglingContentsReference,
+    /// The page had no `/Resources` entry and an empty dictionary was created.
+    MissingResources,
+    /// The page `/Resources` value had an unsupported direct type.
+    InvalidResourcesValue,
+    /// The page `/Resources` reference did not resolve to a dictionary.
+    DanglingResourcesReference,
+}
+
+/// A non-fatal warning emitted by a bounded repair operation.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairWarning {
+    /// Warning category.
+    pub kind: RepairWarningKind,
+    /// Human-readable explanation.
+    pub message: String,
+}
+
+/// Result of repairing one page's top-level `/Contents` entry.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairReport {
+    /// 1-based page number.
+    pub page: u32,
+    /// Whether the page dictionary was changed.
+    pub changed: bool,
+    /// Warnings describing why a change was necessary.
+    pub warnings: Vec<RepairWarning>,
+}
+
 /// PDF /Info dictionary fields.
 ///
 /// Used with [`Document::metadata`] and [`Document::set_metadata`].
@@ -137,44 +218,6 @@ pub struct PdfMetadata {
     pub subject: Option<String>,
     pub keywords: Option<String>,
     pub creator: Option<String>,
-}
-
-/// A compact, renderer-independent snapshot of the PDF object structure.
-///
-/// Use this before and after page mutations to verify that the intended
-/// structure changed while unrelated page resources remained present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StructureReport {
-    pub page_count: u32,
-    pub object_count: usize,
-    pub page_tree_depth: usize,
-    pub content_stream_count: usize,
-    pub font_count: usize,
-    pub image_count: usize,
-    pub outline_count: usize,
-}
-
-/// Difference between two [`StructureReport`] snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MutationReport {
-    pub before: StructureReport,
-    pub after: StructureReport,
-    pub page_count_delta: i64,
-    pub object_count_delta: i64,
-    pub content_stream_count_delta: i64,
-    pub font_count_delta: i64,
-    pub image_count_delta: i64,
-    pub outline_count_delta: i64,
-}
-
-/// Extraction result for one page in a resumable batch.
-#[derive(Debug, Clone)]
-pub struct PageTextExtraction {
-    pub page: u32,
-    pub runs: Vec<crate::extract::TextFragment>,
-    pub warnings: Vec<crate::extract::ExtractionWarning>,
-    /// A page-local failure. Other pages in the batch remain available.
-    pub error: Option<String>,
 }
 
 /// The type of a PDF form field.

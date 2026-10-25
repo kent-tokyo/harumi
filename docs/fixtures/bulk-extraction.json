@@ -1,6 +1,6 @@
 {
   "name": "bulk-extraction-corpus-v1",
-  "version": 2,
+  "version": 1,
   "inputs": [
     {
       "id": "cjk-text",
@@ -38,8 +38,6 @@
       "checks": ["text", "cjk", "table_limits", "page_boundary", "markdown"]
     }
   ],
-  "runner": "tools/bulk-extraction-check",
-  "command": "scripts/check-bulk-extraction-fixture.sh",
   "metrics": [
     "page_count",
     "text_marker_recall",
@@ -50,10 +48,7 @@
     "markdown_block_recall",
     "parallelism",
     "elapsed_ms",
-    "peak_memory_bytes",
-    "page_batch_count",
-    "warning_count",
-    "resumable_page_failures"
+    "peak_memory_bytes"
   ],
   "failure_classes": [
     "text_missing",
@@ -66,6 +61,5 @@
     "translation_overflow",
     "fragment_joining_changed"
   ],
-  "comparison_policy": "Run unpdf, pdf_oxide, and harumi against the same inputs and report each metric separately. Do not infer performance, quality, adoption, or replacement from one aggregate score.",
-  "batch_contract": "Page ranges preserve order, warnings, and page-local errors; callbacks receive bounded batches."
+  "comparison_policy": "Run unpdf, pdf_oxide, and harumi against the same inputs and report each metric separately. Do not infer performance, quality, adoption, or replacement from one aggregate score."
 }

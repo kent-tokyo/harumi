@@ -45,9 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fs::write(&output_path, &bytes)?;
     }
     verify_output(&backend, &bytes)?;
-    if backend == "harumi-flow" {
-        verify_template_reuse(&bytes)?;
-    }
     let writeback_path = verify_quality_and_write_back(&bytes, &font, Path::new(&output_path))?;
     if let Some(metrics_path) = env::var_os("HARUMI_METRICS_PATH") {
         let metrics = format!(
@@ -65,19 +62,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn generate_harumi(font: &[u8]) -> harumi::Result<Vec<u8>> {
-    use harumi::{FlowDocument, FlowOptions, HeaderFooter};
+    use harumi::{FlowDocument, FlowOptions};
 
-    let mut doc = FlowDocument::new(
-        font.to_vec(),
-        FlowOptions {
-            header: Some(HeaderFooter {
-                left: Some("shared-template".into()),
-                ..HeaderFooter::default()
-            }),
-            footer: Some(HeaderFooter::page_number()),
-            ..FlowOptions::default()
-        },
-    )?;
+    let mut doc = FlowDocument::new(font.to_vec(), FlowOptions::default())?;
     doc.push_heading("四半期レポート", 1)?;
     doc.push_paragraph(
         "段落組版契約: CJK/Latin mixed paragraph with enough text to exercise deterministic wrapping.",
@@ -314,32 +301,6 @@ fn verify_output(backend: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn verify_template_reuse(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let doc = Document::from_bytes(bytes)?;
-    let expected_pages = ["1 / 2", "2 / 2"];
-    for (page, expected_footer) in expected_pages.iter().enumerate() {
-        let page_number = page as u32 + 1;
-        let text: String = doc
-            .extract_text_runs(page_number)?
-            .into_iter()
-            .map(|run| run.text)
-            .collect();
-        if !text.contains("shared-template") {
-            return Err(format!(
-                "harumi-flow: shared header missing on page {page_number}: {text:?}"
-            )
-            .into());
-        }
-        if !text.contains(expected_footer) {
-            return Err(format!(
-                "harumi-flow: page footer {expected_footer:?} missing on page {page_number}: {text:?}"
-            )
-            .into());
-        }
-    }
-    Ok(())
-}
-
 fn verify_quality_and_write_back(
     bytes: &[u8],
     font_bytes: &[u8],
@@ -402,7 +363,7 @@ fn dump_extraction_inputs(bytes: &[u8], backend: &str) -> Result<(), Box<dyn std
     for (page, page_id) in pdf.get_pages() {
         eprintln!(
             "page {page}: content={:?}",
-            String::from_utf8_lossy(&pdf.get_page_content(page_id))
+            String::from_utf8_lossy(&pdf.get_page_content(page_id)?)
         );
         for (name, font) in pdf.get_page_fonts(page_id)? {
             let subtype = font

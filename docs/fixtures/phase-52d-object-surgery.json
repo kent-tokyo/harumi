@@ -1,0 +1,9 @@
+{
+  "schema": "harumi-competitive-domain-fixture-v1",
+  "domain": "object-surgery",
+  "reference": "lopdf",
+  "input": "docs/fixtures/pdf-spec-coverage.json",
+  "operations": ["inspect_page_tree", "mutate_resources", "mutate_contents", "save_reload"],
+  "required_checks": ["object_graph_roundtrip", "untouched_object_semantics", "mutation_audit", "warnings"],
+  "runtime": {"native_library": "none"}
+}

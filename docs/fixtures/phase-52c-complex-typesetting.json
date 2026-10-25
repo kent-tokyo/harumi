@@ -1,0 +1,27 @@
+{
+  "schema": "harumi-competitive-domain-fixture-v1",
+  "domain": "complex-typesetting",
+  "reference": "genpdf/printpdf",
+  "input": "docs/fixtures/report-generation.json",
+  "operations": ["generate_flow", "generate_html", "generate_genpdf", "generate_printpdf"],
+  "cases": [
+    "cjk_latin_mixed_paragraph",
+    "mixed_style_fallback",
+    "colspan_rowspan_table",
+    "nested_table_blocks",
+    "repeated_header_and_continuation",
+    "header_footer_template",
+    "first_odd_even_template",
+    "page_footnote_reservation",
+    "stable_bookmark_and_toc",
+    "modern_html_page_break_and_keep"
+  ],
+  "required_checks": ["page_geometry", "overflow", "marker_order", "table_structure", "extraction", "footnote_non_overlap", "anchor_destination"],
+  "acceptance": {
+    "unexpected_overflow": 0,
+    "marker_order_must_be_stable": true,
+    "table_text_must_not_duplicate": true,
+    "raster_comparison": "diagnostic_only"
+  },
+  "runtime": {"renderer": "fixed-poppler", "external_renderers": "optional"}
+}
