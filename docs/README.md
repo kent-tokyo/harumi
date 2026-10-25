@@ -8,6 +8,7 @@ Use the shortest document that answers the question:
 | Find an API or feature flag | [`API.md`](API.md) |
 | Copy a working example | [`EXAMPLES.md`](EXAMPLES.md) |
 | Scan the complete feature surface | [`FEATURES.md`](FEATURES.md) |
+| Check current scope and priorities | [`../ROADMAP.md`](../ROADMAP.md) |
 | Compare harumi with other PDF tools | [`PDF_ECOSYSTEM.md`](PDF_ECOSYSTEM.md) |
 | Read release history | [`../CHANGELOG.md`](../CHANGELOG.md) |
 
