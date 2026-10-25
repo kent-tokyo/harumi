@@ -44,6 +44,22 @@ fn supports_horizontal_vertical_closed_paths_and_relative_numbers() {
 }
 
 #[test]
+fn supports_curves_arcs_and_ellipses() {
+    let svg = br##"<svg width="200" height="120">
+      <path d="M 10 60 Q 30 10 50 60 T 90 60 C 110 10 140 10 160 60 S 180 90 190 60" fill="none" stroke="#000"/>
+      <path d="M 20 90 A 20 12 25 0 1 70 90" fill="none" stroke="#f00"/>
+      <ellipse cx="130" cy="90" rx="24" ry="12" fill="#0a0" stroke="#00f" stroke-width="2"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("curves, arcs, and ellipses should convert");
+    let document = lopdf::Document::load_mem(&bytes).expect("output should be a PDF");
+    let page_id = *document.get_pages().get(&1).expect("page 1 should exist");
+    let content_bytes = document.get_page_content(page_id);
+    let content = String::from_utf8_lossy(&content_bytes);
+    assert!(content.matches(" l\n").count() > 20);
+    assert!(content.contains("0.0000 0.6667 0.0000 rg"));
+}
+
+#[test]
 fn rejects_empty_transform_arguments_without_panicking() {
     let translate = br#"<svg width="10" height="10"><g transform="translate()"/></svg>"#;
     let scale = br#"<svg width="10" height="10"><g transform="scale()"/></svg>"#;
