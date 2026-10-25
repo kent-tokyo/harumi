@@ -576,7 +576,7 @@ fn parse_points(raw: &str) -> Result<Vec<[f32; 2]>> {
     if n.len() < 4 || n.len() % 2 != 0 {
         return Err(invalid("points must contain coordinate pairs"));
     }
-    Ok(n.chunks_exact(2).map(|p| [p[0], p[1]]).collect())
+    Ok(n.chunks(2).map(|p| [p[0], p[1]]).collect())
 }
 fn parse_view_box(raw: Option<&str>) -> Result<Option<[f32; 4]>> {
     raw.map(|v| {
