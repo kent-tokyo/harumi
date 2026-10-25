@@ -2,7 +2,7 @@
 
 **用纯 Rust 从现有 PDF 提取带位置的文本，并写回 CJK/多语言内容。**
 
-当前版本为 **1.22.1**。
+当前版本为 **1.23.0**。
 
 [English](README.md) · [日本語](README_ja.md) · [한국어](README_kr.md)
 

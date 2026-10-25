@@ -16,7 +16,7 @@ as a benchmark.
 | Low-level object editing | `lopdf 0.42.0` | PDF object graph and streams |
 | Bulk extraction | `unpdf 0.17.0`, `pdf_oxide 0.3.77` | Text/Markdown extraction and broader lifecycle |
 | Low-level PDF writing | `pdf-writer 0.15.0` | Typed construction of new PDF objects |
-| Existing-PDF CJK write-back | `harumi 1.22.1` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
+| Existing-PDF CJK write-back | `harumi 1.23.0` | Extraction, CJK fonts, overlay, replacement, layout diagnostics |
 
 Reference documentation: [pdfium-render](https://docs.rs/crate/pdfium-render/0.9.3),
 [printpdf](https://docs.rs/crate/printpdf/0.12.6),

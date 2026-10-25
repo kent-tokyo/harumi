@@ -6,7 +6,7 @@
 
 ## 現在の基準
 
-- `harumi` v1.22.1、MSRV Rust 1.88、edition 2024
+- `harumi` v1.23.0、MSRV Rust 1.88、edition 2024
 - `harumi-ai` v0.10.1、`harumi-mcp` v0.1.2
 - Pure Rust を基本とし、通常依存と WASM 依存に C/C++ ランタイムを追加しない
 - 既存 PDF の CJK 抽出・置換・overlay・診断と、新規 PDF の帳票組版を主対象とする
@@ -24,7 +24,7 @@
 
 ## 現在の対応範囲
 
-v1.22.1 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
+v1.23.0 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
 基本的な HTML break semantics を対象とします。次の機能は未対応または
 best effort です。
 
@@ -94,4 +94,3 @@ bash scripts/check-report-generation-fixture.sh
 Pdfium の runtime 検証は、明示した `PDFIUM_LIBRARY_PATH` と
 `PDFIUM_LIBRARY_SHA256` がある場合だけ実行します。未検証環境では golden を
 生成せず、compile-only の結果と分けて報告します。
-
