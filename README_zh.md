@@ -1,5 +1,8 @@
 # harumi
 
+当前版本为 **v1.23.6**。请参阅 [CHANGELOG.md](CHANGELOG.md) 查看变更，
+并参阅 [PDF ecosystem comparison contract](docs/PDF_ECOSYSTEM.md) 了解功能范围和验证状态。
+
 **纯 Rust 实现的 CJK PDF 回写引擎，基于提取坐标和推定区域重新放置文本。**
 
 harumi 从现有 PDF 中提取带位置的文本，让你翻译或替换后，
@@ -199,6 +202,8 @@ doc.page(1)?.add_text(
 **[更多示例 →](docs/EXAMPLES.md)** — 页面操作、PDF 合并、HTML→PDF、注释、表单、图形、图像、FlowDocument
 
 **[API 参考 →](docs/API.md)** — 坐标系、功能标志、支持的字体、内部实现
+
+文档索引请参阅 [docs/README.md](docs/README.md)。
 
 ---
 

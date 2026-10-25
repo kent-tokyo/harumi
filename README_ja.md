@@ -9,6 +9,10 @@ harumi は既存PDFからテキスト位置を抽出し、翻訳・置換した�
 CIDフォント、ToUnicode CMap、フォントサブセット、テキストフィット、
 レイアウト衝突検出はすべて自動処理されます。
 
+現在のリリースは **v1.23.6** です。変更履歴は
+[CHANGELOG.md](CHANGELOG.md)、対応範囲と検証状況は
+[PDF ecosystem comparison contract](docs/PDF_ECOSYSTEM.md) を参照してください。
+
 ## harumiが選ばれる領域
 
 入力が既存PDFで、ページをできるだけ維持したまま本文を変更したい場合に
@@ -215,6 +219,8 @@ doc.page(1)?.add_text(
 **[コード例一覧 →](docs/EXAMPLES.md)** — ページ操作、PDF結合、HTML→PDF、注釈、フォーム、図形、画像、FlowDocument
 
 **[API リファレンス →](docs/API.md)** — 座標系、フィーチャーフラグ、対応フォント、内部設計
+
+ドキュメントの一覧は [docs/README.md](docs/README.md) を参照してください。
 
 ---
 

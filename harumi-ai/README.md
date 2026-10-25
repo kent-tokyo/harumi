@@ -2,6 +2,8 @@
 
 AI-powered PDF translation for digital and scanned PDFs, built on [harumi](https://crates.io/crates/harumi).
 
+Current release: **v0.10.1**.
+
 [![harumi-ai on crates.io](https://img.shields.io/crates/v/harumi-ai.svg)](https://crates.io/crates/harumi-ai)
 [![docs.rs](https://docs.rs/harumi-ai/badge.svg)](https://docs.rs/harumi-ai)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE)
