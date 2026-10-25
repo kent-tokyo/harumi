@@ -4702,56 +4702,26 @@ fn parse_content_stream(
     for (token, tok_pos) in tokens {
         match token {
             Token::Keyword(kw) => match kw.as_slice() {
-                b"BT" => {
-                    in_bt = true;
-                    x = 0.0;
-                    y = 0.0;
-                    tm_origin_set = false;
-                    tm_x_scale = 1.0;
-                    tm_y_scale = 1.0;
-                    tm_matrix = [1.0, 0.0, 0.0, 1.0];
-                    tm_lm_x = 0.0;
-                    tm_lm_y = 0.0;
-                    stack.clear();
-                }
-                b"ET" => {
-                    in_bt = false;
-                    stack.clear();
-                }
-                b"TL" => {
-                    if let Some((Token::Number(tl), _)) = stack.pop() {
-                        text_leading = tl;
-                    }
-                    stack.clear();
-                }
-                b"Tc" => {
-                    if let Some((Token::Number(v), _)) = stack.pop() {
-                        char_spacing = v;
-                    }
-                    stack.clear();
-                }
-                b"Tw" => {
-                    if let Some((Token::Number(v), _)) = stack.pop() {
-                        word_spacing = v;
-                    }
-                    stack.clear();
-                }
-                b"Tz" => {
-                    if let Some((Token::Number(v), _)) = stack.pop()
-                        && v.is_finite()
-                        && v > 0.0
-                    {
-                        horizontal_scale = v / 100.0;
-                    }
-                    stack.clear();
-                }
-                b"Ts" => {
-                    if let Some((Token::Number(v), _)) = stack.pop()
-                        && v.is_finite()
-                    {
-                        text_rise = v;
-                    }
-                    stack.clear();
+                b"BT" | b"ET" | b"TL" | b"Tc" | b"Tw" | b"Tz" | b"Ts" | b"Tr" => {
+                    handle_simple_text_operator(
+                        kw.as_slice(),
+                        &mut stack,
+                        &mut in_bt,
+                        &mut x,
+                        &mut y,
+                        &mut tm_origin_set,
+                        &mut tm_x_scale,
+                        &mut tm_y_scale,
+                        &mut tm_matrix,
+                        &mut tm_lm_x,
+                        &mut tm_lm_y,
+                        &mut text_leading,
+                        &mut char_spacing,
+                        &mut word_spacing,
+                        &mut horizontal_scale,
+                        &mut text_rise,
+                        state,
+                    );
                 }
                 b"Tf" if in_bt => {
                     let top = stack.pop();
@@ -4859,12 +4829,6 @@ fn parse_content_stream(
                             tm_x_scale = x_scale;
                             state.tm_x_scale = x_scale;
                         }
-                    }
-                    stack.clear();
-                }
-                b"Tr" => {
-                    if let Some((Token::Number(mode), _)) = stack.pop() {
-                        state.cur_render_mode = mode as u8;
                     }
                     stack.clear();
                 }
@@ -5058,6 +5022,79 @@ fn parse_content_stream(
     state.word_spacing = word_spacing;
     state.horizontal_scale = horizontal_scale;
     state.text_rise = text_rise;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_simple_text_operator(
+    keyword: &[u8],
+    stack: &mut Vec<(Token, usize)>,
+    in_bt: &mut bool,
+    x: &mut f32,
+    y: &mut f32,
+    tm_origin_set: &mut bool,
+    tm_x_scale: &mut f32,
+    tm_y_scale: &mut f32,
+    tm_matrix: &mut [f32; 4],
+    tm_lm_x: &mut f32,
+    tm_lm_y: &mut f32,
+    text_leading: &mut f32,
+    char_spacing: &mut f32,
+    word_spacing: &mut f32,
+    horizontal_scale: &mut f32,
+    text_rise: &mut f32,
+    state: &mut ParseCarryState,
+) {
+    match keyword {
+        b"BT" => {
+            *in_bt = true;
+            *x = 0.0;
+            *y = 0.0;
+            *tm_origin_set = false;
+            *tm_x_scale = 1.0;
+            *tm_y_scale = 1.0;
+            *tm_matrix = [1.0, 0.0, 0.0, 1.0];
+            *tm_lm_x = 0.0;
+            *tm_lm_y = 0.0;
+        }
+        b"ET" => *in_bt = false,
+        b"TL" => {
+            if let Some((Token::Number(value), _)) = stack.pop() {
+                *text_leading = value;
+            }
+        }
+        b"Tc" => {
+            if let Some((Token::Number(value), _)) = stack.pop() {
+                *char_spacing = value;
+            }
+        }
+        b"Tw" => {
+            if let Some((Token::Number(value), _)) = stack.pop() {
+                *word_spacing = value;
+            }
+        }
+        b"Tz" => {
+            if let Some((Token::Number(value), _)) = stack.pop()
+                && value.is_finite()
+                && value > 0.0
+            {
+                *horizontal_scale = value / 100.0;
+            }
+        }
+        b"Ts" => {
+            if let Some((Token::Number(value), _)) = stack.pop()
+                && value.is_finite()
+            {
+                *text_rise = value;
+            }
+        }
+        b"Tr" => {
+            if let Some((Token::Number(mode), _)) = stack.pop() {
+                state.cur_render_mode = mode as u8;
+            }
+        }
+        _ => unreachable!("simple text operator dispatcher received {keyword:?}"),
+    }
+    stack.clear();
 }
 
 /// Handle graphics-state and resource operators independently from text-state
