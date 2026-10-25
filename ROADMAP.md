@@ -1,7 +1,8 @@
 # harumi roadmap
 
-Current release: **v1.23.1**. This file is the short public roadmap; detailed
-history and task checklists live in [`tasks/todo.md`](tasks/todo.md).
+Current release: **v1.23.7**. This file is the short public roadmap; release
+history lives in [`CHANGELOG.md`](CHANGELOG.md), and implementation contracts
+live in the tests and fixture documents.
 
 ## Current position
 
