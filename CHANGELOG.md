@@ -6,6 +6,11 @@ This file is intentionally concise. Detailed implementation history is
 available in the [Git tags](https://github.com/kent-tokyo/harumi/tags) and pull
 requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+- Ignore non-rendering SVG `<metadata>` subtrees, including application-specific children.
+- Accept CSS named colors and `rgb()` color values in SVG conversion.
+
 ## 1.23.4 — 2026-10-25
 
 - Add vector SVG support for quadratic and cubic Bézier paths, smooth curve
