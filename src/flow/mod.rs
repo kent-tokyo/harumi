@@ -2183,27 +2183,7 @@ impl FlowDocument {
                 "nested table blocks do not support repeated header rows yet".into(),
             ));
         }
-        let column_count = rows[0]
-            .iter()
-            .try_fold(0usize, |sum, cell| sum.checked_add(cell.colspan))
-            .ok_or_else(|| crate::Error::InvalidInput("table column count overflow".into()))?;
-        if column_count == 0
-            || rows.iter().any(|row| {
-                row.is_empty()
-                    || row
-                        .iter()
-                        .any(|cell| cell.colspan == 0 || cell.blocks.is_empty())
-                    || row.iter().map(|cell| cell.colspan).sum::<usize>() != column_count
-                    || row.iter().any(|cell| {
-                        cell.padding
-                            .is_some_and(|padding| !padding.is_finite() || padding < 0.0)
-                    })
-            })
-        {
-            return Err(crate::Error::InvalidInput(
-                "nested table rows must have the same non-zero column count".into(),
-            ));
-        }
+        let column_count = Self::validate_nested_table_rows(rows)?;
 
         let shadow_rows: Vec<Vec<String>> = rows
             .iter()
@@ -2485,6 +2465,31 @@ impl FlowDocument {
         }
         self.content_y += self.options.paragraph_spacing;
         Ok(())
+    }
+
+    fn validate_nested_table_rows(rows: &[Vec<FlowTableBlockCell>]) -> Result<usize> {
+        let column_count = rows[0]
+            .iter()
+            .try_fold(0usize, |sum, cell| sum.checked_add(cell.colspan))
+            .ok_or_else(|| crate::Error::InvalidInput("table column count overflow".into()))?;
+        let invalid = column_count == 0
+            || rows.iter().any(|row| {
+                row.is_empty()
+                    || row
+                        .iter()
+                        .any(|cell| cell.colspan == 0 || cell.blocks.is_empty())
+                    || row.iter().map(|cell| cell.colspan).sum::<usize>() != column_count
+                    || row.iter().any(|cell| {
+                        cell.padding
+                            .is_some_and(|padding| !padding.is_finite() || padding < 0.0)
+                    })
+            });
+        if invalid {
+            return Err(crate::Error::InvalidInput(
+                "nested table rows must have the same non-zero column count".into(),
+            ));
+        }
+        Ok(column_count)
     }
 
     fn table_block_text(block: &FlowTableCellBlock) -> String {
