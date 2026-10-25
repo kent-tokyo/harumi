@@ -1514,66 +1514,10 @@ pub(super) fn add_font_to_resources(
     pdf_name: &[u8],
     type0_id: ObjectId,
 ) -> Result<()> {
-    let resources_id: Option<ObjectId> = {
-        let page_dict = doc.get_object(page_id)?.as_dict()?;
-        match page_dict.get(b"Resources").ok() {
-            Some(Object::Reference(r)) => Some(*r),
-            _ => None,
-        }
-    };
-
     let font_ref = Object::Reference(type0_id);
-
-    if let Some(res_id) = resources_id {
-        let font_dict_id = {
-            let res_dict = doc.get_object(res_id)?.as_dict()?;
-            match res_dict.get(b"Font").ok() {
-                Some(Object::Reference(id)) => Some(*id),
-                _ => None,
-            }
-        };
-        if let Some(font_dict_id) = font_dict_id {
-            doc.get_object_mut(font_dict_id)?
-                .as_dict_mut()?
-                .set(pdf_name, font_ref);
-            return Ok(());
-        }
-        let res_dict = doc.get_object_mut(res_id)?.as_dict_mut()?;
-        ensure_font_entry(res_dict, pdf_name, font_ref);
-    } else {
-        let inline_font_id = {
-            let page_dict = doc.get_object(page_id)?.as_dict()?;
-            match page_dict.get(b"Resources").ok() {
-                Some(Object::Dictionary(resources)) => match resources.get(b"Font").ok() {
-                    Some(Object::Reference(id)) => Some(*id),
-                    _ => None,
-                },
-                _ => None,
-            }
-        };
-        if let Some(font_dict_id) = inline_font_id {
-            doc.get_object_mut(font_dict_id)?
-                .as_dict_mut()?
-                .set(pdf_name, font_ref);
-            return Ok(());
-        }
-        let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
-        match page_dict.get_mut(b"Resources") {
-            Ok(res_obj) => {
-                let res_dict = res_obj.as_dict_mut()?;
-                ensure_font_entry(res_dict, pdf_name, font_ref);
-            }
-            Err(_) => {
-                let mut font_dict = Dictionary::new();
-                font_dict.set(pdf_name, font_ref);
-                let mut res_dict = Dictionary::new();
-                res_dict.set("Font", Object::Dictionary(font_dict));
-                page_dict.set("Resources", Object::Dictionary(res_dict));
-            }
-        }
-    }
-
-    Ok(())
+    with_resources_dict_mut(doc, page_id, |resources| {
+        ensure_font_entry(resources, pdf_name, font_ref);
+    })
 }
 
 /// Add a font to a Form XObject's own `/Resources/Font` dict.
@@ -1660,11 +1604,23 @@ where
     if let Some(res_id) = resources_id {
         f(doc.get_object_mut(res_id)?.as_dict_mut()?);
     } else {
+        // `/Resources` is inheritable from an ancestor `/Pages` node. Clone the
+        // effective dictionary before adding page-local entries so that adding
+        // one resource does not hide fonts, XObjects, or graphics state already
+        // supplied by the page tree.
+        let inherited = {
+            let page_dict = doc.get_object(page_id)?.as_dict()?;
+            if page_dict.get(b"Resources").is_err() {
+                inherited_resources(doc, page_id)
+            } else {
+                None
+            }
+        };
         let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
         match page_dict.get_mut(b"Resources") {
             Ok(res_obj) => f(res_obj.as_dict_mut()?),
             Err(_) => {
-                let mut res_dict = Dictionary::new();
+                let mut res_dict = inherited.unwrap_or_default();
                 f(&mut res_dict);
                 page_dict.set("Resources", Object::Dictionary(res_dict));
             }
