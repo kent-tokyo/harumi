@@ -6,12 +6,16 @@ This file is intentionally concise. Detailed implementation history is
 available in the [Git tags](https://github.com/kent-tokyo/harumi/tags) and pull
 requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 1.23.3 — 2026-10-25
 
-No changes yet.
+- Correct the WASM demo lockfile to `lopdf 0.46.0`, fixing the high-severity
+  deeply nested PDF object stack-overflow vulnerability (GHSA-6fj4-rcr3-r7rr).
+- Make the corrective release reproducible with `cargo metadata --locked`.
 
-- Pin `aes` to 0.9.2 so fresh dependency resolution remains compatible with the
-  declared Rust 1.88 MSRV.
+## 1.23.2 — 2026-10-25
+
+- Pin `aes` to 0.9.2 so fresh dependency resolution remains compatible with
+  the declared Rust 1.88 MSRV.
 
 ## 1.23.1 — 2026-10-25
 
