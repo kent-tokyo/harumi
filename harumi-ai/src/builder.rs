@@ -1,6 +1,5 @@
 use crate::{Error, LayoutOptions, Result};
-use harumi::{Document, wrap_paragraph};
-use ttf_parser::Face;
+use harumi::{Document, Face, wrap_paragraph};
 
 // ── Wire types ───────────────────────────────────────────────────────────────
 

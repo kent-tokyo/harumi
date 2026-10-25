@@ -26,7 +26,7 @@ mod html_tokenizer;
 #[cfg(feature = "html")]
 pub mod html;
 
-use ttf_parser::Face;
+use crate::font::face::Face;
 
 use crate::{
     Document, FontHandle, Result,

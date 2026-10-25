@@ -122,7 +122,10 @@ pub use extract::{
     extract_table_cells, extract_vector_rules, group_text_fragments, merge_short_cjk_tails,
     sort_by_reading_order, text_fragment_bounds,
 };
-pub use font::FontHandle;
+pub use font::{
+    FontHandle,
+    face::{Face, GlyphId, ParseError},
+};
 
 #[cfg(feature = "draw")]
 pub use document::DebugOverlayOptions;

@@ -6,18 +6,16 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
-use futures::stream::{self, StreamExt};
-use harumi::{
-    Document, FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole, TextFragment,
-    detect_text_columns, extract_layout_regions, sort_by_reading_order,
-};
-use ttf_parser::Face;
-
 use crate::{
     Error, OverflowStrategy, Result, TranslateOptions, extractor,
     layout_repair::{LayoutRepairMode, VisionRepairRequest, rasterize_page_png},
     output::{CorrectionRound, TranslateOutput, TranslateQuality},
     prompts::layout_correction_prompt,
+};
+use futures::stream::{self, StreamExt};
+use harumi::{
+    Document, Face, FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole,
+    TextFragment, detect_text_columns, extract_layout_regions, sort_by_reading_order,
 };
 
 // ── Font-fallback helpers ─────────────────────────────────────────────────────

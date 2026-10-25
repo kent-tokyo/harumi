@@ -1,5 +1,5 @@
+use crate::font::face::Face;
 use lopdf::{Dictionary, Object, ObjectId, Stream};
-use ttf_parser::Face;
 
 use crate::{
     error::{Error, Result},
@@ -549,8 +549,7 @@ impl<'doc> PageHandle<'doc> {
         }
 
         // Validate font bytes eagerly.
-        let face =
-            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
@@ -612,8 +611,7 @@ impl<'doc> PageHandle<'doc> {
             )));
         }
 
-        let face =
-            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
@@ -844,7 +842,7 @@ impl<'doc> PageHandle<'doc> {
                 // the TTF face is parsed only once instead of twice.
                 let (fs, lines): (f32, Vec<String>) = if let Some(max_w) = opts.max_width {
                     let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-                    let opt_face = ttf_parser::Face::parse(font_bytes, 0).ok();
+                    let opt_face = Face::parse(font_bytes, 0).ok();
                     let fs = if opts.shrink_to_fit {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
@@ -997,7 +995,7 @@ impl<'doc> PageHandle<'doc> {
 
         let placements: Vec<EntryPlacement> = {
             let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-            let face = ttf_parser::Face::parse(font_bytes, 0).ok();
+            let face = Face::parse(font_bytes, 0).ok();
 
             let mut result = Vec::new();
             for (fragments, new_text) in entries {
@@ -1153,7 +1151,7 @@ impl<'doc> PageHandle<'doc> {
 
         let placements: Vec<EntryPlacement> = {
             let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-            let face = ttf_parser::Face::parse(font_bytes, 0).ok();
+            let face = Face::parse(font_bytes, 0).ok();
             let mut result = Vec::new();
             for entry in entries {
                 if entry.new_text.is_empty() {

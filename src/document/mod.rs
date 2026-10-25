@@ -21,8 +21,8 @@ use std::{
     path::Path,
 };
 
+use crate::font::face::Face;
 use lopdf::{Dictionary, LoadOptions, Object, ObjectId, Stream, StringFormat};
-use ttf_parser::Face;
 
 use crate::{
     content::text::text_stream,
@@ -1775,8 +1775,7 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         Ok(helpers::text_width_with_face(text, &face, font_size))
     }
 
@@ -1805,8 +1804,7 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         Ok(helpers::plan_text_fit(text, &face, rect, font_size, &opts))
     }
 
@@ -1834,8 +1832,7 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
         let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
         let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());
@@ -1927,8 +1924,7 @@ impl Document {
             .raw_fonts
             .get(font.0 as usize)
             .ok_or(Error::InvalidFont(font.0))?;
-        let face = ttf_parser::Face::parse(&raw.ttf_bytes, 0)
-            .map_err(|e| Error::FontParse(e.to_string()))?;
+        let face = Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
         let pairs: Vec<_> = regions.iter().zip(replacements.iter()).collect();
         let mut fits: Vec<types::FitResult> = Vec::with_capacity(pairs.len());

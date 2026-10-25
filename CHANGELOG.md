@@ -10,6 +10,8 @@ requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.
 
 - Preserve inherited page `/Resources` during repair instead of replacing a
   valid parent resource dictionary with an empty one.
+- Replace direct `ttf-parser` usage with maintained `skrifa` font metadata APIs;
+  `lopdf` may still retain `ttf-parser` transitively.
 - Add validated dashed line and polyline drawing APIs using native PDF dash
   operators.
 - Refresh CI artifact actions and audited dependency versions.
