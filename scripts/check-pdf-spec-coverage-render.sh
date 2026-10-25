@@ -3,7 +3,7 @@ set -euo pipefail
 
 font_path="${1:-tests/fixtures/NotoSansJP-Regular.ttf}"
 image_path="${2:-tests/fixtures/red_1x1.png}"
-output_dir="${3:-/private/tmp/harumi-pdf-spec-coverage}"
+output_dir="${3:-${TMPDIR:-/tmp}/harumi-pdf-spec-coverage}"
 
 if [[ ! -f "$font_path" || ! -f "$image_path" ]]; then
     printf 'fixture missing: font=%s image=%s\n' "$font_path" "$image_path" >&2
