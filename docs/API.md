@@ -144,7 +144,7 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, tables, nested blocks, headers/footers, page footnotes, inline styling, fallback fonts, and widow/orphan controls |
 | `html` | `render_html_to_pdf` — HTML → PDF with shared Flow paragraph controls (enables `flow`) |
-| `svg` | `svg_to_pdf` — self-contained SVG subset with paths, metadata, CSS colors, and `rgb()` (enables `draw`) |
+| `svg` | `svg_to_pdf` / `svg_to_pdf_with_options` — documented vector subset (enables `draw`); geometry-only input does not need a font |
 | `digital-signature` | `verify_signatures`, `add_signature_field`, `sign_document` |
 
 ---
@@ -182,9 +182,11 @@ may still bring it transitively; that residual dependency is outside harumi's
 font parsing path and is tracked through the `lopdf` dependency.
 
 Flow/HTML creates new documents and does not promise pixel-identical output.
-The SVG feature is a vector subset, not a browser renderer; it supports paths,
-curves, transforms, markers, CSS named colors, `rgb()`, and non-rendering
-`metadata`.
+The SVG feature is a vector subset, not a browser renderer. It supports paths,
+curves, transforms, markers, CSS named colors, `rgb()`, inline style, and
+non-rendering `metadata`. Geometry-only input can use empty font bytes; SVG
+`<text>` still requires a font. Compound-path fill rules and browser-level
+layout are not guaranteed.
 
 Font subsetting is deferred until `save()`. Extraction is best-effort for
 malformed PDFs, missing `/ToUnicode`, deeply nested XObjects, complex vertical

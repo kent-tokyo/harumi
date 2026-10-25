@@ -36,7 +36,7 @@ For in-memory output, use `save_to_bytes()`. For positioned extraction, use
 | Shapes and dashed strokes | `add_rect`, `add_line_dashed`, `add_polyline_dashed`, `add_path` |
 | Images | `add_image`, `add_image_with_opacity` (`image`) |
 | Reports and HTML | `FlowDocument` (`flow`), `render_html_to_pdf` (`html`) |
-| SVG vector conversion | `svg_to_pdf` (`svg`) — paths, markers, CSS colors, and `rgb()` |
+| SVG vector conversion | `svg_to_pdf` / `svg_to_pdf_with_options` (`svg`) — paths, curves, markers, CSS colors, and `rgb()` |
 | Layout diagnostics | `extract_layout_regions`, `fit_text_to_box`, `detect_collisions` |
 
 ## Feature flags
@@ -61,8 +61,9 @@ Use a CJK TrueType font such as Noto Sans CJK for Japanese, Chinese, or Korean.
 ## Boundaries
 
 harumi is not an OCR engine, viewer, general SVG renderer, or pixel-perfect
-converter. Extraction, overlay, and SVG conversion are best-effort outside the
-documented subset. Render output when visual fidelity matters.
+converter. Geometry-only SVG does not require a font; SVG text does. Extraction,
+overlay, and SVG conversion are best-effort outside the documented subset.
+Render output when visual fidelity matters.
 
 ## Further reading
 

@@ -110,12 +110,21 @@ For HTML, use `render_html_to_pdf(html, options)` with the `html` feature.
 ## SVG (`svg` feature)
 
 `svg_to_pdf` converts the documented self-contained SVG subset to one vector
-PDF page. It accepts paths, transforms, markers, CSS named colors, `rgb()`,
-and non-rendering `metadata` elements.
+PDF page. It accepts paths, curves, transforms, markers, CSS named colors,
+`rgb()`, inline style, and non-rendering `metadata` elements. This is not a
+browser renderer.
 
 ```rust
 let pdf = harumi::svg_to_pdf(svg_bytes, font_bytes)?;
 std::fs::write("figure.pdf", pdf)?;
+```
+
+For geometry-only SVG, use the options API with empty font bytes. SVG text
+requires a real font and remains a separate rendering path.
+
+```rust
+let options = harumi::SvgOptions { font_bytes: &[] };
+let pdf = harumi::svg_to_pdf_with_options(svg_bytes, options)?;
 ```
 
 ## Metadata, forms, and security

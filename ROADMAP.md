@@ -14,63 +14,46 @@
 
 ## 完了した基盤
 
-- CJK TrueType/TTC フォントの埋め込み、サブセット化、ToUnicode
-- テキスト抽出、フォント維持置換、再サブセット、overlay
-- ページ操作、結合・分割、注釈、フォーム、メタデータ、署名
-- 図形・画像・透明度、HTML→PDF、`FlowDocument`、WASM 境界
-- Form XObject、ページツリー継承、contents/resources の安全な処理
-- 表、結合セル、ページ分割、ヘッダー・フッター、脚注、TOC、layout diagnostics
-- Poppler を使った固定 fixture の仕様・帳票検証と、比較用の機械可読 manifest
-- CJK/Latin 帳票の固定比較で、保存・再読込後のヘッダー・ページ番号フッター再利用
-- ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
-- CJK・画像・URLリンク・メタデータを含む最小writerのsave/reload・決定性fixture
-- Unicode改行境界の固定fixtureと、UAX #14・辞書hyphenation・視覚的RTL/縦書きを分けた制約
-- CJK編集後のsave/reload・構造監査・Poppler描画を一つにしたPDF仕様fixture
+- CJK TrueType/TTC の埋め込み、サブセット化、ToUnicode、抽出、置換、overlay
+- ページ操作、結合・分割、注釈、フォーム、メタデータ、署名、構造監査
+- 図形・画像・透明度、HTML→PDF、`FlowDocument`、表、脚注、TOC、WASM 境界
+- Form XObject とページツリーの継承を含む安全な `contents` / `resources` 処理
+- 固定 fixture による保存・再読込、抽出、帳票、構造、Poppler 検証
+- CJK/Latin 帳票のテンプレート再利用と、最小 writer の決定性検証
+- SVG の限定サブセット（図形、曲線、変換、マーカー、CSS 色、`metadata`）
 
 ## 現在の対応範囲
 
 v1.23.5 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
-基本的な HTML break semantics を対象とします。次の機能は未対応または
-best effort です。
+基本的な HTML break semantics を対象とします。次は未対応または best effort です。
 
 - 完全な Unicode Line Breaking
 - 視覚的な bidi / RTL shaping と縦書きの完全互換
 - 任意の block grouping と、完全な HTML/CSS 互換
 - Pdfium、Chrome、Acrobat と同一の pixel parity
 - 競合ライブラリの全 API の再実装
-- SVG の完全なブラウザ互換（対応範囲は `docs/API.md` を参照）
+- SVG の完全なブラウザ互換（対応範囲は `docs/API.md` を参照。図形のみならフォント不要）
 
 ## 次の優先順位
 
 ### 1. 共通の証拠契約
 
-Phase 52 の五領域を同一条件で比較できる状態にします。
-
-- viewer-like editing
-- 複雑な帳票・組版
-- PDF object surgery
-- bulk extraction / Markdown / JSON
-- 軽量 Pure Rust writer
-
-fixture、runner、artifact report、正しさの oracle、runtime boundary を固定します。
-速度・メモリ・成果物サイズは同じ入力と環境で測り、用途適合度と混同しません。
+Phase 52 の五領域（編集、帳票、object surgery、bulk extraction、writer）を、
+同じ fixture、runner、oracle、runtime 境界で比較します。速度・メモリ・成果物
+サイズは入力と環境を固定し、用途適合度とは分けて報告します。
 
 ### 2. 組版の境界を明確にする
 
-Unicode の改行境界、opt-in の hyphenation、RTL/Bidi、縦書き、脚注参照、残りの
-HTML/CSS semantics を、機能ごとの fixture と明示的な制約付きで追加します。
-shaping や視覚的な reordering を実装しない場合は、公開 API とドキュメントで
-best effort の範囲を保ちます。
+Unicode 改行、opt-in hyphenation、RTL/Bidi、縦書き、脚注参照、HTML/CSS semantics
+を機能別 fixture で追加します。shaping や視覚的 reordering を扱わない部分は、
+公開 API とドキュメントで best effort の範囲を明示します。
 
 ### 3. ドメイン別の実証
 
-次の順で実装・測定します。
-
-1. Pdfium を標準依存にせず、編集前後の抽出・構造保存・描画検証を固定する
+1. Pdfium を標準依存にせず、編集前後の抽出・構造保存・描画を固定する
 2. CJK/Latin 帳票の表構造、改ページ、抽出順、テンプレート再利用を検証する
-3. 高レベルの構造操作と mutation report を拡張する
-4. 大規模抽出の page batch、JSON/Markdown、警告、再開可能な失敗を検証する
-5. 最小 writer の CJK、画像、リンク、メタデータ、決定的 save/reload を検証する
+3. 構造操作と mutation report、大規模抽出の再開可能性を拡張する
+4. 最小 writer の CJK、画像、リンク、メタデータ、決定的 save/reload を検証する
 
 機能追加は、fixture と保存後の検証で再現できる欠陥に限定します。未知の構造は
 暗黙に正規化せず、未対応部分は警告またはエラーとして返します。
