@@ -167,6 +167,16 @@ pub struct MutationReport {
     pub outline_count_delta: i64,
 }
 
+/// Extraction result for one page in a resumable batch.
+#[derive(Debug, Clone)]
+pub struct PageTextExtraction {
+    pub page: u32,
+    pub runs: Vec<crate::extract::TextFragment>,
+    pub warnings: Vec<crate::extract::ExtractionWarning>,
+    /// A page-local failure. Other pages in the batch remain available.
+    pub error: Option<String>,
+}
+
 /// The type of a PDF form field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {

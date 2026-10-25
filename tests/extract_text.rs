@@ -62,6 +62,44 @@ fn minimal_winansi_pdf(content_stream: &[u8]) -> Vec<u8> {
     buf
 }
 
+#[test]
+fn verbose_page_batches_preserve_order_and_batch_boundaries() {
+    let font_bytes = std::fs::read("tests/fixtures/NotoSansJP-Regular.ttf").unwrap();
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    let font = doc.embed_font(&font_bytes).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_text("page-one", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.insert_blank_page(2, (595.0, 842.0)).unwrap();
+    doc.page(2)
+        .unwrap()
+        .add_text("page-two", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+    doc.page(3)
+        .unwrap()
+        .add_text("page-three", font, [72.0, 700.0], 12.0, [0.0; 3])
+        .unwrap();
+
+    let reloaded = Document::from_bytes(&doc.save_to_bytes().unwrap()).unwrap();
+    let pages = reloaded.extract_text_runs_verbose_page_range(1, 3).unwrap();
+    assert_eq!(
+        pages.iter().map(|page| page.page).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert!(pages.iter().all(|page| page.error.is_none()));
+
+    let mut batches = Vec::new();
+    reloaded
+        .for_each_text_runs_verbose_batch(1, 3, 2, |batch| {
+            batches.push(batch.iter().map(|page| page.page).collect::<Vec<_>>());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(batches, vec![vec![1, 2], vec![3]]);
+}
+
 fn with_page_geometry(
     pdf_bytes: &[u8],
     media_box: [i64; 4],

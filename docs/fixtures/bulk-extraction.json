@@ -1,6 +1,6 @@
 {
   "name": "bulk-extraction-corpus-v1",
-  "version": 1,
+  "version": 2,
   "inputs": [
     {
       "id": "cjk-text",
@@ -48,7 +48,10 @@
     "markdown_block_recall",
     "parallelism",
     "elapsed_ms",
-    "peak_memory_bytes"
+    "peak_memory_bytes",
+    "page_batch_count",
+    "warning_count",
+    "resumable_page_failures"
   ],
   "failure_classes": [
     "text_missing",
@@ -61,5 +64,6 @@
     "translation_overflow",
     "fragment_joining_changed"
   ],
-  "comparison_policy": "Run unpdf, pdf_oxide, and harumi against the same inputs and report each metric separately. Do not infer performance, quality, adoption, or replacement from one aggregate score."
+  "comparison_policy": "Run unpdf, pdf_oxide, and harumi against the same inputs and report each metric separately. Do not infer performance, quality, adoption, or replacement from one aggregate score.",
+  "batch_contract": "Page ranges preserve order, warnings, and page-local errors; callbacks receive bounded batches."
 }

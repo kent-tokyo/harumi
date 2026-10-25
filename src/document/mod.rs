@@ -10,7 +10,8 @@ pub use page::{PageHandle, VerticalAlign};
 pub use types::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, MutationReport, OverflowPolicy,
-    PdfMetadata, PlacementStatus, ReplaceOptions, StructureReport, TextFieldOptions, TextRun,
+    PageTextExtraction, PdfMetadata, PlacementStatus, ReplaceOptions, StructureReport,
+    TextFieldOptions, TextRun,
 };
 
 #[cfg(feature = "draw")]
@@ -2355,6 +2356,63 @@ impl Document {
             result.extend(fragments.into_iter().map(|frag| (page_num, frag)));
         }
         Ok(result)
+    }
+
+    /// Extracts a page range while preserving warnings and page-local failures.
+    ///
+    /// A malformed page does not discard successful pages. Failed page numbers
+    /// are retained in the result and can be retried independently.
+    pub fn extract_text_runs_verbose_page_range(
+        &self,
+        start_page: u32,
+        end_page: u32,
+    ) -> Result<Vec<crate::document::PageTextExtraction>> {
+        if start_page == 0 || end_page == 0 || start_page > end_page {
+            return Err(Error::InvalidInput(format!(
+                "invalid page range {start_page}..={end_page}"
+            )));
+        }
+        let page_count = self.page_count();
+        if end_page > page_count {
+            return Err(Error::PageNotFound(end_page));
+        }
+        Ok((start_page..=end_page)
+            .map(|page| match self.extract_text_runs_verbose(page) {
+                Ok((runs, warnings)) => crate::document::PageTextExtraction {
+                    page,
+                    runs,
+                    warnings,
+                    error: None,
+                },
+                Err(error) => crate::document::PageTextExtraction {
+                    page,
+                    runs: Vec::new(),
+                    warnings: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            })
+            .collect())
+    }
+
+    /// Processes a page range in bounded batches.
+    pub fn for_each_text_runs_verbose_batch<F>(
+        &self,
+        start_page: u32,
+        end_page: u32,
+        batch_size: usize,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[crate::document::PageTextExtraction]) -> Result<()>,
+    {
+        if batch_size == 0 {
+            return Err(Error::InvalidInput("batch_size must be positive".into()));
+        }
+        let pages = self.extract_text_runs_verbose_page_range(start_page, end_page)?;
+        for batch in pages.chunks(batch_size) {
+            callback(batch)?;
+        }
+        Ok(())
     }
 
     /// Extracts the largest raster image embedded on the given page (1-indexed).

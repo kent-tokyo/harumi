@@ -65,6 +65,12 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 
 // Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
 let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
+let pages = doc.extract_text_runs_verbose_page_range(1, doc.page_count())?;
+doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 50, |batch| {
+    // Persist each batch; failed pages remain in `entry.error`.
+    let _ = batch;
+    Ok(())
+})?;
 
 // PDF metadata (/Info dictionary)
 let meta: PdfMetadata = doc.metadata()?;
