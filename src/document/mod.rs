@@ -3126,7 +3126,7 @@ impl Document {
         }
 
         // Hierarchical outline: normalize levels to 1..=6 if any item has level 0 mixed in.
-        let levels: Vec<u8> = bookmarks.iter().map(|b| b.level.max(1)).collect();
+        let levels = Self::normalized_bookmark_levels(&bookmarks);
 
         // Pre-allocate object IDs for all items.
         let item_ids: Vec<ObjectId> = (0..n).map(|_| self.inner.new_object_id()).collect();
@@ -3269,6 +3269,13 @@ impl Document {
         }
 
         Ok(())
+    }
+
+    fn normalized_bookmark_levels(bookmarks: &[PendingBookmark]) -> Vec<u8> {
+        bookmarks
+            .iter()
+            .map(|bookmark| bookmark.level.max(1))
+            .collect()
     }
 
     /// Build a flat outline tree (backward compatibility when all levels == 0).
