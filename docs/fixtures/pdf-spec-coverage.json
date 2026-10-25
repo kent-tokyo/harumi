@@ -56,6 +56,12 @@
         "draw_smoke::smoke_add_png_image"
       ],
       "external_renderer": "required"
+    },
+    {
+      "id": "edited_cjk_roundtrip",
+      "scope": "CJK write-back followed by save/reload and external rendering",
+      "tests": ["pdf-spec-coverage-check::edited_cjk_roundtrip"],
+      "external_renderer": "required"
     }
   ],
   "policy": "A case is not fully supported until extraction, write-back or save/reload, and an external renderer check all pass. Unit tests alone do not establish arbitrary-PDF compatibility."

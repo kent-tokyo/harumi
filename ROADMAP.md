@@ -25,6 +25,7 @@
 - ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
 - CJK・画像・URLリンク・メタデータを含む最小writerのsave/reload・決定性fixture
 - Unicode改行境界の固定fixtureと、UAX #14・辞書hyphenation・視覚的RTL/縦書きを分けた制約
+- CJK編集後のsave/reload・構造監査・Poppler描画を一つにしたPDF仕様fixture
 
 ## 現在の対応範囲
 
