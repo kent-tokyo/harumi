@@ -104,6 +104,24 @@ jobs:
       - name: Check semver (all features)
         run: cargo semver-checks --all-features
 
+  bulk-extraction-contract:
+    name: Bulk extraction evidence contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run fixed bulk extraction corpus
+        run: bash scripts/check-bulk-extraction-fixture.sh
+      - name: Upload bulk extraction artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bulk-extraction-corpus
+          path: /tmp/harumi-bulk-extraction-fixture
+          if-no-files-found: error
+
   pdf-spec-coverage:
     name: PDF specification coverage (Poppler)
     runs-on: ubuntu-latest
