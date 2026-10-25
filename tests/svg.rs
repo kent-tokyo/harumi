@@ -1,6 +1,6 @@
 #![cfg(feature = "svg")]
 
-use harumi::{Document, svg_to_pdf};
+use harumi::{Document, SvgOptions, svg_to_pdf, svg_to_pdf_with_options};
 
 const FONT: &[u8] = include_bytes!("fixtures/NotoSansJP-Regular.ttf");
 
@@ -47,6 +47,39 @@ fn ignores_metadata_subtrees_during_rendering() {
             .page_count(),
         1
     );
+}
+
+#[test]
+fn geometry_only_svg_does_not_require_or_embed_a_font() {
+    let svg = br#"<svg width="120" height="80">
+      <metadata><text>metadata is not rendered</text></metadata>
+      <path d="M 10 40 Q 30 10 50 40 A 12 8 0 0 1 80 40" fill="none" stroke="black"/>
+      <ellipse cx="100" cy="40" rx="12" ry="8" fill="blue"/>
+    </svg>"#;
+    let bytes = svg_to_pdf_with_options(
+        svg,
+        SvgOptions {
+            font_bytes: &[],
+            page_size: None,
+        },
+    )
+    .expect("geometry-only SVG should not require a font");
+    assert!(!bytes.windows(5).any(|window| window == b"/Font"));
+    assert!(Document::from_bytes(&bytes).is_ok());
+}
+
+#[test]
+fn rendered_svg_text_still_requires_a_font() {
+    let svg = br#"<svg width="80" height="40"><text x="5" y="20">text</text></svg>"#;
+    let error = svg_to_pdf_with_options(
+        svg,
+        SvgOptions {
+            font_bytes: &[],
+            page_size: None,
+        },
+    )
+    .expect_err("rendered text must require a font");
+    assert!(error.to_string().contains("requires non-empty font_bytes"));
 }
 
 #[test]
