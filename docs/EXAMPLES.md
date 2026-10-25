@@ -1,138 +1,382 @@
-# harumi — Examples
+# harumi — Code Examples
 
-These are small entry points. See [`API.md`](API.md) for signatures and
-[`FEATURES.md`](FEATURES.md) for the complete capability list.
+For the core API reference, see [API.md](API.md).
+For the full feature list, see [FEATURES.md](FEATURES.md).
 
-## Load, edit, and save
+---
 
-```rust
-use harumi::Document;
-
-let mut doc = Document::from_file("input.pdf")?;
-let font = doc.embed_font(include_bytes!("NotoSansCJKjp-Regular.ttf"))?;
-doc.page(1)?.add_text("CONFIDENTIAL", font, [72.0, 700.0], 12.0, [0.8, 0.0, 0.0])?;
-doc.save("output.pdf")?;
-# Ok::<(), harumi::Error>(())
-```
-
-For byte-oriented applications use `Document::from_bytes` and
-`save_to_bytes()`.
-
-## Invisible OCR layer
+## Invisible OCR text layer
 
 ```rust
-doc.page(1)?.add_invisible_text(
-    "検索可能な日本語",
-    font,
-    [72.0, 700.0], // PDF points; origin is bottom-left
-    12.0,
-)?;
-```
+use harumi::{Document, TextRun};
 
-For many OCR runs, use `add_invisible_text_runs` so fonts are subsetted once.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut doc = Document::from_file("scanned.pdf")?;
+    let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
 
-## Extract and replace text
+    doc.page(1)?.add_invisible_text(
+        "ここにOCRで読み取った日本語テキスト",
+        font,
+        [100.0, 250.0], // x, y in PDF points (origin: bottom-left)
+        12.0,
+    )?;
 
-```rust
-let runs = doc.extract_text_runs(1)?;
-for run in &runs {
-    println!("{} at ({}, {})", run.text, run.x, run.y);
+    doc.save("searchable_japanese.pdf")?;
+    Ok(())
 }
-
-let matches = doc.page(1)?.replace_text("old", "new", font)?;
-println!("{matches} match(es)");
 ```
 
-Use `replace_text_preserve_font` when the existing font contains every glyph.
-Use `replace_text_resubset` with the original full font when a subset must be
-expanded.
-
-## Pages and documents
+## Visible text overlay
 
 ```rust
-doc.rotate_page(1, 90)?;
-doc.insert_blank_page(0, (595.0, 842.0))?;
-let selected = doc.extract_pages(&[1, 3])?;
-
-let mut merged = Document::from_file("a.pdf")?;
-merged.merge_from(Document::from_file("b.pdf")?)?;
-merged.save("merged.pdf")?;
-```
-
-To create a new one-page PDF, use `Document::new((width, height))?`.
-
-## Drawing (`draw` feature)
-
-```toml
-harumi = { version = "1", features = ["draw"] }
-```
-
-```rust
-doc.page(1)?.add_rect([72.0, 680.0, 200.0, 24.0], [1.0, 1.0, 0.0], 0.4)?;
-doc.page(1)?.add_line_dashed(
-    [72.0, 640.0], [272.0, 640.0],
-    [0.0, 0.0, 0.0], 1.0, 1.0,
-    &[6.0, 3.0], 0.0,
+let (w, h) = doc.page(1)?.size()?;
+doc.page(1)?.add_text(
+    "CONFIDENTIAL",
+    font,
+    [w / 2.0 - 60.0, h / 2.0],
+    24.0,
+    [0.8, 0.0, 0.0], // red (RGB 0.0–1.0)
 )?;
 ```
 
-Dash arrays require finite positive lengths. `add_polyline_dashed` uses the
-same pattern for an open multi-segment path.
-
-## Images and annotations
-
-Enable `image` for JPEG/PNG embedding and scanned-image extraction:
+## In-memory output
 
 ```rust
-let image = std::fs::read("photo.png")?;
-doc.page(1)?.add_image(&image, [72.0, 400.0, 200.0, 120.0], 1.0)?;
+let pdf_bytes: Vec<u8> = doc.save_to_bytes()?;
 ```
 
-Common annotations include `add_link_url`, `add_link_internal`,
-`add_highlight`, `add_underline`, `add_strikeout`, and `add_sticky_note`.
+## Multi-line text box
 
-## Flow and HTML
+```rust
+doc.page(1)?.add_text_box(
+    "This is a long sentence that wraps inside a 200pt-wide bounding box.",
+    font,
+    [72.0, 400.0, 200.0, 120.0], // [x, y, width, height]
+    12.0,
+    [0.0, 0.0, 0.0],
+    0.0,  // 0.0 = use font_size * 1.2 line height
+)?;
+```
 
-`flow` provides auto-pagination, tables, headers, footers, fallback fonts, and
-layout controls. `html` adds the supported HTML-to-PDF path:
+## Page manipulation
+
+```rust
+for page_num in 1..=doc.page_count() {
+    doc.rotate_page(page_num, 90)?;
+}
+doc.remove_page(1)?;
+doc.insert_blank_page(0, (595.0, 842.0))?;
+doc.reorder_pages(&[3, 2, 1])?;
+doc.save("output.pdf")?;
+```
+
+## Merge PDFs
+
+```rust
+let mut base = Document::from_file("a.pdf")?;
+let appendix = Document::from_file("b.pdf")?;
+base.merge_from(appendix)?;
+base.save("merged.pdf")?;
+```
+
+## Create a blank PDF
+
+```rust
+let mut doc = Document::new((595.0, 842.0))?;   // blank A4
+let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
+doc.page(1)?.add_text("Hello, world!", font, [72.0, 700.0], 24.0, [0.0, 0.0, 0.0])?;
+doc.save("output.pdf")?;
+```
+
+## Extract pages
+
+```rust
+let doc = Document::from_file("large.pdf")?;
+let mut excerpt = doc.extract_pages(&[3, 5, 7])?;
+excerpt.save("excerpt.pdf")?;
+```
+
+## Extract text runs from an existing PDF
+
+```rust
+let doc = Document::from_file("existing.pdf")?;
+let runs = doc.extract_text_runs(1)?;
+for frag in &runs {
+    println!("{:?} at ({:.1}, {:.1})", frag.text, frag.x, frag.y);
+}
+```
+
+## Replace text in an existing PDF
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+let font = doc.embed_font(include_bytes!("NotoSansJP-Regular.ttf"))?;
+let n = doc.page(1)?.replace_text("Hello", "こんにちは", font)?;
+doc.save("translated.pdf")?;
+```
+
+## Replace text using the original embedded font
+
+```rust
+let mut doc = Document::from_file("contract.pdf")?;
+match doc.page(1)?.replace_text_preserve_font("Draft", replacement) {
+    Ok(n) if n > 0 => { /* queued */ }
+    Ok(_) => { /* not found */ }
+    Err(_) => {
+        let font = doc.embed_font(include_bytes!("font.ttf"))?;
+        doc.page(1)?.replace_text("Draft", replacement, font)?;
+    }
+}
+doc.save("output.pdf")?;
+```
+
+## Replace text with font subset expansion
+
+```rust
+let font_bytes = include_bytes!("NotoSansJP-Regular.ttf");
+let mut doc = Document::from_file("contract.pdf")?;
+let n = doc.page(1)?.replace_text_resubset("Hello", "日本語", font_bytes)?;
+doc.save("output.pdf")?;
+```
+
+## Read/write PDF metadata
+
+```rust
+use harumi::{Document, PdfMetadata};
+
+let mut doc = Document::from_file("report.pdf")?;
+let meta = doc.metadata()?;
+
+doc.set_metadata(&PdfMetadata {
+    title: Some("Annual Report 2026".into()),
+    author: Some("Harumi Team".into()),
+    ..Default::default()
+})?;
+doc.save("report_with_meta.pdf")?;
+```
+
+## Draw shapes (`draw` feature)
+
+```rust
+// Filled highlight rectangle
+doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;
+
+// Stroke-only border
+doc.page(1)?.add_rect_stroke([72.0, 400.0, 200.0, 100.0], [0.0, 0.0, 1.0], 1.5, 1.0)?;
+
+// Filled polygon
+doc.page(1)?.add_polygon(
+    &[[100.0, 500.0], [150.0, 600.0], [200.0, 500.0]],
+    [1.0, 0.5, 0.0], 1.0, true, 0.0,
+)?;
+
+// Line
+doc.page(1)?.add_line([72.0, 600.0], [300.0, 600.0], [0.0, 0.0, 0.0], 1.5, 1.0)?;
+
+// Ellipse
+doc.page(1)?.add_ellipse([200.0, 300.0, 150.0, 100.0], [0.0, 0.4, 1.0], 0.7, true, 0.0)?;
+
+// Rotated watermark
+let (w, h) = doc.page(1)?.size()?;
+doc.page(1)?.add_text_with_rotation(
+    "CONFIDENTIAL", font, [w / 2.0, h / 2.0], 48.0,
+    [0.8, 0.0, 0.0], 0.3, 45.0,
+)?;
+```
+
+## Embed images (`image` feature)
+
+```rust
+let jpeg = std::fs::read("stamp.jpg")?;
+doc.page(1)?.add_image(&jpeg, [72.0, 500.0, 100.0, 100.0])?;
+doc.page(1)?.add_image_with_opacity(&jpeg, [72.0, 400.0, 100.0, 100.0], 0.75)?;
+
+// PNG with transparency
+let sig_png = std::fs::read("signature.png")?;
+doc.page(1)?.add_image(&sig_png, [72.0, 300.0, 200.0, 80.0])?;
+```
+
+## Extract an embedded image from a scanned PDF (`image` feature)
+
+```rust
+use harumi::{Document, PageImageFormat};
+
+let doc = Document::from_file("scanned.pdf")?;
+let img = doc.extract_page_image(1)?;
+match img.format {
+    PageImageFormat::Jpeg => std::fs::write("page1.jpg", &img.bytes)?,
+    PageImageFormat::Png  => std::fs::write("page1.png", &img.bytes)?,
+}
+```
+
+## FlowDocument with auto-pagination (`flow` feature)
 
 ```rust
 use harumi::{FlowDocument, FlowOptions};
 
-let mut flow = FlowDocument::new(font_bytes, FlowOptions::default())?;
-flow.push_heading("Report", 1)?;
-flow.push_paragraph("A paragraph that will paginate automatically.")?;
-let pdf = flow.render()?;
+let font = include_bytes!("NotoSansCJK-Regular.ttf");
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+doc.push_heading("Annual Report", 1)?;
+doc.push_paragraph("This document summarizes our performance.")?;
+doc.push_key_value_table(&[
+    ("Revenue", "$1,000,000"),
+    ("Expenses", "$800,000"),
+])?;
+let pdf_bytes = doc.render()?;
 ```
 
-For HTML, use `render_html_to_pdf(html, options)` with the `html` feature.
+For arbitrary-column reports, use `push_table`. Column widths may be
+intrinsic, fixed points, or fractional weights; long cells wrap and continue
+onto later pages.
 
-## SVG (`svg` feature)
+```rust,no_run
+use harumi::{FlowDocument, FlowOptions, TableColumnWidths, TableOptions};
 
-`svg_to_pdf` converts the documented self-contained SVG subset to one vector
-PDF page. It accepts paths, transforms, markers, CSS named colors, `rgb()`,
-and non-rendering `metadata` elements.
+let mut doc = FlowDocument::new(font.as_ref(), FlowOptions::default())?;
+let rows = vec![
+    vec!["Region".into(), "Revenue".into(), "Notes".into()],
+    vec!["Tokyo".into(), "¥12,345,678".into(), "Long CJK/Latin cell".into()],
+];
+doc.push_table(
+    &rows,
+    TableOptions {
+        column_widths: TableColumnWidths::Fractions(vec![1.0, 1.0, 2.0]),
+        ..Default::default()
+    },
+)?;
+```
+
+Horizontal cell spans, repeated headers, per-cell padding/alignment, border
+styles, vertical spans, and one-level nested blocks are supported. Nested blocks
+are available through `push_table_blocks`; automatic footnote references and
+endnotes remain outside the current Flow contract.
+
+Use `doc.measure_table_widths(&rows, &options)` to inspect the resolved column
+widths before rendering.
+
+## Inline text styling in FlowDocument (`flow` feature)
 
 ```rust
-let pdf = harumi::svg_to_pdf(svg_bytes, font_bytes)?;
-std::fs::write("figure.pdf", pdf)?;
+use harumi::{FlowDocument, FlowOptions, InlineSpan};
+
+let mut doc = FlowDocument::new(font_bytes, FlowOptions::default())?;
+doc.push_paragraph_styled(&[
+    InlineSpan::plain("Normal, "),
+    InlineSpan::bold("bold, "),
+    InlineSpan::italic("italic, "),
+    InlineSpan::colored("red.", [0.8, 0.0, 0.0]),
+])?;
+let pdf = doc.render()?;
 ```
 
-## Metadata, forms, and security
+For mixed scripts, provide an optional fallback font. It is used only for
+characters missing from the primary body font:
 
 ```rust
-let metadata = doc.metadata()?;
-doc.set_metadata(&metadata)?;
-let fields = doc.form_fields()?;
-doc.fill_form(&[("Name", "Harumi")])?;
-doc.set_encryption("user-password", "owner-password")?;
+let opts = FlowOptions {
+    fallback_font_bytes: Some(cjk_font_bytes.to_vec()),
+    ..FlowOptions::default()
+};
+let mut doc = FlowDocument::new(latin_font_bytes, opts)?;
+doc.push_paragraph("Latin 日本語 symbols ✓")?;
 ```
 
-Digital signatures require the `digital-signature` feature. See the API guide
-for signing and verification contracts.
+## Header / footer with page numbers (`flow` feature)
 
-## Coordinates and review
+```rust
+use harumi::{FlowDocument, FlowOptions, HeaderFooter};
 
-Coordinates use PDF points (1/72 inch) with the origin at the bottom-left.
-OCR tools that use top-left pixel coordinates should use the `ocr` feature
-helpers. Overlay output is best-effort; render complex PDFs for visual review.
+let opts = FlowOptions {
+    header: Some(HeaderFooter {
+        left:  Some("harumi docs".into()),
+        right: Some("v1".into()),
+        ..Default::default()
+    }),
+    footer: Some(HeaderFooter::page_number()),
+    auto_bookmarks: true,
+    ..Default::default()
+};
+let mut doc = FlowDocument::new(font, opts)?;
+doc.push_heading("Chapter 1", 1)?;
+let pdf_bytes = doc.render()?;
+```
+
+## Link annotations
+
+```rust
+doc.page(1)?.add_link_url([72.0, 40.0, 200.0, 18.0], "https://example.com")?;
+doc.page(1)?.add_link_internal([72.0, 700.0, 150.0, 18.0], 3)?;
+```
+
+## Markup annotations
+
+```rust
+doc.page(1)?.add_highlight([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0])?;
+doc.page(1)?.add_underline([72.0, 640.0, 200.0, 12.0], [1.0, 0.0, 0.0])?;
+doc.page(1)?.add_strikeout([72.0, 590.0, 200.0, 12.0], [0.0, 0.0, 0.0])?;
+doc.page(1)?.add_squiggly([72.0, 540.0, 200.0, 12.0], [0.0, 0.6, 0.2])?;
+doc.page(1)?.add_sticky_note([500.0, 700.0], "Review this section")?;
+```
+
+## Password-protected PDFs
+
+```rust
+let mut doc = Document::from_file_with_password("protected.pdf", "secret")?;
+
+let mut doc = Document::new((595.0, 842.0))?;
+doc.set_encryption("userpass", "ownerpass")?;
+doc.save("protected_output.pdf")?;
+```
+
+## AcroForm: read and fill form fields
+
+```rust
+let mut doc = Document::from_file("form.pdf")?;
+for field in doc.form_fields()? {
+    println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+}
+let updated = doc.fill_form(&[
+    ("FullName",   "Jane Doe"),
+    ("Department", "Engineering"),
+])?;
+doc.save("filled_form.pdf")?;
+```
+
+## Page boxes (print workflow)
+
+```rust
+let cb = doc.page(1)?.crop_box()?;
+doc.page(1)?.set_crop_box([10.0, 10.0, 575.0, 822.0])?;
+doc.page(1)?.set_trim_box([0.0, 0.0, 595.0, 842.0])?;
+doc.page(1)?.set_bleed_box([0.0, 0.0, 601.0, 848.0])?;
+doc.save("print_ready.pdf")?;
+```
+
+## Document bookmarks (outline)
+
+```rust
+doc.add_bookmark("Chapter 1",  1, 800.0)?;
+doc.add_bookmark("第2章 概要", 2, 800.0)?;
+doc.save("report.pdf")?;
+```
+
+## Convert HTML to PDF (`html` feature)
+
+```rust
+use harumi::{render_html_to_pdf, HtmlRenderOptions};
+
+let font = include_bytes!("NotoSansCJK-Regular.ttf").to_vec();
+let html = r#"
+    <h1>Annual Report</h1>
+    <p>Introduction paragraph.</p>
+    <table>
+      <tr><th>Revenue</th><td>$1,000,000</td></tr>
+    </table>
+    <div style="page-break-after: always"></div>
+    <h1>Page Two</h1>
+"#;
+let pdf_bytes = render_html_to_pdf(html, HtmlRenderOptions {
+    font_bytes: font,
+    ..HtmlRenderOptions::default()
+})?;
+```

@@ -9,7 +9,7 @@
 //! | Scenario | Key API |
 //! |---|---|
 //! | OCR invisible text layer | `add_invisible_text` · `add_invisible_text_runs` |
-//! | AI / RAG text extraction | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
+//! | AI / RAG text extraction | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` · `extract_all_text_chunks` · `extract_all_as_markdown` · `extract_all_text_runs_verbose` · `extract_all_text_runs_json` (`json`) |
 //! | PDF watermark / stamp | `add_text` · `add_text_with_rotation` |
 //! | Scanned PDF → searchable | `add_invisible_text` + hOCR helpers (`ocr` feature) |
 //! | HTML → PDF | `render_html_to_pdf` (`html` feature) |
@@ -110,7 +110,8 @@ pub use document::{
     AttachmentInfo, BatchEntry, BoxFitOptions, Color, Document, FieldType, FitOptions, FitResult,
     FormField, FragmentReplaceFailureReason, FragmentReplaceOpts, GlyphFallbackDiagnostic,
     GlyphResolution, MutationReport, OverflowPolicy, PageHandle, PageTextExtraction, PdfMetadata,
-    PlacementStatus, ReplaceOptions, StructureReport, TextFieldOptions, TextRun, VerticalAlign,
+    PlacementStatus, RepairReport, RepairWarning, RepairWarningKind, ReplaceOptions,
+    StructureAudit, StructureReport, TextFieldOptions, TextRun, VerticalAlign,
     calculate_text_width, diagnose_font_fallback, font_covers_char, glyph_advance_pt,
     wrap_paragraph,
 };
@@ -130,6 +131,7 @@ pub use font::{
     FontHandle,
     face::{Face, GlyphId, ParseError},
 };
+
 #[cfg(feature = "svg")]
 pub use svg::{SvgOptions, svg_to_pdf, svg_to_pdf_with_options};
 

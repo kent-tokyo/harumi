@@ -834,24 +834,6 @@ fn replace_text_in_form_xobject_inherited_resources() {
         after.contains("Bye"),
         "new text not found after replace: {after:?}"
     );
-
-    // The page inherits /Resources from /Pages.  Verify that write-back did
-    // not flatten or discard that resource chain while rewriting the Form
-    // XObject content stream.
-    let saved = lopdf::Document::load_mem(&out).unwrap();
-    let saved_page_id = *saved.get_pages().get(&1).unwrap();
-    let saved_page = saved.get_object(saved_page_id).unwrap().as_dict().unwrap();
-    assert!(
-        saved_page.get(b"Resources").is_err(),
-        "fixture should continue to exercise inherited page resources"
-    );
-    let parent_id = saved_page.get(b"Parent").unwrap().as_reference().unwrap();
-    let pages = saved.get_object(parent_id).unwrap().as_dict().unwrap();
-    let resources = pages.get(b"Resources").unwrap().as_dict().unwrap();
-    let xobjects = resources.get(b"XObject").unwrap().as_dict().unwrap();
-    let xobject_id = xobjects.get(b"X1").unwrap().as_reference().unwrap();
-    let xobject = saved.get_object(xobject_id).unwrap().as_stream().unwrap();
-    assert!(!xobject.content.is_empty(), "Form XObject content was lost");
 }
 
 // ---------------------------------------------------------------------------

@@ -107,6 +107,18 @@ impl Document {
         Ok(merged)
     }
 
+    /// Extracts semantic text chunks from every page in document order.
+    ///
+    /// Each tuple contains the 1-based page number and that page's chunks.
+    /// Empty pages are included as an empty vector so callers can preserve the
+    /// document's page topology. This is useful for bulk readers that need
+    /// coordinates and semantic roles without flattening page boundaries.
+    pub fn extract_all_text_chunks(&self) -> Result<Vec<(u32, Vec<TextChunk>)>> {
+        (1..=self.page_count())
+            .map(|page| self.extract_text_chunks(page).map(|chunks| (page, chunks)))
+            .collect()
+    }
+
     /// Extracts text from a page as a Markdown string.
     ///
     /// Uses [`extract_text_chunks`](Document::extract_text_chunks) to identify
@@ -148,6 +160,32 @@ impl Document {
         // Trim trailing whitespace.
         while result.ends_with('\n') || result.ends_with(' ') {
             result.pop();
+        }
+
+        Ok(result)
+    }
+
+    /// Extracts every page as deterministic Markdown with page markers.
+    ///
+    /// Each page starts with an HTML comment of the form `<!-- page: N -->`.
+    /// Markers are emitted for empty pages as well, allowing a downstream ETL
+    /// or RAG pipeline to retain the original page numbering. The per-page
+    /// content uses the same heading and paragraph heuristics as
+    /// [`extract_as_markdown`](Document::extract_as_markdown).
+    pub fn extract_all_as_markdown(&self) -> Result<String> {
+        let mut result = String::new();
+
+        for page in 1..=self.page_count() {
+            if !result.is_empty() {
+                result.push_str("\n\n");
+            }
+            result.push_str(&format!("<!-- page: {page} -->"));
+
+            let markdown = self.extract_as_markdown(page)?;
+            if !markdown.is_empty() {
+                result.push_str("\n\n");
+                result.push_str(&markdown);
+            }
         }
 
         Ok(result)

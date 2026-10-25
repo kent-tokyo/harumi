@@ -1,101 +1,37 @@
 # harumi roadmap
 
-この文書は、現在の対応範囲と次の開発判断だけをまとめた公開用ロードマップです。
-実装履歴は [`CHANGELOG.md`](CHANGELOG.md)、API の説明は [`docs/API.md`](docs/API.md)、
-機能一覧は [`docs/FEATURES.md`](docs/FEATURES.md) を参照してください。
+Current release: **v1.23.1**. This file is the short public roadmap; detailed
+history and task checklists live in [`tasks/todo.md`](tasks/todo.md).
 
-## 現在の基準
+## Current position
 
-- `harumi` v1.23.5、MSRV Rust 1.88、edition 2024
-- `harumi-ai` v0.10.1、`harumi-mcp` v0.1.2
-- Pure Rust を基本とし、通常依存と WASM 依存に C/C++ ランタイムを追加しない
-- 既存 PDF の CJK 抽出・置換・overlay・診断と、新規 PDF の帳票組版を主対象とする
-- 外部 renderer の利用は optional adapter または検証用 oracle として扱う
+harumi focuses on position-aware CJK text extraction and write-back for existing
+PDFs, plus Pure Rust/WASM document automation. It does not provide a general
+PDF viewer or pixel-identical rendering.
 
-## 完了した基盤
+## Next priorities
 
-- CJK TrueType/TTC フォントの埋め込み、サブセット化、ToUnicode
-- テキスト抽出、フォント維持置換、再サブセット、overlay
-- ページ操作、結合・分割、注釈、フォーム、メタデータ、署名
-- 図形・画像・透明度、HTML→PDF、`FlowDocument`、WASM 境界
-- Form XObject、ページツリー継承、contents/resources の安全な処理
-- 表、結合セル、ページ分割、ヘッダー・フッター、脚注、TOC、layout diagnostics
-- Poppler を使った固定 fixture の仕様・帳票検証と、比較用の機械可読 manifest
-- CJK/Latin 帳票の固定比較で、保存・再読込後のヘッダー・ページ番号フッター再利用
-- ページ操作前後の構造監査と mutation report（ページ・オブジェクト・リソース数）
-- CJK・画像・URLリンク・メタデータを含む最小writerのsave/reload・決定性fixture
-- Unicode改行境界の固定fixtureと、UAX #14・辞書hyphenation・視覚的RTL/縦書きを分けた制約
-- CJK編集後のsave/reload・構造監査・Poppler描画を一つにしたPDF仕様fixture
+1. **Flow performance** — profile 100/1,000-page reports and reduce repeated font
+   measurement and page-tree work without changing output.
+2. **CJK write-back evidence** — test varied real PDFs for glyph coverage,
+   replacement counts, resource preservation, extraction, and rendered output.
+3. **SVG visual coverage** — add multi-subpath, transform, baseline, and marker
+   fixtures with raster comparisons.
+4. **Unicode layout** — extend line breaking, vertical writing, and bidi support
+   only with explicit fixtures and bounded claims.
+5. **Renderer compatibility** — keep Poppler smoke checks and add pinned Pdfium,
+   Chrome, or Acrobat evidence when runtimes are available.
 
-## 現在の対応範囲
+## Evidence policy
 
-v1.23.5 の組版契約は、CJK/Latin 混在段落、表、ページ分割、テンプレート、
-基本的な HTML break semantics を対象とします。次の機能は未対応または
-best effort です。
+Performance, extraction accuracy, visual fidelity, and library fit are reported
+separately. A small fixed corpus is a correctness signal, not a general
+accuracy claim. See [`docs/PDF_ECOSYSTEM.md`](docs/PDF_ECOSYSTEM.md) for the
+comparison contract and evidence status.
 
-- 完全な Unicode Line Breaking
-- 視覚的な bidi / RTL shaping と縦書きの完全互換
-- 任意の block grouping と、完全な HTML/CSS 互換
-- Pdfium、Chrome、Acrobat と同一の pixel parity
-- 競合ライブラリの全 API の再実装
-- SVG の完全なブラウザ互換（対応範囲は `docs/API.md` を参照）
+## Completed foundations
 
-## 次の優先順位
-
-### 1. 共通の証拠契約
-
-Phase 52 の五領域を同一条件で比較できる状態にします。
-
-- viewer-like editing
-- 複雑な帳票・組版
-- PDF object surgery
-- bulk extraction / Markdown / JSON
-- 軽量 Pure Rust writer
-
-fixture、runner、artifact report、正しさの oracle、runtime boundary を固定します。
-速度・メモリ・成果物サイズは同じ入力と環境で測り、用途適合度と混同しません。
-
-### 2. 組版の境界を明確にする
-
-Unicode の改行境界、opt-in の hyphenation、RTL/Bidi、縦書き、脚注参照、残りの
-HTML/CSS semantics を、機能ごとの fixture と明示的な制約付きで追加します。
-shaping や視覚的な reordering を実装しない場合は、公開 API とドキュメントで
-best effort の範囲を保ちます。
-
-### 3. ドメイン別の実証
-
-次の順で実装・測定します。
-
-1. Pdfium を標準依存にせず、編集前後の抽出・構造保存・描画検証を固定する
-2. CJK/Latin 帳票の表構造、改ページ、抽出順、テンプレート再利用を検証する
-3. 高レベルの構造操作と mutation report を拡張する
-4. 大規模抽出の page batch、JSON/Markdown、警告、再開可能な失敗を検証する
-5. 最小 writer の CJK、画像、リンク、メタデータ、決定的 save/reload を検証する
-
-機能追加は、fixture と保存後の検証で再現できる欠陥に限定します。未知の構造は
-暗黙に正規化せず、未対応部分は警告またはエラーとして返します。
-
-## 完了条件
-
-Phase 52 の各領域は、次を満たした時点で完了とします。
-
-- 固定 fixture、実行コマンド、artifact report が保存されている
-- 抽出文字列・順序・座標・ページ geometry・構造保存を検証できる
-- renderer/native runtime の版、feature flag、依存境界が明記されている
-- 同一条件の結果を再現でき、性能主張の対象 workload が明確である
-- README と API docs が実装済み範囲と non-goal に一致している
-
-## 検証コマンド
-
-```bash
-cargo test --workspace --all-features
-cargo clippy --workspace --all-features -- -D warnings
-cargo fmt --all -- --check
-git diff --check
-bash scripts/check-pdf-spec-coverage-render.sh
-bash scripts/check-report-generation-fixture.sh
-```
-
-Pdfium の runtime 検証は、明示した `PDFIUM_LIBRARY_PATH` と
-`PDFIUM_LIBRARY_SHA256` がある場合だけ実行します。未検証環境では golden を
-生成せず、compile-only の結果と分けて報告します。
+- CJK TrueType/TTC embedding, ToUnicode maps, and font subsetting
+- Existing-PDF extraction, overlay, replacement, page operations, and repairs
+- Flow/HTML pagination, tables, templates, footnotes, and layout diagnostics
+- Bulk extraction, JSON/Markdown handoff, structure audits, and WASM checks

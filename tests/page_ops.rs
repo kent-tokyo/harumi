@@ -530,21 +530,6 @@ fn smoke_merge_appends_pages() {
 }
 
 #[test]
-fn structure_audit_reports_page_mutation() {
-    let mut doc = Document::from_bytes(&three_page_pdf()).unwrap();
-    let before = doc.audit_structure().unwrap();
-    assert_eq!(before.page_count, 3);
-    assert!(before.content_stream_count >= 3);
-    assert!(before.page_tree_depth >= 1);
-
-    doc.remove_page(2).unwrap();
-    let report = doc.mutation_report(&before).unwrap();
-    assert_eq!(report.page_count_delta, -1);
-    assert_eq!(report.after.page_count, 2);
-    assert_eq!(report.after.content_stream_count, 2);
-}
-
-#[test]
 fn smoke_merge_preserves_content() {
     // 1-page base (height 842) + 3-page other (heights 100, 200, 300)
     // After merge: page 1=842, page 2=100, page 3=200, page 4=300

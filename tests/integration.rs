@@ -282,3 +282,216 @@ fn roundtrip_save_reload_preserves_page_count() {
     let reloaded = Document::from_bytes(&bytes).expect("reload");
     assert_eq!(reloaded.page_count(), expected);
 }
+
+/// Structure audits make common high-level mutations observable across save/reload.
+#[test]
+fn structure_audit_reports_metadata_and_attachment_mutations() {
+    let pdf_bytes = helpers::minimal_pdf_bytes();
+    let mut doc = Document::from_bytes(&pdf_bytes).expect("load");
+    let before = doc.audit_structure().expect("audit before");
+
+    doc.set_metadata(&harumi::PdfMetadata {
+        title: Some("Audited PDF".into()),
+        ..Default::default()
+    })
+    .expect("metadata");
+    doc.attach_file("source.txt", b"audit", "text/plain")
+        .expect("attachment");
+
+    let report = doc.mutation_report(&before).expect("mutation report");
+    assert!(
+        report
+            .changed_fields()
+            .iter()
+            .any(|field| *field == "object_count")
+    );
+
+    let reloaded = Document::from_bytes(&doc.save_to_bytes().expect("save")).expect("reload");
+    let after_reload = reloaded.structure_audit().expect("audit after reload");
+    assert_eq!(after_reload.attachment_count, 1);
+    assert!(after_reload.has_metadata);
+    assert!(after_reload.has_names);
+}
+
+/// A missing top-level /Contents entry is repaired explicitly and reported.
+#[test]
+fn repair_missing_page_contents_is_explicit_and_roundtrips() {
+    let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).expect("load");
+    let report = doc.repair_page_contents(1).expect("repair");
+
+    assert!(report.changed);
+    assert_eq!(report.page, 1);
+    assert_eq!(report.warnings.len(), 1);
+    assert_eq!(
+        report.warnings[0].kind,
+        harumi::RepairWarningKind::MissingContents
+    );
+
+    let reloaded = Document::from_bytes(&doc.save_to_bytes().expect("save")).expect("reload");
+    let second = reloaded.structure_audit().expect("audit repaired document");
+    assert!(second.stream_count >= 1);
+    assert!(!second.has_outline);
+}
+
+fn contents_variant_pdf(indirect_array: bool) -> Vec<u8> {
+    let mut raw = lopdf::Document::load_from(helpers::minimal_pdf_bytes().as_slice()).unwrap();
+    let page_id = raw.get_pages()[&1];
+    let stream_id = raw.add_object(lopdf::Object::Stream(lopdf::Stream::new(
+        lopdf::Dictionary::new(),
+        b"q\nQ\n".to_vec(),
+    )));
+    let contents = lopdf::Object::Array(vec![lopdf::Object::Reference(stream_id)]);
+    let contents = if indirect_array {
+        let array_id = raw.add_object(contents);
+        lopdf::Object::Reference(array_id)
+    } else {
+        contents
+    };
+    raw.get_object_mut(page_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Contents", contents);
+
+    let mut bytes = Vec::new();
+    raw.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+/// Direct and indirect /Contents arrays remain untouched by bounded repair.
+#[test]
+fn repair_preserves_direct_and_indirect_contents_arrays() {
+    for indirect_array in [false, true] {
+        let mut doc = Document::from_bytes(&contents_variant_pdf(indirect_array)).unwrap();
+        let report = doc.repair_page_contents(1).unwrap();
+        assert!(!report.changed);
+        assert!(report.warnings.is_empty());
+
+        let reloaded = lopdf::Document::load_from(doc.save_to_bytes().unwrap().as_slice()).unwrap();
+        let page = reloaded
+            .get_object(reloaded.get_pages()[&1])
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        match (indirect_array, page.get(b"Contents").unwrap()) {
+            (false, lopdf::Object::Array(_)) | (true, lopdf::Object::Reference(_)) => {}
+            (expected, actual) => {
+                panic!("contents representation changed for indirect_array={expected}: {actual:?}")
+            }
+        }
+    }
+}
+
+/// Page tree, annotation, outline, and attachment mutations remain auditable together.
+#[test]
+fn structure_audit_covers_common_object_editing_workflow() {
+    let mut doc = Document::from_bytes(&helpers::minimal_pdf_bytes()).unwrap();
+    let before = doc.audit_structure().unwrap();
+
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.page(1)
+        .unwrap()
+        .add_link_url([72.0, 700.0, 120.0, 18.0], "https://example.com")
+        .unwrap();
+    doc.add_bookmark("Audited section", 1, 700.0).unwrap();
+    doc.attach_file("notes.txt", b"audit", "text/plain")
+        .unwrap();
+
+    let reloaded = Document::from_bytes(&doc.save_to_bytes().unwrap()).unwrap();
+    let report = reloaded.mutation_report(&before).unwrap();
+
+    assert_eq!(report.after.page_count, 2);
+    let after = reloaded.structure_audit().unwrap();
+    assert_eq!(after.annotation_count, 1);
+    assert_eq!(after.attachment_count, 1);
+    assert!(after.has_outline);
+    assert!(after.has_names);
+}
+
+/// Resource repair materializes inherited resources and reports malformed top-level values.
+#[test]
+fn repair_page_resources_reports_missing_and_invalid_values() {
+    use lopdf::dictionary;
+
+    let mut raw = lopdf::Document::load_from(helpers::minimal_pdf_bytes().as_slice()).unwrap();
+    let page_id = raw.get_pages()[&1];
+    let pages_id = raw
+        .get_object(page_id)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    raw.get_object_mut(page_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .remove(b"Resources");
+    raw.get_object_mut(pages_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set(
+            "Resources",
+            lopdf::Object::Dictionary(dictionary! {
+                "Font" => lopdf::Object::Dictionary(dictionary! {
+                    "FInherited" => lopdf::Object::Null,
+                }),
+            }),
+        );
+    let mut missing_bytes = Vec::new();
+    raw.save_to(&mut missing_bytes).unwrap();
+
+    let mut missing = Document::from_bytes(&missing_bytes).unwrap();
+    let missing_report = missing.repair_page_resources(1).unwrap();
+    assert!(missing_report.changed);
+    assert!(missing_report.warnings.is_empty());
+    let repaired = lopdf::Document::load_mem(&missing.save_to_bytes().unwrap()).unwrap();
+    let repaired_page = repaired
+        .get_object(repaired.get_pages()[&1])
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    let repaired_resources = repaired_page.get(b"Resources").unwrap().as_dict().unwrap();
+    assert!(repaired_resources.get(b"Font").is_ok());
+
+    let mut raw = lopdf::Document::load_from(helpers::minimal_pdf_bytes().as_slice()).unwrap();
+    let page_id = raw.get_pages()[&1];
+    raw.get_object_mut(page_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .remove(b"Resources");
+    let mut missing_bytes = Vec::new();
+    raw.save_to(&mut missing_bytes).unwrap();
+
+    let mut missing = Document::from_bytes(&missing_bytes).unwrap();
+    let missing_report = missing.repair_page_resources(1).unwrap();
+    assert!(missing_report.changed);
+    assert_eq!(
+        missing_report.warnings[0].kind,
+        harumi::RepairWarningKind::MissingResources
+    );
+    Document::from_bytes(&missing.save_to_bytes().unwrap()).unwrap();
+
+    let mut raw = lopdf::Document::load_from(helpers::minimal_pdf_bytes().as_slice()).unwrap();
+    let page_id = raw.get_pages()[&1];
+    raw.get_object_mut(page_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Resources", lopdf::Object::Integer(7));
+    let mut invalid_bytes = Vec::new();
+    raw.save_to(&mut invalid_bytes).unwrap();
+
+    let mut invalid = Document::from_bytes(&invalid_bytes).unwrap();
+    let invalid_report = invalid.repair_page_resources(1).unwrap();
+    assert!(invalid_report.changed);
+    assert_eq!(
+        invalid_report.warnings[0].kind,
+        harumi::RepairWarningKind::InvalidResourcesValue
+    );
+    Document::from_bytes(&invalid.save_to_bytes().unwrap()).unwrap();
+}

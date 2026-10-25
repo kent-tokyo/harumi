@@ -1,0 +1,9 @@
+{
+  "schema": "harumi-competitive-domain-fixture-v1",
+  "domain": "viewer-edit",
+  "reference": "pdfium-render",
+  "input": "examples/fixtures/scanned_sample.pdf",
+  "operations": ["render_selected_page", "overlay_visible_text", "replace_text", "add_link_and_annotation", "rotate_and_resize_page", "save_reload"],
+  "required_checks": ["page_count", "page_geometry", "text_extraction", "annotation_presence", "render_artifact", "unsupported_operation_is_explicit"],
+  "runtime": {"pdfium": "optional", "native_library_sha256_required_for_golden": true}
+}

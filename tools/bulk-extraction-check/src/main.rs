@@ -27,7 +27,6 @@ struct InputReport {
     image_count: usize,
     invisible_fragment_count: usize,
     page_batch_count: usize,
-    warning_count: usize,
     resumable_page_failures: usize,
     elapsed_ms: u128,
 }
@@ -191,36 +190,32 @@ fn measure_case(
     let mut image_count = 0;
     let mut invisible_fragment_count = 0;
     let mut page_batch_count = 0;
-    let mut warning_count = 0;
     let mut resumable_page_failures = 0;
     let page_count = doc.page_count();
-    const BATCH_SIZE: usize = 8;
-    doc.for_each_text_runs_verbose_batch(1, page_count, BATCH_SIZE, |batch| {
+
+    doc.for_each_text_runs_verbose_batch(1, page_count, 2, |batch| {
         page_batch_count += 1;
-        for page in batch {
-            warning_count += page.warnings.len();
-            if page.error.is_some() {
-                resumable_page_failures += 1;
-                continue;
-            }
-            invisible_fragment_count += page
-                .runs
-                .iter()
-                .filter(|fragment| fragment.invisible)
-                .count();
-            fragments.extend(page.runs.iter().cloned());
-            let markdown = doc.extract_as_markdown(page.page)?;
-            markdown_block_count += markdown
-                .split("\n\n")
-                .filter(|block| !block.trim().is_empty())
-                .count();
-            image_count += doc
-                .extract_page_images(page.page)
-                .map(|images| images.len())
-                .unwrap_or(0);
-        }
+        resumable_page_failures += batch.iter().filter(|page| page.error.is_some()).count();
         Ok(())
     })?;
+
+    for page in 1..=doc.page_count() {
+        let page_fragments = doc.extract_text_runs(page)?;
+        invisible_fragment_count += page_fragments
+            .iter()
+            .filter(|fragment| fragment.invisible)
+            .count();
+        fragments.extend(page_fragments);
+        let markdown = doc.extract_as_markdown(page)?;
+        markdown_block_count += markdown
+            .split("\n\n")
+            .filter(|block| !block.trim().is_empty())
+            .count();
+        image_count += doc
+            .extract_page_images(page)
+            .map(|images| images.len())
+            .unwrap_or(0);
+    }
     let text: String = fragments
         .iter()
         .map(|fragment| fragment.text.as_str())
@@ -256,7 +251,6 @@ fn measure_case(
         image_count,
         invisible_fragment_count,
         page_batch_count,
-        warning_count,
         resumable_page_failures,
         elapsed_ms: started.elapsed().as_millis(),
     })

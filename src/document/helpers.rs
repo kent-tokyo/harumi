@@ -1,6 +1,7 @@
-use crate::error::{Error, Result};
-use crate::font::face::Face;
 use lopdf::{Dictionary, Object, ObjectId, Stream};
+use ttf_parser::Face;
+
+use crate::error::{Error, Result};
 
 use super::types::{Color, FieldType, FormField};
 
@@ -616,19 +617,6 @@ pub(crate) fn is_cjk(ch: char) -> bool {
     )
 }
 
-/// Returns true for scripts that commonly do not use visible spaces between
-/// words. This is a character-boundary fallback, not dictionary-based word
-/// segmentation; it keeps long runs from overflowing as one unbreakable word.
-fn is_character_breakable_script(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x0E00..=0x0E7F // Thai
-        | 0x0E80..=0x0EFF // Lao
-        | 0x1000..=0x109F // Myanmar
-        | 0x1780..=0x17FF // Khmer
-    )
-}
-
 /// Returns true for punctuation that should not begin a line in CJK layout.
 ///
 /// This is the small, deterministic subset shared by Flow, HTML, and text-box
@@ -916,7 +904,7 @@ pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
 
 /// Return `true` when `font_bytes` contains a glyph for `ch`.
 ///
-/// Uses the embedded OpenType metadata parser to check the font's `cmap` table.
+/// Uses [ttf-parser](https://docs.rs/ttf-parser) to check the font's `cmap` table.
 /// Returns `false` when `font_bytes` cannot be parsed.
 ///
 /// # Example
@@ -926,7 +914,7 @@ pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
 /// assert!(!harumi::font_covers_char(&font_bytes, '؟')); // Arabic question mark
 /// ```
 pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
-    Face::parse(font_bytes, 0)
+    ttf_parser::Face::parse(font_bytes, 0)
         .map(|face| face.glyph_index(ch).is_some())
         .unwrap_or(false)
 }
@@ -936,15 +924,15 @@ pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
 /// This helper is useful for checking text overflow without needing access to Font objects.
 /// Returns None if the font bytes are invalid or if any character is missing from the font.
 pub fn calculate_text_width(text: &str, font_bytes: &[u8], font_size: f32) -> Option<f32> {
-    let face = Face::parse(font_bytes, 0).ok()?;
+    let face = ttf_parser::Face::parse(font_bytes, 0).ok()?;
     Some(text_width_with_face(text, &face, font_size))
 }
 
-/// Like [`calculate_text_width`] but reuses a pre-parsed font face.
+/// Like [`calculate_text_width`] but reuses a pre-parsed [`ttf_parser::Face`].
 ///
 /// Use this inside loops (e.g. shrink-to-fit) to avoid re-parsing the font on
 /// every iteration.  Characters missing from the font contribute 0 width.
-pub(super) fn text_width_with_face(text: &str, face: &Face<'_>, font_size: f32) -> f32 {
+pub(super) fn text_width_with_face(text: &str, face: &ttf_parser::Face<'_>, font_size: f32) -> f32 {
     text.chars()
         .filter_map(|ch| glyph_advance_pt(face, ch, font_size))
         .sum()
@@ -1067,7 +1055,7 @@ pub(crate) fn wrap_paragraph_with_fallback(
                 current_w += ch_w;
                 continue;
             }
-            if is_cjk(ch) || is_character_breakable_script(ch) || last_space.is_none() {
+            if is_cjk(ch) || last_space.is_none() {
                 // CJK or no word boundary found → break at the current character
                 if is_line_start_prohibited(ch) {
                     // Keep closing punctuation with the preceding glyph. This
@@ -1116,7 +1104,7 @@ pub(crate) fn wrap_paragraph_with_fallback(
 /// `line_height = fs * 1.2` — matches the constant in `replace_text_fragments_opts`.
 pub(super) fn plan_text_fit(
     text: &str,
-    face: &Face<'_>,
+    face: &ttf_parser::Face<'_>,
     rect: [f32; 4],
     initial_font_size: f32,
     opts: &super::types::BoxFitOptions,
@@ -1527,42 +1515,65 @@ pub(super) fn add_font_to_resources(
     pdf_name: &[u8],
     type0_id: ObjectId,
 ) -> Result<()> {
-    let font_ref = Object::Reference(type0_id);
-    with_resources_dict_mut(doc, page_id, |resources| {
-        ensure_font_entry(resources, pdf_name, font_ref.clone());
-    })?;
-    add_font_to_indirect_resource_dict(doc, page_id, pdf_name, font_ref)
-}
-
-fn add_font_to_indirect_resource_dict(
-    doc: &mut lopdf::Document,
-    page_id: ObjectId,
-    pdf_name: &[u8],
-    font_ref: Object,
-) -> Result<()> {
-    let resources = doc
-        .get_object(page_id)?
-        .as_dict()?
-        .get(b"Resources")
-        .ok()
-        .and_then(|object| match object {
-            Object::Reference(id) => doc.get_object(*id).ok(),
-            Object::Dictionary(_) => Some(object),
+    let resources_id: Option<ObjectId> = {
+        let page_dict = doc.get_object(page_id)?.as_dict()?;
+        match page_dict.get(b"Resources").ok() {
+            Some(Object::Reference(r)) => Some(*r),
             _ => None,
-        })
-        .and_then(|object| object.as_dict().ok());
-    let Some(resources) = resources else {
-        return Ok(());
+        }
     };
-    let Some(font_id) = resources.get(b"Font").ok().and_then(|object| match object {
-        Object::Reference(id) => Some(*id),
-        _ => None,
-    }) else {
-        return Ok(());
-    };
-    doc.get_object_mut(font_id)?
-        .as_dict_mut()?
-        .set(pdf_name, font_ref);
+
+    let font_ref = Object::Reference(type0_id);
+
+    if let Some(res_id) = resources_id {
+        let font_dict_id = {
+            let res_dict = doc.get_object(res_id)?.as_dict()?;
+            match res_dict.get(b"Font").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        };
+        if let Some(font_dict_id) = font_dict_id {
+            doc.get_object_mut(font_dict_id)?
+                .as_dict_mut()?
+                .set(pdf_name, font_ref);
+            return Ok(());
+        }
+        let res_dict = doc.get_object_mut(res_id)?.as_dict_mut()?;
+        ensure_font_entry(res_dict, pdf_name, font_ref);
+    } else {
+        let inline_font_id = {
+            let page_dict = doc.get_object(page_id)?.as_dict()?;
+            match page_dict.get(b"Resources").ok() {
+                Some(Object::Dictionary(resources)) => match resources.get(b"Font").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(font_dict_id) = inline_font_id {
+            doc.get_object_mut(font_dict_id)?
+                .as_dict_mut()?
+                .set(pdf_name, font_ref);
+            return Ok(());
+        }
+        let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
+        match page_dict.get_mut(b"Resources") {
+            Ok(res_obj) => {
+                let res_dict = res_obj.as_dict_mut()?;
+                ensure_font_entry(res_dict, pdf_name, font_ref);
+            }
+            Err(_) => {
+                let mut font_dict = Dictionary::new();
+                font_dict.set(pdf_name, font_ref);
+                let mut res_dict = Dictionary::new();
+                res_dict.set("Font", Object::Dictionary(font_dict));
+                page_dict.set("Resources", Object::Dictionary(res_dict));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1650,23 +1661,11 @@ where
     if let Some(res_id) = resources_id {
         f(doc.get_object_mut(res_id)?.as_dict_mut()?);
     } else {
-        // `/Resources` is inheritable from an ancestor `/Pages` node. Clone the
-        // effective dictionary before adding page-local entries so that adding
-        // one resource does not hide fonts, XObjects, or graphics state already
-        // supplied by the page tree.
-        let inherited = {
-            let page_dict = doc.get_object(page_id)?.as_dict()?;
-            if page_dict.get(b"Resources").is_err() {
-                inherited_resources(doc, page_id)
-            } else {
-                None
-            }
-        };
         let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
         match page_dict.get_mut(b"Resources") {
             Ok(res_obj) => f(res_obj.as_dict_mut()?),
             Err(_) => {
-                let mut res_dict = inherited.unwrap_or_default();
+                let mut res_dict = Dictionary::new();
                 f(&mut res_dict);
                 page_dict.set("Resources", Object::Dictionary(res_dict));
             }
@@ -1931,19 +1930,6 @@ mod tests {
                 .all(|line| { !line.starts_with('⟧') && !line.ends_with('⟦') })
         );
         assert_eq!(lines.concat(), "あいう⟦えお⟧かき");
-    }
-
-    #[test]
-    fn wrap_paragraph_breaks_space_free_southeast_asian_scripts() {
-        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
-        let face = Face::parse(bytes, 0).expect("fixture font should parse");
-
-        for text in ["ภาษาไทย", "ພາສາລາວ", "ភាសាខ្មែរ"]
-        {
-            let lines = wrap_paragraph(text, &face, 10.0, 16.0);
-            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
-            assert_eq!(lines.concat(), text);
-        }
     }
 
     #[test]

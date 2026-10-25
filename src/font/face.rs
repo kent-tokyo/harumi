@@ -76,6 +76,7 @@ impl Face<'_> {
             .map(|height| height.round() as i16)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn global_bounding_box(&self) -> BoundingBox {
         let bounds = self
             .inner
@@ -91,6 +92,7 @@ impl Face<'_> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BoundingBox {
     pub(crate) x_min: i16,

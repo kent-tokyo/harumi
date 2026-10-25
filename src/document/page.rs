@@ -1,5 +1,5 @@
-use crate::font::face::Face;
 use lopdf::{Dictionary, Object, ObjectId, Stream};
+use ttf_parser::Face;
 
 use crate::{
     error::{Error, Result},
@@ -15,17 +15,6 @@ use super::types::{
     Color, Document, FragmentReplaceFailureReason, FragmentReplaceOpts, PendingOp, PendingPage,
     PendingText, ReplaceOptions, TextRun,
 };
-
-fn validate_dash_pattern(array: &[f32], phase: f32, label: &str) -> Result<()> {
-    if array.is_empty() || array.iter().any(|value| *value <= 0.0) {
-        return Err(crate::error::Error::InvalidInput(format!(
-            "{label} requires a non-empty dash array with positive values"
-        )));
-    }
-    let mut values = array.to_vec();
-    values.push(phase);
-    check_finite(&values, label)
-}
 
 /// Vertical alignment for [`PageHandle::add_text_box_aligned`].
 pub enum VerticalAlign {
@@ -44,6 +33,24 @@ pub enum VerticalAlign {
 pub struct PageHandle<'doc> {
     pub(super) doc: &'doc mut Document,
     pub(super) page_id: ObjectId,
+}
+
+fn validate_dash_pattern(array: &[f32], phase: f32, label: &str) -> Result<()> {
+    if array.is_empty()
+        || array
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return Err(Error::InvalidInput(format!(
+            "{label}: dash array must contain positive finite lengths"
+        )));
+    }
+    if !phase.is_finite() {
+        return Err(Error::InvalidInput(format!(
+            "{label}: dash phase must be finite"
+        )));
+    }
+    Ok(())
 }
 
 /// Count how many `Tj`/`TJ` operators in an object's stream have their
@@ -554,7 +561,8 @@ impl<'doc> PageHandle<'doc> {
         }
 
         // Validate font bytes eagerly.
-        let face = Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face =
+            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
@@ -616,7 +624,8 @@ impl<'doc> PageHandle<'doc> {
             )));
         }
 
-        let face = Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
+        let face =
+            ttf_parser::Face::parse(font_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
         if face.units_per_em() == 0 {
             return Err(Error::FontParse("font units_per_em is 0".into()));
         }
@@ -847,7 +856,7 @@ impl<'doc> PageHandle<'doc> {
                 // the TTF face is parsed only once instead of twice.
                 let (fs, lines): (f32, Vec<String>) = if let Some(max_w) = opts.max_width {
                     let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-                    let opt_face = Face::parse(font_bytes, 0).ok();
+                    let opt_face = ttf_parser::Face::parse(font_bytes, 0).ok();
                     let fs = if opts.shrink_to_fit {
                         let min_fs = opts.min_font_size.max(1.0);
                         let mut candidate = fs_initial;
@@ -1000,7 +1009,7 @@ impl<'doc> PageHandle<'doc> {
 
         let placements: Vec<EntryPlacement> = {
             let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-            let face = Face::parse(font_bytes, 0).ok();
+            let face = ttf_parser::Face::parse(font_bytes, 0).ok();
 
             let mut result = Vec::new();
             for (fragments, new_text) in entries {
@@ -1156,7 +1165,7 @@ impl<'doc> PageHandle<'doc> {
 
         let placements: Vec<EntryPlacement> = {
             let font_bytes = &self.doc.raw_fonts[font.0 as usize].ttf_bytes;
-            let face = Face::parse(font_bytes, 0).ok();
+            let face = ttf_parser::Face::parse(font_bytes, 0).ok();
             let mut result = Vec::new();
             for entry in entries {
                 if entry.new_text.is_empty() {
@@ -2256,9 +2265,7 @@ impl<'doc> PageHandle<'doc> {
         Ok(())
     }
 
-    /// Overlays a dashed stroked line segment. `dash_array` contains alternating
-    /// dash and gap lengths in PDF points; odd-length arrays follow PDF rules
-    /// and are repeated to form an even pattern. `dash_phase` is in points.
+    #[cfg(feature = "draw")]
     #[allow(clippy::too_many_arguments)]
     pub fn add_line_dashed(
         &mut self,
@@ -2324,7 +2331,7 @@ impl<'doc> PageHandle<'doc> {
         Ok(())
     }
 
-    /// Overlays a dashed open polyline using a PDF vector `d` operator.
+    #[cfg(feature = "draw")]
     #[allow(clippy::too_many_arguments)]
     pub fn add_polyline_dashed(
         &mut self,
@@ -2339,10 +2346,7 @@ impl<'doc> PageHandle<'doc> {
         if points.len() < 2 {
             return Ok(());
         }
-        let coords: Vec<f32> = points
-            .iter()
-            .flat_map(|point| point.iter().copied())
-            .collect();
+        let coords: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
         check_finite(&coords, "add_polyline_dashed points")?;
         check_finite(&[line_width, opacity], "add_polyline_dashed")?;
         validate_dash_pattern(dash_array, dash_phase, "add_polyline_dashed")?;

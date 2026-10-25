@@ -1,0 +1,52 @@
+{
+  "schema": "harumi-competitive-domains-v1",
+  "snapshot_date": "2026-09-08",
+  "policy": {
+    "same_condition_per_domain": true,
+    "pixel_differences_are_diagnostic": true,
+    "native_runtime_must_be_declared": true,
+    "performance_requires_warmup_and_repeats": true
+  },
+  "domains": [
+    {
+      "id": "viewer-edit",
+      "reference": "pdfium-render",
+      "fixture": "phase-52b-viewer-edit.json",
+      "oracles": ["render_validity", "edit_preservation", "coordinates", "warnings"],
+      "metrics": ["wall_time_ms", "peak_rss_bytes", "artifact_bytes", "startup_ms"],
+      "runtime": "optional-pinned-pdfium"
+    },
+    {
+      "id": "complex-typesetting",
+      "reference": "genpdf/printpdf",
+      "fixture": "phase-52c-complex-typesetting.json",
+      "oracles": ["page_geometry", "overflow", "marker_order", "table_structure", "extraction"],
+      "metrics": ["wall_time_ms", "peak_rss_bytes", "artifact_bytes", "page_count"],
+      "runtime": "fixed-poppler-with-optional-external-runtimes"
+    },
+    {
+      "id": "object-surgery",
+      "reference": "lopdf",
+      "fixture": "phase-52d-object-surgery.json",
+      "oracles": ["object_graph_roundtrip", "untouched_object_semantics", "mutation_audit", "warnings"],
+      "metrics": ["wall_time_ms", "peak_rss_bytes", "artifact_bytes", "mutation_count"],
+      "runtime": "pure-rust"
+    },
+    {
+      "id": "bulk-extraction",
+      "reference": "unpdf/pdf_oxide",
+      "fixture": "phase-52e-bulk-extraction.json",
+      "oracles": ["text_recall", "reading_order", "coordinates", "table_structure", "warning_fidelity"],
+      "metrics": ["wall_time_ms", "peak_rss_bytes", "pages_per_second", "records_per_second"],
+      "runtime": "pure-rust-with-optional-adapters"
+    },
+    {
+      "id": "minimal-writer",
+      "reference": "pdf-writer",
+      "fixture": "phase-52f-minimal-writer.json",
+      "oracles": ["pdf_validity", "cjk_extraction", "save_reload", "deterministic_objects"],
+      "metrics": ["wall_time_ms", "peak_rss_bytes", "artifact_bytes", "font_subset_bytes"],
+      "runtime": "native-and-wasm"
+    }
+  ]
+}

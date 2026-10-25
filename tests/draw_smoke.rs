@@ -111,62 +111,6 @@ fn smoke_add_line_content_stream() {
     assert!(s.contains("1.5000 w"), "content should set line width");
 }
 
-#[cfg(feature = "draw")]
-#[test]
-fn smoke_add_dashed_line_and_polyline_content_stream() {
-    let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
-    let mut page = doc.page(1).unwrap();
-    page.add_line_dashed(
-        [72.0, 580.0],
-        [200.0, 580.0],
-        [0.0, 0.0, 0.0],
-        1.5,
-        1.0,
-        &[2.0, 2.0],
-        0.5,
-    )
-    .unwrap();
-    page.add_polyline_dashed(
-        &[[72.0, 560.0], [120.0, 560.0], [120.0, 520.0]],
-        [0.0, 0.0, 0.0],
-        1.5,
-        1.0,
-        &[4.0, 2.0],
-        0.0,
-    )
-    .unwrap();
-
-    let out = doc.save_to_bytes().unwrap();
-    let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
-    let content = lopdf_doc.get_page_content(lopdf_doc.get_pages()[&1]);
-    let s = String::from_utf8_lossy(&content);
-    assert!(s.contains("[2.0000 2.0000] 0.5000 d"));
-    assert!(s.contains("[4.0000 2.0000] 0.0000 d"));
-}
-
-#[cfg(feature = "draw")]
-#[test]
-fn dashed_strokes_reject_invalid_patterns() {
-    let mut doc = Document::from_bytes(&minimal_pdf()).unwrap();
-    let mut page = doc.page(1).unwrap();
-    assert!(
-        page.add_line_dashed([0.0; 2], [1.0, 1.0], [0.0, 0.0, 0.0], 1.0, 1.0, &[], 0.0)
-            .is_err()
-    );
-    assert!(
-        page.add_line_dashed(
-            [0.0; 2],
-            [1.0, 1.0],
-            [0.0, 0.0, 0.0],
-            1.0,
-            1.0,
-            &[2.0, 0.0],
-            0.0
-        )
-        .is_err()
-    );
-}
-
 // ---------------------------------------------------------------------------
 // draw feature: mixed rect + text on same page
 // ---------------------------------------------------------------------------

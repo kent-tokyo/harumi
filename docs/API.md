@@ -1,5 +1,14 @@
 # harumi — API Overview
 
+## Choosing the layer
+
+Use this API when you are starting from an existing PDF and need position-aware
+text extraction or CJK-safe write-back. `pdfium-render` remains the optional
+choice for viewer rendering, `genpdf`/`printpdf` for independent new-document
+generation, `lopdf` for direct object surgery, `unpdf`/`pdf_oxide` for bulk
+reading, and `pdf-writer` for minimal low-level writing. harumi can be combined
+with those tools; it is not a claim to replace every PDF workload.
+
 ## Core API
 
 ```rust
@@ -18,15 +27,6 @@ doc.page(1)?.add_invisible_text(text, font, [x, y], size)?;
 
 // Visible text — for watermarks, stamps, annotations
 doc.page(1)?.add_text(text, font, [x, y], size, [r, g, b])?;
-
-// Vector drawing (`draw` feature)
-doc.page(1)?.add_line([x1, y1], [x2, y2], color, width, opacity)?;
-doc.page(1)?.add_line_dashed(
-    [x1, y1], [x2, y2], color, width, opacity, &[6.0, 3.0], 0.0,
-)?;
-doc.page(1)?.add_polyline_dashed(
-    &[[x1, y1], [x2, y2], [x3, y3]], color, width, opacity, &[4.0, 2.0], 0.0,
-)?;
 
 // Batch placement (one subsetting pass — efficient for OCR output)
 doc.page(1)?.add_invisible_text_runs(&[
@@ -48,12 +48,6 @@ Document::new((w, h))?;                   // blank 1-page PDF
 // Merge documents
 doc.merge_from(other)?;             // append other's pages to end
 
-// Structure audit and mutation evidence
-let before = doc.audit_structure()?;
-doc.remove_page(2)?;
-let report = doc.mutation_report(&before)?;
-assert_eq!(report.page_count_delta, -1);
-
 // Save
 doc.save("output.pdf")?;
 doc.save_to_bytes()?;   // in-memory variant
@@ -63,15 +57,45 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 // `run.rotation_degrees` preserves common 90°/270° text direction.
 // `run.color` and `run.opacity` expose the active fill style when present.
 
-// Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
-let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
-let pages = doc.extract_text_runs_verbose_page_range(1, doc.page_count())?;
-doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 50, |batch| {
-    // Persist each batch; pages are processed incrementally and failed pages
-    // remain in `entry.error`.
-    let _ = batch;
+// Bulk semantic extraction — page numbers and empty pages are preserved
+let pages: Vec<(u32, Vec<TextChunk>)> = doc.extract_all_text_chunks()?;
+let markdown: String = doc.extract_all_as_markdown()?;
+// Markdown contains `<!-- page: N -->` markers for every page.
+
+// Bulk extraction with page-local diagnostics
+let pages: Vec<PageTextExtraction> = doc.extract_all_text_runs_verbose()?;
+// `pages[i].warnings` keeps missing ToUnicode/decompression issues attached
+// to the source page instead of silently discarding them.
+
+// Bounded/resumable page batches
+doc.for_each_text_runs_verbose_batch(50, |batch| {
+    persist_page_batch(batch)?;
     Ok(())
 })?;
+let retry = doc.extract_text_runs_verbose_page_range(101, 150)?;
+
+// Auditable high-level structure changes
+let before: StructureAudit = doc.audit_structure()?;
+doc.set_metadata(&PdfMetadata { title: Some("Updated".into()), ..Default::default() })?;
+let report: MutationReport = doc.mutation_report(&before)?;
+assert!(report.changed_fields.iter().any(|field| field == "has_metadata"));
+
+// Bounded repair: valid direct/indirect contents are preserved; malformed
+// top-level values are replaced with an empty stream and reported.
+let repair: RepairReport = doc.repair_page_contents(1)?;
+for warning in repair.warnings {
+    eprintln!("repair warning: {}", warning.message);
+}
+// A missing page /Resources entry is materialized from the page-tree
+// inheritance chain when available; invalid explicit values are reported.
+let resources_repair: RepairReport = doc.repair_page_resources(1)?;
+
+// Optional JSON envelope for ETL/RAG handoff
+let json: String = doc.extract_all_text_runs_json()?; // requires `json`
+// Top-level schema: `harumi-extraction-v1`; pages retain empty-page entries.
+
+// Include non-fatal diagnostics such as missing ToUnicode CMaps or skipped streams.
+let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
 
 // PDF metadata (/Info dictionary)
 let meta: PdfMetadata = doc.metadata()?;
@@ -139,12 +163,11 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | Flag | What it enables |
 |---|---|
 | *(default)* | Text overlay, font embedding, `add_text_box`, metadata, annotations, AcroForm, page ops |
-| `draw` | `add_rect`, `add_line`, `add_line_dashed`, `add_polyline_dashed`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
+| `draw` | `add_rect`, `add_line`, `add_rect_stroke`, `add_polygon`, `add_ellipse`, `add_path` |
 | `image` | `add_image`, `add_image_with_opacity`, `extract_page_image`, `extract_page_images` (enables `draw`) |
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, tables, nested blocks, headers/footers, page footnotes, inline styling, fallback fonts, and widow/orphan controls |
 | `html` | `render_html_to_pdf` — HTML → PDF with shared Flow paragraph controls (enables `flow`) |
-| `svg` | `svg_to_pdf` — self-contained SVG subset with paths, metadata, CSS colors, and `rgb()` (enables `draw`) |
 | `digital-signature` | `verify_signatures`, `add_signature_field`, `sign_document` |
 
 ---
@@ -173,20 +196,30 @@ NotoSansCJKkr-Regular.ttf  (Korean)
 ```
 harumi
 ├── lopdf v0.46          — parse and modify existing PDF object graph
-├── skrifa                — OpenType metadata (bbox, units_per_em, ascender)
+├── skrifa               — font metadata and glyph metrics
 └── [internal TTF subsetter] — pure-Rust TrueType subsetting (no external crates)
 ```
 
-`harumi` no longer depends directly on `ttf-parser`. Current `lopdf` releases
-may still bring it transitively; that residual dependency is outside harumi's
-font parsing path and is tracked through the `lopdf` dependency.
+Flow/HTML generation is a new-document typesetting path. It does not promise
+pixel-identical reproduction of an existing PDF. For translation overlays,
+text that intersects an image preserves the image and is reported as a Major
+`image_overlap` issue; background restoration and automatic relocation are not
+performed.
 
-Flow/HTML creates new documents and does not promise pixel-identical output.
-The SVG feature is a vector subset, not a browser renderer; it supports paths,
-curves, transforms, markers, CSS named colors, `rgb()`, and non-rendering
-`metadata`.
+Subsetting is **deferred**: `embed_font()` stores raw TTF bytes; at `save()` time, harumi
+collects all characters used across every page, subsets once per font, and writes everything
+in one pass.
 
-Font subsetting is deferred until `save()`. Extraction is best-effort for
-malformed PDFs, missing `/ToUnicode`, deeply nested XObjects, complex vertical
-writing, and mixed per-glyph styles. Use the verbose extraction API to inspect
-warnings, and render output when fidelity matters.
+Extraction is best-effort for malformed or underspecified PDFs. In particular, a Type0/CIDFont
+without a usable `/ToUnicode` CMap may use an Identity-H/V fallback. Use
+`extract_text_runs_verbose()` when the distinction between decoded text and inferred text matters.
+The verbose API also reports `WarningKind::UnsupportedFontSubtype` when a font resource has a
+missing or unsupported `/Subtype`; text using that font is skipped rather than reported as
+successfully decoded. It reports `WarningKind::UnsupportedVerticalWriting` for Type0 fonts using
+`/Identity-V` as a boundary diagnostic. Basic `/DW2`/`/W2` vertical metrics and common 90°/270°
+placement are supported; complex vertical reflow and mixed composition remain best-effort.
+The `TextFragment` bounding box is axis-aligned and may require visual verification.
+
+`TextFragment::opacity` is the effective non-stroking alpha from `/ExtGState /ca` at the page or
+directly processed Form XObject level. Deeply nested XObjects and mixed per-glyph styles remain
+best-effort and should be checked with a renderer.

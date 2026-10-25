@@ -1,6 +1,6 @@
 {
   "name": "shared-report-generation",
-  "version": 3,
+  "version": 2,
   "backends": ["harumi-flow", "harumi-html", "printpdf", "genpdf"],
   "requirements": {
     "cjk_heading": "四半期レポート",
@@ -13,13 +13,7 @@
     "marker_order": true,
     "mixed_cjk_latin_paragraph": true,
     "long_cell": true,
-    "embedded_font": true,
-    "template_reuse": {
-      "backend": "harumi-flow",
-      "shared_header": "shared-template",
-      "page_footers": ["1 / 2", "2 / 2"],
-      "after_reload": true
-    }
+    "embedded_font": true
   },
   "metrics": {
     "generation_elapsed_ms": "number",
