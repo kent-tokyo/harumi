@@ -2413,6 +2413,56 @@ impl FlowDocument {
                 Some(*top)
             }))
             .collect();
+        self.draw_nested_table_rows(rows, &row_tops, &x_boundaries, &options, line_h, font_size)?;
+        self.content_y += self.options.paragraph_spacing;
+        Ok(())
+    }
+
+    fn validate_nested_table_rows(rows: &[Vec<FlowTableBlockCell>]) -> Result<usize> {
+        let column_count = rows[0]
+            .iter()
+            .try_fold(0usize, |sum, cell| sum.checked_add(cell.colspan))
+            .ok_or_else(|| crate::Error::InvalidInput("table column count overflow".into()))?;
+        let invalid = column_count == 0
+            || rows.iter().any(|row| {
+                row.is_empty()
+                    || row
+                        .iter()
+                        .any(|cell| cell.colspan == 0 || cell.blocks.is_empty())
+                    || row.iter().map(|cell| cell.colspan).sum::<usize>() != column_count
+                    || row.iter().any(|cell| {
+                        cell.padding
+                            .is_some_and(|padding| !padding.is_finite() || padding < 0.0)
+                    })
+            });
+        if invalid {
+            return Err(crate::Error::InvalidInput(
+                "nested table rows must have the same non-zero column count".into(),
+            ));
+        }
+        Ok(column_count)
+    }
+
+    fn table_block_text(block: &FlowTableCellBlock) -> String {
+        match block {
+            FlowTableCellBlock::Text(text) => text.clone(),
+            FlowTableCellBlock::NestedTable { rows, .. } => rows
+                .iter()
+                .flat_map(|row| row.iter().map(|cell| cell.text.clone()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        }
+    }
+
+    fn draw_nested_table_rows(
+        &mut self,
+        rows: &[Vec<FlowTableBlockCell>],
+        row_tops: &[f32],
+        x_boundaries: &[f32],
+        options: &TableOptions,
+        line_h: f32,
+        font_size: f32,
+    ) -> Result<()> {
         for (row_index, row) in rows.iter().enumerate() {
             let y_top = row_tops[row_index];
             let y_bottom = row_tops[row_index + 1];
@@ -2463,44 +2513,7 @@ impl FlowDocument {
                 1.0,
             )?;
         }
-        self.content_y += self.options.paragraph_spacing;
         Ok(())
-    }
-
-    fn validate_nested_table_rows(rows: &[Vec<FlowTableBlockCell>]) -> Result<usize> {
-        let column_count = rows[0]
-            .iter()
-            .try_fold(0usize, |sum, cell| sum.checked_add(cell.colspan))
-            .ok_or_else(|| crate::Error::InvalidInput("table column count overflow".into()))?;
-        let invalid = column_count == 0
-            || rows.iter().any(|row| {
-                row.is_empty()
-                    || row
-                        .iter()
-                        .any(|cell| cell.colspan == 0 || cell.blocks.is_empty())
-                    || row.iter().map(|cell| cell.colspan).sum::<usize>() != column_count
-                    || row.iter().any(|cell| {
-                        cell.padding
-                            .is_some_and(|padding| !padding.is_finite() || padding < 0.0)
-                    })
-            });
-        if invalid {
-            return Err(crate::Error::InvalidInput(
-                "nested table rows must have the same non-zero column count".into(),
-            ));
-        }
-        Ok(column_count)
-    }
-
-    fn table_block_text(block: &FlowTableCellBlock) -> String {
-        match block {
-            FlowTableCellBlock::Text(text) => text.clone(),
-            FlowTableCellBlock::NestedTable { rows, .. } => rows
-                .iter()
-                .flat_map(|row| row.iter().map(|cell| cell.text.clone()))
-                .collect::<Vec<_>>()
-                .join(" "),
-        }
     }
 
     fn measure_table_cell_blocks(
