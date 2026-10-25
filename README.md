@@ -2,6 +2,10 @@
 
 **Position-aware CJK PDF write-back in pure Rust.**
 
+Current release: **1.22.1**. The short API guide is in
+[`docs/API.md`](docs/API.md); runnable examples are in
+[`docs/EXAMPLES.md`](docs/EXAMPLES.md).
+
 harumi extracts positioned text from existing PDFs, lets you translate or replace it,
 and writes the result back into inferred layout regions. Overlay mode retains the
 existing page content, but pixel-identical layout is not guaranteed: complex,
@@ -25,6 +29,7 @@ collision checks are all handled automatically.
 - OCR searchable text layers on scanned PDFs
 - Japanese / Chinese / Korean text overlays and stamps
 - Page manipulation, annotation, form editing, and PDF merging
+- Vector drawing, including dashed lines and polylines (`draw` feature)
 - WASM, Lambda, Tauri, and MCP-based AI document workflows
 
 The detailed, version-pinned comparison boundary is documented in

@@ -3,6 +3,8 @@
 > **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
 
 **Position-aware CJK PDF write-back in pure Rust.**
+Current release: **1.22.1**. See the repository [API guide](docs/API.md) for the
+complete surface and [examples](docs/EXAMPLES.md) for runnable snippets.
 Extract positioned text from existing PDFs, translate or replace it, and write it
 back into inferred layout regions — CID fonts, CMaps, and font subsetting handled
 automatically. Existing content is retained in overlay mode; pixel-identical layout
@@ -22,7 +24,7 @@ is not guaranteed for complex, rotated, vertical, or image-backed pages.
 | **Extract searchable text** from existing PDFs | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
 | **Watermark / stamp** visible text | `add_text` · `add_text_with_rotation` |
 | **Merge or split** PDFs | `merge_from` · `extract_pages` |
-| **Draw shapes** (rect, line, ellipse, polygon, path) | `add_rect` · `add_line` · `add_ellipse` · `add_polygon` |
+| **Draw shapes** (including dashed strokes) | `add_rect` · `add_line_dashed` · `add_polyline_dashed` · `add_path` |
 | **Embed JPEG/PNG images** with transparency | `add_image` · `add_image_with_opacity` |
 | **Convert HTML to PDF** | `render_html_to_pdf` (`html` feature) |
 | **Create paginated reports** | `FlowDocument` tables, mixed-font fallback, and configurable widow/orphan protection (`flow` feature) |

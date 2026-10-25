@@ -157,6 +157,17 @@ doc.save("report_with_meta.pdf")?;
 
 ## Draw shapes (`draw` feature)
 
+Dashed strokes use native PDF dash patterns. The pattern must contain finite,
+positive lengths; an empty pattern is rejected.
+
+```rust
+doc.page(1)?.add_line_dashed(
+    [72.0, 120.0], [240.0, 120.0],
+    [0.0, 0.0, 0.0], 1.0, 1.0,
+    &[6.0, 3.0], 0.0,
+)?;
+```
+
 ```rust
 // Filled highlight rectangle
 doc.page(1)?.add_rect([72.0, 690.0, 200.0, 14.0], [1.0, 1.0, 0.0], 0.4)?;

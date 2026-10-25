@@ -10,6 +10,7 @@
 | Need to position text relative to page size | `page.size()` reads the MediaBox |
 | Need in-memory output for Tauri / WASM | `save_to_bytes()` returns a `Vec<u8>` directly |
 | Need to draw highlight rectangles or lines | `add_rect` / `add_line` (`draw` feature, no extra deps) |
+| Need dashed vector strokes | `add_line_dashed` / `add_polyline_dashed` emit native PDF dash patterns (`draw` feature) |
 | Need to draw a box border or polygon (callout) | `add_rect_stroke` / `add_polygon` (`draw` feature) |
 | Need multi-line wrapped text in a box | `add_text_box` (no feature gate needed) |
 | Need to embed JPEG / PNG images | `add_image` / `add_image_with_opacity` (`image` feature) |
