@@ -1,163 +1,74 @@
 # harumi
 
-> **HARUMI** — **H**igh-level **A**PI for **R**ust-native **U**nicode **M**anipulation and **I**njection
-
 **Position-aware CJK PDF write-back in pure Rust.**
-Current release: **1.22.1**. See the repository [API guide](docs/API.md) for the
-complete surface and [examples](docs/EXAMPLES.md) for runnable snippets.
-Extract positioned text from existing PDFs, translate or replace it, and write it
-back into inferred layout regions — CID fonts, CMaps, and font subsetting handled
-automatically. Existing content is retained in overlay mode; pixel-identical layout
-is not guaranteed for complex, rotated, vertical, or image-backed pages.
+
+Extract positioned text from existing PDFs, translate or replace it, and write
+it back into inferred regions. CJK font embedding, CMaps, subsetting, and
+ToUnicode mapping are handled automatically.
 
 [![Crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
-[![docs.rs](https://img.shields.io/badge/docs.rs-passing-brightgreen)](https://docs.rs/harumi)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/kent-tokyo/harumi#license)
+[![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/kent-tokyo/harumi#license)
 
----
-
-## Why harumi?
-
-| Need | API |
-|---|---|
-| **OCR invisible text layer** on scanned PDFs | `add_invisible_text` · `add_invisible_text_runs` |
-| **Extract searchable text** from existing PDFs | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
-| **Watermark / stamp** visible text | `add_text` · `add_text_with_rotation` |
-| **Merge or split** PDFs | `merge_from` · `extract_pages` |
-| **Draw shapes** (including dashed strokes) | `add_rect` · `add_line_dashed` · `add_polyline_dashed` · `add_path` |
-| **Embed JPEG/PNG images** with transparency | `add_image` · `add_image_with_opacity` |
-| **Convert HTML to PDF** | `render_html_to_pdf` (`html` feature) |
-| **Create paginated reports** | `FlowDocument` tables, mixed-font fallback, and configurable widow/orphan protection (`flow` feature) |
-| **Use in WASM / Lambda / Edge** (no C/C++ deps) | All APIs work cross-platform |
-| **Layout planning for translated PDFs** | `fit_text_to_box` + `FitResult::status` (`PlacementStatus`) · `detect_collisions` + `overlap_area` · `extract_layout_regions` + `plan_text_for_regions_with_policy` · `classify_collisions` (`CollisionKind` + `CollisionSeverity`) · `collision_severity()` · `extract_label_value_pairs` (`LabelValuePair`) · `PageFitSummary::from_plans` · `add_fit_debug_overlay` (`draw`) |
-
----
-
-## Quick Start
-
-### Overlay invisible OCR text
+## Quick start
 
 ```rust
 use harumi::Document;
 
 let mut doc = Document::from_file("scanned.pdf")?;
-let font = doc.embed_font(include_bytes!("NotoSansCJK-Regular.ttf"))?;
-
-// Invisible layer for search/copy
-doc.page(1)?
-    .add_invisible_text("日本語テキスト", font, [72.0, 700.0], 12.0)?;
-
+let font = doc.embed_font(include_bytes!("NotoSansCJKjp-Regular.ttf"))?;
+doc.page(1)?.add_invisible_text("検索可能なテキスト", font, [72.0, 700.0], 12.0)?;
 doc.save("searchable.pdf")?;
+# Ok::<(), harumi::Error>(())
 ```
 
-### Add visible watermark
+For in-memory output, use `save_to_bytes()`. For positioned extraction, use
+`extract_text_runs()` or `extract_text_chunks()`.
 
-```rust
-// Red "CONFIDENTIAL" stamp centered on page
-let (w, h) = doc.page(1)?.size()?;
-doc.page(1)?.add_text(
-    "CONFIDENTIAL",
-    font,
-    [w / 2.0 - 60.0, h / 2.0],
-    24.0,
-    [0.8, 0.0, 0.0], // RGB red
-)?;
-```
+## Main APIs
 
-### Extract searchable text
-
-```rust
-let runs = doc.extract_text_runs(1)?;
-for run in runs {
-    println!("Text: {} at ({}, {})", run.text, run.x, run.y);
-}
-```
-
----
-
-## Feature Flags
-
-| Flag | What it enables | Dependencies |
-|---|---|---|
-| *(default)* | Text overlay, font embedding, text boxes, text extraction | `lopdf`, `ttf-parser`, `getrandom` |
-| `draw` | Shapes: rect, line, ellipse, polygon, polyline | none |
-| `image` | JPEG/PNG embed, extract from scanned PDFs | `png` crate |
-| `ocr` | Tesseract coordinate conversion helpers | none |
-| `flow` | FlowDocument: auto-pagination, tables, headers/footers, inline styling | none |
-| `html` | HTML→PDF conversion (h1–h6, p, table, ul/ol) | none |
-
----
-
-## Supported Fonts
-
-| Format | Status |
+| Need | API |
 |---|---|
-| **TrueType** (`.ttf`) | ✅ Full support — pure-Rust subsetting |
-| **TTC collections** (`.ttc`, multiple faces) | ✅ Full support — `embed_font_at(bytes, face_index)` |
-| **OpenType CFF** (`.otf`) | ⚠️ Accepted, no subsetting (full font embedded) |
+| OCR/search layer | `embed_font`, `add_invisible_text` |
+| Visible text and watermarks | `add_text`, `add_text_with_rotation` |
+| Text replacement | `replace_text`, `replace_text_preserve_font`, `replace_text_resubset` |
+| Page operations | `merge_from`, `extract_pages`, `rotate_page`, `reorder_pages` |
+| Shapes and dashed strokes | `add_rect`, `add_line_dashed`, `add_polyline_dashed`, `add_path` |
+| Images | `add_image`, `add_image_with_opacity` (`image`) |
+| Reports and HTML | `FlowDocument` (`flow`), `render_html_to_pdf` (`html`) |
+| Layout diagnostics | `extract_layout_regions`, `fit_text_to_box`, `detect_collisions` |
 
-**Recommended fonts (CJK):**
-- `NotoSansCJKjp-Regular.ttf` (Japanese)
-- `NotoSansCJKsc-Regular.ttf` (Simplified Chinese)
-- `NotoSansCJKtc-Regular.ttf` (Traditional Chinese)
-- `NotoSansCJKkr-Regular.ttf` (Korean)
-
----
-
-## Installation
+## Feature flags
 
 ```toml
 [dependencies]
 harumi = "1"
+# Optional: draw, image, ocr, flow, html, digital-signature
 ```
 
-For image or HTML features:
-```toml
-harumi = { version = "1", features = ["image", "html"] }
-```
+The default build is pure Rust and WASM-compatible. `pdfium-render` is only an
+optional host-side verification tool and is not a runtime dependency.
 
----
+## Font support
 
-## Use via MCP Server
+- TrueType (`.ttf`): subsetted and embedded as CIDFontType2.
+- TrueType collections (`.ttc`): select a face with `embed_font_at`.
+- OpenType CFF (`.otf`): accepted and embedded without subsetting.
 
-Use harumi's PDF tools directly from Claude Code, Cursor, or Continue IDE:
+Use a CJK TrueType font such as Noto Sans CJK for Japanese, Chinese, or Korean.
 
-```bash
-# Build the MCP server (pure Rust, no runtime dependency)
-cargo build -p harumi-mcp
+## Boundaries
 
-# Configure in your IDE and use tools:
-# - pdf_extract_text: Extract text with positions
-# - pdf_add_invisible_text: Add searchable OCR layer
-# - pdf_html_to_pdf: HTML to PDF conversion
-# - pdf_merge: Merge PDFs
-# - pdf_page_info: Get page count & dimensions
-```
+harumi is not an OCR engine, viewer, general SVG renderer, or pixel-perfect
+PDF converter. Extraction and overlay are best-effort for malformed PDFs,
+complex vertical writing, and image-backed text. Render the output when visual
+fidelity matters.
 
-See [`harumi-mcp/README.md`](harumi-mcp/README.md) for current MCP installation and tool details.
+## Further reading
 
----
+- [API guide](https://github.com/kent-tokyo/harumi/blob/master/docs/API.md)
+- [Examples](https://github.com/kent-tokyo/harumi/blob/master/docs/EXAMPLES.md)
+- [Feature list](https://github.com/kent-tokyo/harumi/blob/master/docs/FEATURES.md)
+- [MCP server](https://github.com/kent-tokyo/harumi/tree/master/harumi-mcp)
 
-## Why choose harumi?
-
-✅ **Pure Rust** — zero C/C++ dependencies; works in WASM, Lambda, cross-compile  
-✅ **CJK-native** — full support for Chinese, Japanese, Korean fonts  
-✅ **Simple API** — complex font subsetting happens automatically at save time  
-✅ **Text extraction** — decode CID fonts + standard fonts (Type1, TrueType, WinAnsi)  
-✅ **Text replacement** — rewrite Tj/TJ operators with automatic re-subsetting  
-✅ **Rich features** — draw shapes, embed images, page merge/split, HTML→PDF  
-✅ **Well-tested** — unit, integration, feature, and E2E coverage
-
----
-
-## More Info
-
-- **Full documentation** — [docs.rs/harumi](https://docs.rs/harumi)
-- **Live demo** — [Browser annotation editor](https://kent-tokyo.github.io/harumi/) (WASM)
-- **Source code** — [github.com/kent-tokyo/harumi](https://github.com/kent-tokyo/harumi)
-- **License** — MIT OR Apache-2.0
-
----
-
-For examples, API details, current limitations, and the active roadmap, see the
-[full README](https://github.com/kent-tokyo/harumi) and the linked documents.
+MIT OR Apache-2.0
