@@ -134,7 +134,7 @@ mod inner {
         let bytes = doc.render().unwrap();
         let pdf = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
         let page_id = *pdf.get_pages().get(&1).unwrap();
-        let content = String::from_utf8(pdf.get_page_content(page_id).unwrap()).unwrap();
+        let content = String::from_utf8(pdf.get_page_content(page_id)).unwrap();
         assert!(
             content.contains(" rg\n"),
             "background fill missing: {content}"
@@ -168,10 +168,8 @@ mod inner {
         let bytes = doc.render().unwrap();
         let pdf = harumi::lopdf::Document::load_from(bytes.as_slice()).unwrap();
         let pages = pdf.get_pages();
-        let first =
-            String::from_utf8(pdf.get_page_content(*pages.get(&1).unwrap()).unwrap()).unwrap();
-        let second =
-            String::from_utf8(pdf.get_page_content(*pages.get(&2).unwrap()).unwrap()).unwrap();
+        let first = String::from_utf8(pdf.get_page_content(*pages.get(&1).unwrap())).unwrap();
+        let second = String::from_utf8(pdf.get_page_content(*pages.get(&2).unwrap())).unwrap();
         assert!(
             first.contains(" rg\n"),
             "first page background missing: {first}"

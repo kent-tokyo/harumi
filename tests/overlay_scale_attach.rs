@@ -136,7 +136,7 @@ fn overlay_from_produces_valid_pdf() {
     );
 
     // Content must include the Do operator.
-    let content_bytes = inner.get_page_content(page1_id).unwrap();
+    let content_bytes = inner.get_page_content(page1_id);
     let content_str = String::from_utf8_lossy(&content_bytes);
     assert!(
         content_str.contains("Do"),
@@ -215,7 +215,7 @@ fn overlay_from_inherited_resources() {
         resources.get(b"ProcSet").is_ok(),
         "inherited page resources must be preserved when adding overlay resources"
     );
-    let content_bytes = inner.get_page_content(page1_id).unwrap();
+    let content_bytes = inner.get_page_content(page1_id);
     let content_str = String::from_utf8_lossy(&content_bytes);
     assert!(
         content_str.contains("Do"),

@@ -170,7 +170,7 @@ fn add_text_visible_with_color() {
     let reloaded = lopdf::Document::load_from(out.as_slice()).expect("reload");
     let pages = reloaded.get_pages();
     let page_id = pages[&1];
-    let content = reloaded.get_page_content(page_id).expect("content");
+    let content = reloaded.get_page_content(page_id);
     let content_str = String::from_utf8_lossy(&content);
 
     assert!(content_str.contains("0 Tr"), "visible mode should use Tr 0");

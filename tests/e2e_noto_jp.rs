@@ -84,7 +84,7 @@ fn e2e_visible_text_render_mode_and_color() {
 
     let pages = reloaded.get_pages();
     let page_id = pages[&1];
-    let content = reloaded.get_page_content(page_id).expect("content");
+    let content = reloaded.get_page_content(page_id);
     let s = String::from_utf8_lossy(&content);
 
     assert!(s.contains("0 Tr"), "visible text must use Tr 0");

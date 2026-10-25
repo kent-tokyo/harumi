@@ -76,7 +76,7 @@ fn smoke_add_rect_content_stream() {
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lopdf_doc.get_pages();
-    let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
+    let content = lopdf_doc.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(
@@ -102,7 +102,7 @@ fn smoke_add_line_content_stream() {
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lopdf_doc.get_pages();
-    let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
+    let content = lopdf_doc.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(s.contains(" m\n"), "content should have moveto (m)");
@@ -138,9 +138,7 @@ fn smoke_add_dashed_line_and_polyline_content_stream() {
 
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
-    let content = lopdf_doc
-        .get_page_content(lopdf_doc.get_pages()[&1])
-        .unwrap();
+    let content = lopdf_doc.get_page_content(lopdf_doc.get_pages()[&1]);
     let s = String::from_utf8_lossy(&content);
     assert!(s.contains("[2.0000 2.0000] 0.5000 d"));
     assert!(s.contains("[4.0000 2.0000] 0.0000 d"));
@@ -429,7 +427,7 @@ fn smoke_add_rect_stroke_content_stream() {
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lopdf_doc.get_pages();
-    let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
+    let content = lopdf_doc.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(
@@ -467,7 +465,7 @@ fn smoke_add_polygon_filled() {
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lopdf_doc.get_pages();
-    let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
+    let content = lopdf_doc.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(s.contains(" m\n"), "content should have moveto");
@@ -505,7 +503,7 @@ fn smoke_add_text_box_wraps() {
     let out = doc.save_to_bytes().unwrap();
     let lopdf_doc = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lopdf_doc.get_pages();
-    let content = lopdf_doc.get_page_content(pages[&1]).unwrap();
+    let content = lopdf_doc.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     let bt_count = s.matches("BT\n").count();
@@ -537,7 +535,7 @@ fn smoke_text_with_opacity() {
     let out = doc.save_to_bytes().unwrap();
     let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lpdf.get_pages();
-    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let content = lpdf.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(s.contains(" gs\n"), "opacity text should emit gs operator");
@@ -568,7 +566,7 @@ fn smoke_text_box_center_align() {
     let out = doc.save_to_bytes().unwrap();
     let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lpdf.get_pages();
-    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let content = lpdf.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     let bt_count = s.matches("BT\n").count();
@@ -597,7 +595,7 @@ fn smoke_polyline_three_segments() {
     let out = doc.save_to_bytes().unwrap();
     let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lpdf.get_pages();
-    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let content = lpdf.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     let l_count = s.matches(" l\n").count();
@@ -621,7 +619,7 @@ fn smoke_add_ellipse_filled() {
     let out = doc.save_to_bytes().unwrap();
     let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lpdf.get_pages();
-    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let content = lpdf.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     // 4 cubic Bézier curves (4 'c' operators)
@@ -658,7 +656,7 @@ fn smoke_add_ellipse_stroked() {
     let out = doc.save_to_bytes().unwrap();
     let lpdf = lopdf::Document::load_from(out.as_slice()).unwrap();
     let pages = lpdf.get_pages();
-    let content = lpdf.get_page_content(pages[&1]).unwrap();
+    let content = lpdf.get_page_content(pages[&1]);
     let s = String::from_utf8_lossy(&content);
 
     assert!(
