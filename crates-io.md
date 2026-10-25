@@ -32,26 +32,7 @@ contract.
 
 ---
 
-## Why harumi?
-
-| Need | API |
-|---|---|
-| **OCR invisible text layer** on scanned PDFs | `add_invisible_text` · `add_invisible_text_runs` |
-| **Extract searchable text** from existing PDFs | `extract_text_runs` · `extract_text_chunks` · `extract_as_markdown` |
-| **Watermark / stamp** visible text | `add_text` · `add_text_with_rotation` |
-| **Merge or split** PDFs | `merge_from` · `extract_pages` |
-| **Draw shapes** (rect, line, ellipse, polygon, path) | `add_rect` · `add_line` · `add_ellipse` · `add_polygon` |
-| **Embed JPEG/PNG images** with transparency | `add_image` · `add_image_with_opacity` |
-| **Convert HTML to PDF** | `render_html_to_pdf` (`html` feature) |
-| **Create paginated reports** | `FlowDocument` tables, mixed-font fallback, and configurable widow/orphan protection (`flow` feature) |
-| **Use in WASM / Lambda / Edge** (no C/C++ deps) | All APIs work cross-platform |
-| **Layout planning for translated PDFs** | `fit_text_to_box` + `FitResult::status` (`PlacementStatus`) · `detect_collisions` + `overlap_area` · `extract_layout_regions` + `plan_text_for_regions_with_policy` · `classify_collisions` (`CollisionKind` + `CollisionSeverity`) · `collision_severity()` · `extract_label_value_pairs` (`LabelValuePair`) · `PageFitSummary::from_plans` · `add_fit_debug_overlay` (`draw`) |
-
----
-
-## Quick Start
-
-### Overlay invisible OCR text
+## Minimal example
 
 ```rust
 use harumi::Document;
@@ -65,96 +46,6 @@ doc.page(1)?
 
 doc.save("searchable.pdf")?;
 ```
-
-### Add visible watermark
-
-```rust
-// Red "CONFIDENTIAL" stamp centered on page
-let (w, h) = doc.page(1)?.size()?;
-doc.page(1)?.add_text(
-    "CONFIDENTIAL",
-    font,
-    [w / 2.0 - 60.0, h / 2.0],
-    24.0,
-    [0.8, 0.0, 0.0], // RGB red
-)?;
-```
-
-### Extract searchable text
-
-```rust
-let runs = doc.extract_text_runs(1)?;
-for run in runs {
-    println!("Text: {} at ({}, {})", run.text, run.x, run.y);
-}
-```
-
----
-
-## Feature Flags
-
-| Flag | What it enables | Dependencies |
-|---|---|---|
-| *(default)* | Text overlay, font embedding, text boxes, text extraction | `lopdf`, `skrifa`, `getrandom` |
-| `draw` | Shapes: rect, line, ellipse, polygon, polyline | none |
-| `image` | JPEG/PNG embed, extract from scanned PDFs | `png` crate |
-| `ocr` | Tesseract coordinate conversion helpers | none |
-| `flow` | FlowDocument: auto-pagination, tables, headers/footers, inline styling | none |
-| `html` | HTML→PDF conversion (h1–h6, p, table, ul/ol) | none |
-
----
-
-## Supported Fonts
-
-| Format | Status |
-|---|---|
-| **TrueType** (`.ttf`) | ✅ Full support — pure-Rust subsetting |
-| **TTC collections** (`.ttc`, multiple faces) | ✅ Full support — `embed_font_at(bytes, face_index)` |
-| **OpenType CFF** (`.otf`) | ⚠️ Accepted, no subsetting (full font embedded) |
-
-**Recommended fonts (CJK):**
-- `NotoSansCJKjp-Regular.ttf` (Japanese)
-- `NotoSansCJKsc-Regular.ttf` (Simplified Chinese)
-- `NotoSansCJKtc-Regular.ttf` (Traditional Chinese)
-- `NotoSansCJKkr-Regular.ttf` (Korean)
-
----
-
-## Installation
-
-```toml
-[dependencies]
-harumi = "1"
-```
-
-For image or HTML features:
-```toml
-harumi = { version = "1", features = ["image", "html"] }
-```
-
----
-
-## Use via MCP Server
-
-Use harumi's PDF tools directly from Claude Code, Cursor, or Continue IDE:
-
-```bash
-# Build the MCP server (pure Rust, no runtime dependency)
-cargo build -p harumi-mcp
-
-# Configure in your IDE and use tools:
-# - pdf_extract_text: Extract text with positions
-# - pdf_add_invisible_text: Add searchable OCR layer
-# - pdf_html_to_pdf: HTML to PDF conversion
-# - pdf_merge: Merge PDFs
-# - pdf_page_info: Get page count & dimensions
-```
-
-See [`harumi-mcp/README.md`](harumi-mcp/README.md) for current MCP installation and tool details.
-
----
-
----
 
 ## More Info
 

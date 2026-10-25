@@ -168,7 +168,9 @@ let pt    = harumi::ocr::pixel_size_to_pt(pixel_size, image_dpi);
 | `ocr` | `ocr::hocr_y_to_pdf`, `ocr::hocr_x_to_pdf`, `ocr::pixel_size_to_pt` |
 | `flow` | `FlowDocument` builder with auto-pagination, tables, nested blocks, headers/footers, page footnotes, inline styling, fallback fonts, and widow/orphan controls |
 | `html` | `render_html_to_pdf` — HTML → PDF with shared Flow paragraph controls (enables `flow`) |
+| `svg` | Supported SVG subset → one vector PDF page |
 | `digital-signature` | `verify_signatures`, `add_signature_field`, `sign_document` |
+| `json` | Versioned bulk-extraction JSON |
 
 ---
 
