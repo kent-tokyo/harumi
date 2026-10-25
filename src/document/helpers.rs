@@ -1,7 +1,6 @@
-use lopdf::{Dictionary, Object, ObjectId, Stream};
-use ttf_parser::Face;
-
 use crate::error::{Error, Result};
+use crate::font::face::Face;
+use lopdf::{Dictionary, Object, ObjectId, Stream};
 
 use super::types::{Color, FieldType, FormField};
 
@@ -904,7 +903,7 @@ pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
 
 /// Return `true` when `font_bytes` contains a glyph for `ch`.
 ///
-/// Uses [ttf-parser](https://docs.rs/ttf-parser) to check the font's `cmap` table.
+/// Uses the bundled skrifa-backed parser to check the font's `cmap` table.
 /// Returns `false` when `font_bytes` cannot be parsed.
 ///
 /// # Example
@@ -914,7 +913,7 @@ pub fn glyph_advance_pt(face: &Face, ch: char, font_size: f32) -> Option<f32> {
 /// assert!(!harumi::font_covers_char(&font_bytes, '؟')); // Arabic question mark
 /// ```
 pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
-    ttf_parser::Face::parse(font_bytes, 0)
+    Face::parse(font_bytes, 0)
         .map(|face| face.glyph_index(ch).is_some())
         .unwrap_or(false)
 }
@@ -924,15 +923,15 @@ pub fn font_covers_char(font_bytes: &[u8], ch: char) -> bool {
 /// This helper is useful for checking text overflow without needing access to Font objects.
 /// Returns None if the font bytes are invalid or if any character is missing from the font.
 pub fn calculate_text_width(text: &str, font_bytes: &[u8], font_size: f32) -> Option<f32> {
-    let face = ttf_parser::Face::parse(font_bytes, 0).ok()?;
+    let face = Face::parse(font_bytes, 0).ok()?;
     Some(text_width_with_face(text, &face, font_size))
 }
 
-/// Like [`calculate_text_width`] but reuses a pre-parsed [`ttf_parser::Face`].
+/// Like [`calculate_text_width`] but reuses a pre-parsed font face.
 ///
 /// Use this inside loops (e.g. shrink-to-fit) to avoid re-parsing the font on
 /// every iteration.  Characters missing from the font contribute 0 width.
-pub(super) fn text_width_with_face(text: &str, face: &ttf_parser::Face<'_>, font_size: f32) -> f32 {
+pub(super) fn text_width_with_face(text: &str, face: &Face<'_>, font_size: f32) -> f32 {
     text.chars()
         .filter_map(|ch| glyph_advance_pt(face, ch, font_size))
         .sum()
@@ -1104,7 +1103,7 @@ pub(crate) fn wrap_paragraph_with_fallback(
 /// `line_height = fs * 1.2` — matches the constant in `replace_text_fragments_opts`.
 pub(super) fn plan_text_fit(
     text: &str,
-    face: &ttf_parser::Face<'_>,
+    face: &Face<'_>,
     rect: [f32; 4],
     initial_font_size: f32,
     opts: &super::types::BoxFitOptions,

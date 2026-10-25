@@ -26,11 +26,10 @@ mod html_tokenizer;
 #[cfg(feature = "html")]
 pub mod html;
 
-use ttf_parser::Face;
-
 use crate::{
     Document, FontHandle, Result,
     document::{glyph_advance_pt, helpers::wrap_paragraph_with_fallback},
+    font::face::Face,
 };
 
 /// Page margin settings in PDF points.

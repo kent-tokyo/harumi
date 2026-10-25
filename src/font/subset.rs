@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
-use ttf_parser::Face;
-
 use super::FontKind;
+use super::face::{Face, GlyphId};
 use super::ttf_subset::{GlyphRemapper, subset as subsetter_subset};
 use crate::error::{Error, Result};
 
@@ -57,7 +56,7 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
         ));
     }
 
-    // Use ttf-parser for char→GID mapping (simpler API).
+    // Use the shared skrifa-backed face adapter for char→GID mapping.
     let face = Face::parse(ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
 
     let units_per_em = face.units_per_em();
@@ -83,9 +82,7 @@ pub fn subset_font(ttf_bytes: &[u8], chars: &[char]) -> Result<SubsetResult> {
     // Collect advance widths keyed by original GID (before subsetting).
     let mut orig_gid_to_advance: BTreeMap<u16, u16> = BTreeMap::new();
     for &gid in &gids {
-        let advance = face
-            .glyph_hor_advance(ttf_parser::GlyphId(gid))
-            .unwrap_or(units_per_em);
+        let advance = face.glyph_hor_advance(GlyphId(gid)).unwrap_or(units_per_em);
         orig_gid_to_advance.insert(gid, advance);
     }
 

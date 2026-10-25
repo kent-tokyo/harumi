@@ -1,7 +1,7 @@
 // inplace.rs — content-stream direct-replacement translation mode
 
+use harumi::Face;
 use harumi::{Document, FontHandle, ReplaceOptions};
-use ttf_parser::Face;
 
 use crate::{
     Error, Result, TranslateOptions,

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.23.7] — 2026-10-25
+
+- Remove the unmaintained `ttf-parser` dependency from the published SVG and
+  workspace dependency graphs; all font metadata parsing now uses `skrifa`.
+- Add a CI contract that rejects `ttf-parser` from the published `svg` graph.
+
 ## [1.23.6] — 2026-10-25
 
 - Add bounded bulk extraction with page-local diagnostics, retries, Markdown, and opt-in JSON output.

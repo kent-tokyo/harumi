@@ -360,13 +360,12 @@ dependencies = [
 
 [[package]]
 name = "harumi"
-version = "1.23.6"
+version = "1.23.7"
 dependencies = [
  "aes",
  "getrandom",
  "lopdf",
  "skrifa",
- "ttf-parser",
 ]
 
 [[package]]
@@ -823,12 +822,6 @@ name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
-
-[[package]]
-name = "ttf-parser"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "typenum"

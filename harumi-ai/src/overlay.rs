@@ -7,11 +7,11 @@ use std::sync::{
 };
 
 use futures::stream::{self, StreamExt};
+use harumi::Face;
 use harumi::{
     Document, FontHandle, LayoutRegionKind, LayoutRegionOptions, LayoutRegionRole, TextFragment,
     detect_text_columns, extract_layout_regions, sort_by_reading_order,
 };
-use ttf_parser::Face;
 
 use crate::{
     Error, OverflowStrategy, Result, TranslateOptions, extractor,
