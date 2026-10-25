@@ -18,7 +18,7 @@ This is a role comparison, not a same-condition benchmark.
 | Bulk extraction and Markdown | `unpdf` | 0.42.0 | structured extraction, Markdown/text/JSON, and parallel page processing |
 | Bulk extraction and broader PDF lifecycle | `pdf_oxide` | 0.3.78 | text/Markdown extraction plus broader PDF operations and bindings |
 | Low-dependency PDF writing | `pdf-writer` | 0.15.0 | step-by-step creation of new PDF objects |
-| Existing-PDF CJK write-back | `harumi` | 1.23.1 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
+| Existing-PDF CJK write-back | `harumi` | 1.23.7 in this repository | extraction, CJK font embedding, overlay, replacement, page operations, and quality diagnostics |
 
 The external references are the package documentation pages:
 

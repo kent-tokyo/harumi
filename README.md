@@ -293,9 +293,9 @@ doc.page(1)?.add_text(
 See [ROADMAP.md](ROADMAP.md) for the current priorities and
 [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current release versions: **v1.23.6** (harumi) / **v0.10.1** (harumi-ai).
-This release adds bounded bulk extraction, JSON handoff, structure audits, and
-repair reports while preserving the SVG and CJK editing APIs.
+Current release versions: **v1.23.7** (harumi) / **v0.10.1** (harumi-ai).
+This release removes the unmaintained `ttf-parser` dependency and keeps font
+metadata parsing on `skrifa` across the published SVG graph.
 
 | Milestone | Status |
 |---|---|
