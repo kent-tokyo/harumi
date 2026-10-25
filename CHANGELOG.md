@@ -6,6 +6,13 @@ This file is intentionally concise. Detailed implementation history is
 available in the [Git tags](https://github.com/kent-tokyo/harumi/tags) and pull
 requests. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.23.4 — 2026-10-25
+
+- Add vector SVG support for quadratic and cubic Bézier paths, smooth curve
+  commands, elliptical arcs, and `<ellipse>` elements.
+- Keep existing SVG transforms, fills, strokes, opacity, and marker behavior.
+- Add regression coverage for notation-style curves and ellipses.
+
 ## 1.23.3 — 2026-10-25
 
 - Correct the WASM demo lockfile to `lopdf 0.46.0`, fixing the high-severity

@@ -6,7 +6,7 @@
 
 ## 現在の基準
 
-- `harumi` v1.23.3、MSRV Rust 1.88、edition 2024
+- `harumi` v1.23.4、MSRV Rust 1.88、edition 2024
 - `harumi-ai` v0.10.1、`harumi-mcp` v0.1.2
 - Pure Rust を基本とし、通常依存と WASM 依存に C/C++ ランタイムを追加しない
 - 既存 PDF の CJK 抽出・置換・overlay・診断と、新規 PDF の帳票組版を主対象とする
