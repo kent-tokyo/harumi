@@ -33,3 +33,34 @@ fn rejects_malformed_and_unsupported_svg() {
     .expect_err("unsupported SVG element must fail");
     assert!(unsupported.to_string().contains("unsupported SVG element"));
 }
+
+#[test]
+fn supports_horizontal_vertical_closed_paths_and_relative_numbers() {
+    let svg = br##"<svg width="100" height="100">
+      <path d="M 10 10 H 90 V 90 h -80 z" fill="#00aa00"/>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("H/V/Z path should convert");
+    assert!(bytes.windows(2).any(|window| window == b"h\n"));
+}
+
+#[test]
+fn rejects_empty_transform_arguments_without_panicking() {
+    let translate = br#"<svg width="10" height="10"><g transform="translate()"/></svg>"#;
+    let scale = br#"<svg width="10" height="10"><g transform="scale()"/></svg>"#;
+    assert!(svg_to_pdf(translate, FONT).is_err());
+    assert!(svg_to_pdf(scale, FONT).is_err());
+}
+
+#[test]
+fn applies_affine_transforms_to_shapes_and_text() {
+    let svg = br##"<svg width="120" height="120">
+      <g transform="matrix(0 1 -1 0 100 0)" fill="none" stroke="#000000">
+        <rect x="10" y="10" width="30" height="20"/>
+        <circle cx="60" cy="30" r="10"/>
+        <text x="20" y="80" fill="#000000">A</text>
+      </g>
+    </svg>"##;
+    let bytes = svg_to_pdf(svg, FONT).expect("affine transform should convert");
+    let document = Document::from_bytes(&bytes).expect("output should be a PDF");
+    assert_eq!(document.page_count(), 1);
+}
