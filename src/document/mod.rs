@@ -43,6 +43,13 @@ use helpers::{
 };
 use types::{EncAlgorithm, PendingBookmark, PendingOp, RawFont};
 
+struct EmbedState {
+    ef: EmbeddedFont,
+    char_to_gid: BTreeMap<char, u16>,
+    gid_to_advance: BTreeMap<u16, u16>,
+    units_per_em: u16,
+}
+
 #[cfg(feature = "draw")]
 use helpers::add_ext_gstate_to_resources;
 
@@ -2511,51 +2518,25 @@ impl Document {
         Ok(())
     }
 
-    /// Subsets fonts, embeds them, and injects all pending content streams.
-    fn finalize(&mut self) -> Result<()> {
-        if self.finalized && !self.pending.is_empty() {
-            return Err(Error::InvalidInput(
-                "save() called again after content was already written; create a new Document"
-                    .into(),
-            ));
-        }
-        if self.pending.is_empty() && self.pending_bookmarks.is_empty() {
-            return Ok(());
-        }
-
-        // Pass 1: collect all chars per font across every page (single subset per font).
-        let font_chars = self.collect_pending_font_chars();
-
-        // Pass 2: subset + embed each font once, keep char→GID map alongside.
-        struct EmbedState {
-            ef: EmbeddedFont,
-            char_to_gid: BTreeMap<char, u16>,
-            gid_to_advance: BTreeMap<u16, u16>,
-            units_per_em: u16,
-        }
-        let mut embedded: HashMap<u32, EmbedState> = HashMap::new();
-
-        for (&font_idx, chars) in &font_chars {
+    fn embed_pending_fonts(
+        &mut self,
+        font_chars: &HashMap<u32, Vec<char>>,
+    ) -> Result<HashMap<u32, EmbedState>> {
+        let mut embedded = HashMap::new();
+        for (&font_idx, chars) in font_chars {
             let raw = self
                 .raw_fonts
                 .get(font_idx as usize)
                 .ok_or(Error::InvalidFont(font_idx))?;
-
             let subset = subset_font(&raw.ttf_bytes, chars)?;
-
-            // Use the pre-built char_to_gid from SubsetResult, which correctly maps
-            // ALL input chars even when two chars share the same underlying glyph.
             let char_to_gid = subset.char_to_gid.clone();
-
             let face =
                 Face::parse(&raw.ttf_bytes, 0).map_err(|e| Error::FontParse(e.to_string()))?;
             let bb = face.global_bounding_box();
             let upm = face.units_per_em() as f64;
             let scale = |v: i16| -> i32 { (v as f64 * 1000.0 / upm).round() as i32 };
-
             let font_name = format!("HARUMI+HR{}", font_idx);
             let pdf_name = format!("HR{}", font_idx).into_bytes();
-
             let saved_gid_to_char = subset.gid_to_char.clone();
             let saved_gid_to_advance = subset.gid_to_advance.clone();
             let params = EmbedParams {
@@ -2575,10 +2556,8 @@ impl Document {
                 cap_height: scale(face.capital_height().unwrap_or(face.ascender())),
                 font_kind: subset.font_kind,
             };
-
             let type0_id = embed_cid_font(&mut self.inner, params)?;
-            let upm = face.units_per_em();
-
+            let units_per_em = face.units_per_em();
             embedded.insert(
                 font_idx,
                 EmbedState {
@@ -2587,14 +2566,34 @@ impl Document {
                         pdf_name,
                         gid_to_char: saved_gid_to_char,
                         gid_to_advance: saved_gid_to_advance.clone(),
-                        units_per_em: upm,
+                        units_per_em,
                     },
                     char_to_gid,
                     gid_to_advance: saved_gid_to_advance,
-                    units_per_em: upm,
+                    units_per_em,
                 },
             );
         }
+        Ok(embedded)
+    }
+
+    /// Subsets fonts, embeds them, and injects all pending content streams.
+    fn finalize(&mut self) -> Result<()> {
+        if self.finalized && !self.pending.is_empty() {
+            return Err(Error::InvalidInput(
+                "save() called again after content was already written; create a new Document"
+                    .into(),
+            ));
+        }
+        if self.pending.is_empty() && self.pending_bookmarks.is_empty() {
+            return Ok(());
+        }
+
+        // Pass 1: collect all chars per font across every page (single subset per font).
+        let font_chars = self.collect_pending_font_chars();
+
+        // Pass 2: subset + embed each font once, keep char→GID map alongside.
+        let embedded = self.embed_pending_fonts(&font_chars)?;
 
         // Replace pass: rewrite existing content streams for pages with Replace ops.
         {
