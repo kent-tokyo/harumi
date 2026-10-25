@@ -2,10 +2,13 @@
 //!
 //! Usage: cargo run --example svg_visual_fixture --features svg -- <output.pdf>
 
+#[cfg(feature = "svg")]
 use harumi::svg_to_pdf;
 
+#[cfg(feature = "svg")]
 const FONT: &[u8] = include_bytes!("../tests/fixtures/NotoSansJP-Regular.ttf");
 
+#[cfg(feature = "svg")]
 const SVG: &str = r##"<svg width="240" height="160" viewBox="0 0 240 160">
   <defs>
     <marker id="arrow" refX="5" refY="2" markerWidth="5" markerHeight="4">
@@ -21,10 +24,16 @@ const SVG: &str = r##"<svg width="240" height="160" viewBox="0 0 240 160">
   </g>
 </svg>"##;
 
+#[cfg(feature = "svg")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = std::env::args()
         .nth(1)
         .ok_or("usage: svg_visual_fixture <output.pdf>")?;
     std::fs::write(output, svg_to_pdf(SVG.as_bytes(), FONT)?)?;
     Ok(())
+}
+
+#[cfg(not(feature = "svg"))]
+fn main() {
+    eprintln!("svg_visual_fixture requires the `svg` feature");
 }
