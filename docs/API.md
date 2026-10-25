@@ -67,7 +67,8 @@ let runs: Vec<TextFragment> = doc.extract_text_runs(page_number)?;
 let (runs, warnings) = doc.extract_text_runs_verbose(page_number)?;
 let pages = doc.extract_text_runs_verbose_page_range(1, doc.page_count())?;
 doc.for_each_text_runs_verbose_batch(1, doc.page_count(), 50, |batch| {
-    // Persist each batch; failed pages remain in `entry.error`.
+    // Persist each batch; pages are processed incrementally and failed pages
+    // remain in `entry.error`.
     let _ = batch;
     Ok(())
 })?;

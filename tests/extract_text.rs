@@ -100,6 +100,26 @@ fn verbose_page_batches_preserve_order_and_batch_boundaries() {
     assert_eq!(batches, vec![vec![1, 2], vec![3]]);
 }
 
+#[test]
+fn verbose_page_batches_stop_after_callback_error() {
+    let mut doc = Document::new((595.0, 842.0)).unwrap();
+    doc.insert_blank_page(1, (595.0, 842.0)).unwrap();
+    doc.insert_blank_page(2, (595.0, 842.0)).unwrap();
+    doc.insert_blank_page(3, (595.0, 842.0)).unwrap();
+    let reloaded = Document::from_bytes(&doc.save_to_bytes().unwrap()).unwrap();
+
+    let mut callbacks = 0;
+    let error = reloaded
+        .for_each_text_runs_verbose_batch(1, 3, 1, |_| {
+            callbacks += 1;
+            Err(Error::InvalidInput("stop extraction".into()))
+        })
+        .unwrap_err();
+
+    assert!(matches!(error, Error::InvalidInput(message) if message == "stop extraction"));
+    assert_eq!(callbacks, 1);
+}
+
 fn with_page_geometry(
     pdf_bytes: &[u8],
     media_box: [i64; 4],
