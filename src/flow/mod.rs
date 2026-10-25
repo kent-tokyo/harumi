@@ -1132,7 +1132,7 @@ impl FlowDocument {
     fn ensure_space(&mut self, height: f32) -> Result<()> {
         let geometry = self.geometry();
         if self.content_y > 0.0 && self.content_y + height > geometry.content_height() + 0.1 {
-            let n = self.inner.page_count();
+            let n = self.current_page;
             if n >= self.options.max_pages {
                 return Err(crate::Error::InvalidInput(format!(
                     "document exceeds max_pages limit of {}",
@@ -3491,7 +3491,9 @@ impl FlowDocument {
 
     /// Inserts an explicit page break, starting subsequent content on a new page.
     pub fn push_page_break(&mut self) -> Result<()> {
-        let n = self.inner.page_count();
+        // `current_page` is kept in sync whenever Flow creates a page. Avoid
+        // walking the entire lopdf page tree for every explicit page break.
+        let n = self.current_page;
         self.inner.insert_blank_page(n, self.options.page_size)?;
         self.current_page = n + 1;
         self.content_y = 0.0;
@@ -3612,7 +3614,9 @@ impl FlowDocument {
     /// Headers, footers, and bookmarks accumulated during content-push calls are
     /// written to the document at this point.
     pub fn render(mut self) -> Result<Vec<u8>> {
-        let total_pages = self.inner.page_count();
+        // Flow owns page creation, so the tracked page number is authoritative
+        // and avoids another full page-tree traversal for large reports.
+        let total_pages = self.current_page;
         let body_font = self.body_font;
 
         // Parse the face once for text-width measurement in header/footer.
