@@ -2341,7 +2341,10 @@ impl Document {
     pub fn extract_all_text_runs(&self) -> Result<Vec<(u32, crate::extract::TextFragment)>> {
         // SECURITY: Prevent unbounded memory allocation from malicious PDFs.
         const MAX_PAGES_SAFE: u32 = 1_000_000;
-        let page_count = self.page_count();
+        // Resolve the page tree once.  Calling `extract_text_runs` for every
+        // page would rebuild lopdf's page map for every iteration.
+        let page_ids = self.inner.get_pages();
+        let page_count = page_ids.len() as u32;
         if page_count > MAX_PAGES_SAFE {
             return Err(Error::InvalidInput(format!(
                 "PDF has {} pages, exceeds safe limit of {}",
@@ -2352,7 +2355,11 @@ impl Document {
         let page_count_usize = page_count as usize;
         let mut result = Vec::with_capacity(page_count_usize);
         for page_num in 1..=page_count {
-            let fragments = self.extract_text_runs(page_num)?;
+            let page_id = page_ids
+                .get(&page_num)
+                .copied()
+                .ok_or(Error::PageNotFound(page_num))?;
+            let fragments = crate::extract::extract_text_runs_from_page(&self.inner, page_id)?;
             result.extend(fragments.into_iter().map(|frag| (page_num, frag)));
         }
         Ok(result)
@@ -2372,24 +2379,34 @@ impl Document {
                 "invalid page range {start_page}..={end_page}"
             )));
         }
-        let page_count = self.page_count();
+        let page_ids = self.inner.get_pages();
+        let page_count = page_ids.len() as u32;
         if end_page > page_count {
             return Err(Error::PageNotFound(end_page));
         }
         Ok((start_page..=end_page)
-            .map(|page| match self.extract_text_runs_verbose(page) {
-                Ok((runs, warnings)) => crate::document::PageTextExtraction {
-                    page,
-                    runs,
-                    warnings,
-                    error: None,
-                },
-                Err(error) => crate::document::PageTextExtraction {
-                    page,
-                    runs: Vec::new(),
-                    warnings: Vec::new(),
-                    error: Some(error.to_string()),
-                },
+            .map(|page| {
+                let extraction = page_ids
+                    .get(&page)
+                    .copied()
+                    .ok_or(Error::PageNotFound(page))
+                    .and_then(|page_id| {
+                        crate::extract::extract_text_runs_from_page_verbose(&self.inner, page_id)
+                    });
+                match extraction {
+                    Ok((runs, warnings)) => crate::document::PageTextExtraction {
+                        page,
+                        runs,
+                        warnings,
+                        error: None,
+                    },
+                    Err(error) => crate::document::PageTextExtraction {
+                        page,
+                        runs: Vec::new(),
+                        warnings: Vec::new(),
+                        error: Some(error.to_string()),
+                    },
+                }
             })
             .collect())
     }
@@ -2417,7 +2434,8 @@ impl Document {
                 "invalid page range {start_page}..={end_page}"
             )));
         }
-        let page_count = self.page_count();
+        let page_ids = self.inner.get_pages();
+        let page_count = page_ids.len() as u32;
         if end_page > page_count {
             return Err(Error::PageNotFound(end_page));
         }
@@ -2425,7 +2443,14 @@ impl Document {
         let page_span = (end_page - start_page + 1) as usize;
         let mut batch = Vec::with_capacity(batch_size.min(page_span));
         for page in start_page..=end_page {
-            let extraction = match self.extract_text_runs_verbose(page) {
+            let extraction_result = page_ids
+                .get(&page)
+                .copied()
+                .ok_or(Error::PageNotFound(page))
+                .and_then(|page_id| {
+                    crate::extract::extract_text_runs_from_page_verbose(&self.inner, page_id)
+                });
+            let extraction = match extraction_result {
                 Ok((runs, warnings)) => crate::document::PageTextExtraction {
                     page,
                     runs,
