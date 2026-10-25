@@ -26,6 +26,7 @@ pub(crate) enum DrawOp {
         color: Color,
         width: f32,
         opacity: f32,
+        dash: Option<DashPattern>,
     },
     Polygon {
         points: Vec<[f32; 2]>,
@@ -39,6 +40,7 @@ pub(crate) enum DrawOp {
         color: Color,
         width: f32,
         opacity: f32,
+        dash: Option<DashPattern>,
     },
     Ellipse {
         rect: [f32; 4],
@@ -61,6 +63,13 @@ pub(crate) enum DrawOp {
         rect: [f32; 4],
         opacity: f32,
     },
+}
+
+/// A validated PDF stroke dash pattern.
+#[derive(Clone, Debug)]
+pub(crate) struct DashPattern {
+    pub(crate) array: Vec<f32>,
+    pub(crate) phase: f32,
 }
 
 /// Maps opacity values → `/ExtGState` resource names, deduplicating equal opacities.

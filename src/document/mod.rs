@@ -2967,10 +2967,18 @@ impl Document {
                                 color,
                                 width,
                                 opacity,
+                                dash,
                             } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream
-                                    .extend(shapes::line_stream(from, to, *color, *width, &gs));
+                                page_stream.extend(shapes::line_stream(
+                                    from,
+                                    to,
+                                    *color,
+                                    *width,
+                                    &gs,
+                                    dash.as_ref()
+                                        .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
+                                ));
                             }
                             DrawOp::Polygon {
                                 points,
@@ -2993,10 +3001,17 @@ impl Document {
                                 color,
                                 width,
                                 opacity,
+                                dash,
                             } => {
                                 let gs = gs_registry.register(*opacity);
-                                page_stream
-                                    .extend(shapes::polyline_stream(points, *color, *width, &gs));
+                                page_stream.extend(shapes::polyline_stream(
+                                    points,
+                                    *color,
+                                    *width,
+                                    &gs,
+                                    dash.as_ref()
+                                        .map(|pattern| (pattern.array.as_slice(), pattern.phase)),
+                                ));
                             }
                             DrawOp::Ellipse {
                                 rect,

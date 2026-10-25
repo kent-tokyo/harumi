@@ -43,18 +43,36 @@ pub(crate) fn line_stream(
     color: Color,
     width: f32,
     gs_name: &str,
+    dash: Option<(&[f32], f32)>,
 ) -> Vec<u8> {
     let stroke = color_stroke(color);
-    format!(
-        "q\n/{gs} gs\n{stroke}\n{lw:.4} w\n{x1:.4} {y1:.4} m\n{x2:.4} {y2:.4} l\nS\nQ\n",
+    let mut stream = format!(
+        "q\n/{gs} gs\n{stroke}\n{lw:.4} w\n",
         gs = gs_name,
-        lw = width,
+        lw = width
+    );
+    append_dash_operator(&mut stream, dash);
+    stream.push_str(&format!(
+        "{x1:.4} {y1:.4} m\n{x2:.4} {y2:.4} l\nS\nQ\n",
         x1 = from[0],
         y1 = from[1],
         x2 = to[0],
         y2 = to[1],
-    )
-    .into_bytes()
+    ));
+    stream.into_bytes()
+}
+
+fn append_dash_operator(stream: &mut String, dash: Option<(&[f32], f32)>) {
+    if let Some((array, phase)) = dash {
+        stream.push('[');
+        for (index, value) in array.iter().enumerate() {
+            if index > 0 {
+                stream.push(' ');
+            }
+            stream.push_str(&format!("{value:.4}"));
+        }
+        stream.push_str(&format!("] {phase:.4} d\n"));
+    }
 }
 
 /// Stroked rectangle content stream fragment (border only, no fill).
@@ -122,6 +140,7 @@ pub(crate) fn polyline_stream(
     color: Color,
     width: f32,
     gs_name: &str,
+    dash: Option<(&[f32], f32)>,
 ) -> Vec<u8> {
     if points.len() < 2 {
         return Vec::new();
@@ -137,6 +156,7 @@ pub(crate) fn polyline_stream(
     for pt in &points[1..] {
         s.push_str(&format!("{:.4} {:.4} l\n", pt[0], pt[1]));
     }
+    append_dash_operator(&mut s, dash);
     s.push_str("S\nQ\n");
     s.into_bytes()
 }
@@ -358,6 +378,7 @@ mod tests {
             Color::Rgb([0.0, 0.0, 1.0]),
             2.0,
             "GS1",
+            None,
         );
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS1 gs"), "should set ExtGState");
@@ -369,7 +390,7 @@ mod tests {
     #[test]
     fn polyline_no_closepath() {
         let pts = [[0.0_f32, 0.0], [50.0, 0.0], [50.0, 50.0]];
-        let bytes = polyline_stream(&pts, Color::Rgb([1.0, 0.0, 0.0]), 1.5, "GS0");
+        let bytes = polyline_stream(&pts, Color::Rgb([1.0, 0.0, 0.0]), 1.5, "GS0", None);
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("/GS0 gs"));
         assert!(s.contains("m\n"), "moveto");
@@ -381,7 +402,21 @@ mod tests {
 
     #[test]
     fn polyline_fewer_than_2_points_is_empty() {
-        assert!(polyline_stream(&[], Color::Rgb([0.0; 3]), 1.0, "GS0").is_empty());
-        assert!(polyline_stream(&[[0.0, 0.0]], Color::Rgb([0.0; 3]), 1.0, "GS0").is_empty());
+        assert!(polyline_stream(&[], Color::Rgb([0.0; 3]), 1.0, "GS0", None).is_empty());
+        assert!(polyline_stream(&[[0.0, 0.0]], Color::Rgb([0.0; 3]), 1.0, "GS0", None).is_empty());
+    }
+
+    #[test]
+    fn dashed_strokes_emit_pdf_dash_operator() {
+        let line = String::from_utf8(line_stream(
+            &[0.0, 0.0],
+            &[100.0, 0.0],
+            Color::Rgb([0.0; 3]),
+            1.0,
+            "GS0",
+            Some((&[2.0, 2.0], 1.0)),
+        ))
+        .unwrap();
+        assert!(line.contains("[2.0000 2.0000] 1.0000 d"));
     }
 }
