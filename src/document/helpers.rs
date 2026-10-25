@@ -1516,8 +1516,41 @@ pub(super) fn add_font_to_resources(
 ) -> Result<()> {
     let font_ref = Object::Reference(type0_id);
     with_resources_dict_mut(doc, page_id, |resources| {
-        ensure_font_entry(resources, pdf_name, font_ref);
-    })
+        ensure_font_entry(resources, pdf_name, font_ref.clone());
+    })?;
+    add_font_to_indirect_resource_dict(doc, page_id, pdf_name, font_ref)
+}
+
+fn add_font_to_indirect_resource_dict(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    pdf_name: &[u8],
+    font_ref: Object,
+) -> Result<()> {
+    let resources = doc
+        .get_object(page_id)?
+        .as_dict()?
+        .get(b"Resources")
+        .ok()
+        .and_then(|object| match object {
+            Object::Reference(id) => doc.get_object(*id).ok(),
+            Object::Dictionary(_) => Some(object),
+            _ => None,
+        })
+        .and_then(|object| object.as_dict().ok());
+    let Some(resources) = resources else {
+        return Ok(());
+    };
+    let Some(font_id) = resources.get(b"Font").ok().and_then(|object| match object {
+        Object::Reference(id) => Some(*id),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    doc.get_object_mut(font_id)?
+        .as_dict_mut()?
+        .set(pdf_name, font_ref);
+    Ok(())
 }
 
 /// Add a font to a Form XObject's own `/Resources/Font` dict.
