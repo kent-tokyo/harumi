@@ -38,6 +38,8 @@
       "checks": ["text", "cjk", "table_limits", "page_boundary", "markdown"]
     }
   ],
+  "runner": "tools/bulk-extraction-check",
+  "command": "scripts/check-bulk-extraction-fixture.sh",
   "metrics": [
     "page_count",
     "text_marker_recall",
