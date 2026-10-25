@@ -616,6 +616,19 @@ pub(crate) fn is_cjk(ch: char) -> bool {
     )
 }
 
+/// Returns true for scripts that commonly do not use visible spaces between
+/// words. This is a character-boundary fallback, not dictionary-based word
+/// segmentation; it keeps long runs from overflowing as one unbreakable word.
+fn is_character_breakable_script(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x0E00..=0x0E7F // Thai
+        | 0x0E80..=0x0EFF // Lao
+        | 0x1000..=0x109F // Myanmar
+        | 0x1780..=0x17FF // Khmer
+    )
+}
+
 /// Returns true for punctuation that should not begin a line in CJK layout.
 ///
 /// This is the small, deterministic subset shared by Flow, HTML, and text-box
@@ -1054,7 +1067,7 @@ pub(crate) fn wrap_paragraph_with_fallback(
                 current_w += ch_w;
                 continue;
             }
-            if is_cjk(ch) || last_space.is_none() {
+            if is_cjk(ch) || is_character_breakable_script(ch) || last_space.is_none() {
                 // CJK or no word boundary found → break at the current character
                 if is_line_start_prohibited(ch) {
                     // Keep closing punctuation with the preceding glyph. This
@@ -1918,6 +1931,19 @@ mod tests {
                 .all(|line| { !line.starts_with('⟧') && !line.ends_with('⟦') })
         );
         assert_eq!(lines.concat(), "あいう⟦えお⟧かき");
+    }
+
+    #[test]
+    fn wrap_paragraph_breaks_space_free_southeast_asian_scripts() {
+        let bytes = include_bytes!("../../tests/fixtures/NotoSansJP-Regular.ttf");
+        let face = Face::parse(bytes, 0).expect("fixture font should parse");
+
+        for text in ["ภาษาไทย", "ພາສາລາວ", "ភាសាខ្មែរ"]
+        {
+            let lines = wrap_paragraph(text, &face, 10.0, 16.0);
+            assert!(lines.len() >= 2, "{text:?} did not wrap: {lines:?}");
+            assert_eq!(lines.concat(), text);
+        }
     }
 
     #[test]
