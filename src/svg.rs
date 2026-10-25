@@ -84,7 +84,6 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
     // inherited by its descendants just like styles on a group.  Starting at
     // the root also makes root-level `stroke`, `fill`, and `style` useful for
     // SVGs emitted by tools that put all presentation properties on <svg>.
-    let inherited = style_for(root, Style::default())?;
     let markers = collect_markers(root)?;
     {
         let mut ctx = Context {
@@ -92,10 +91,10 @@ pub fn svg_to_pdf_with_options(svg: &[u8], options: SvgOptions<'_>) -> Result<Ve
             font,
             height,
             markers,
+            font_bytes: options.font_bytes,
+            page_size: (width, height),
         };
-        for child in root.children().filter(Node::is_element) {
-            render_node(child, root_transform, inherited, &mut ctx)?;
-        }
+        render_node(root, root_transform, Style::default(), &mut ctx)?;
     }
     document.save_to_bytes()
 }
@@ -105,6 +104,8 @@ struct Context<'a, 'doc> {
     font: Option<crate::FontHandle>,
     height: f32,
     markers: HashMap<String, Marker>,
+    font_bytes: &'a [u8],
+    page_size: (f32, f32),
 }
 
 #[derive(Clone, Debug)]
@@ -238,8 +239,43 @@ fn render_node(
     let transform = transform.then(parse_transform(node.attribute("transform"))?);
     match node.tag_name().name() {
         "g" | "svg" => {
-            for child in node.children().filter(Node::is_element) {
-                render_node(child, transform, style, ctx)?;
+            let own_opacity = node_opacity(node)?;
+            if own_opacity < 1.0 {
+                let mut group_document = Document::new(ctx.page_size)?;
+                let group_font = if contains_rendered_text(node) {
+                    if ctx.font_bytes.is_empty() {
+                        return Err(invalid("SVG text conversion requires non-empty font_bytes"));
+                    }
+                    Some(group_document.embed_font(ctx.font_bytes)?)
+                } else {
+                    None
+                };
+                {
+                    let mut group_page = group_document.page(1)?;
+                    let mut group_ctx = Context {
+                        page: &mut group_page,
+                        font: group_font,
+                        height: ctx.height,
+                        markers: ctx.markers.clone(),
+                        font_bytes: ctx.font_bytes,
+                        page_size: ctx.page_size,
+                    };
+                    let mut child_parent = style;
+                    // `opacity` is a group compositing property. The children
+                    // must be rendered into the isolated group before that
+                    // opacity is applied to the group as a whole.
+                    child_parent.opacity = parent.opacity;
+                    for child in node.children().filter(Node::is_element) {
+                        render_node(child, transform, child_parent, &mut group_ctx)?;
+                    }
+                }
+                let group_bytes = group_document.save_to_bytes()?;
+                let group_document = Document::from_bytes(&group_bytes)?;
+                ctx.page.overlay_with_opacity(group_document, own_opacity)?;
+            } else {
+                for child in node.children().filter(Node::is_element) {
+                    render_node(child, transform, style, ctx)?;
+                }
             }
         }
         "line" => {
@@ -754,6 +790,22 @@ fn style_for(node: Node<'_, '_>, mut style: Style) -> Result<Style> {
         }
     }
     Ok(style)
+}
+
+fn node_opacity(node: Node<'_, '_>) -> Result<f32> {
+    let mut value = None;
+    if let Some(raw) = node.attribute("style") {
+        for pair in raw.split(';').filter_map(|item| item.split_once(':')) {
+            if pair.0.trim() == "opacity" {
+                value = Some(pair.1.trim());
+            }
+        }
+    }
+    let value = value.or_else(|| node.attribute("opacity"));
+    value
+        .map(parse_number)
+        .transpose()
+        .map(|value| value.unwrap_or(1.0))
 }
 
 fn parse_transform(raw: Option<&str>) -> Result<Transform> {
