@@ -3,90 +3,36 @@ name: CI
 on:
   push:
     branches: [master, main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/**"
+      - "docs/fixtures/**"
+      - "!LICENSE-*"
   pull_request:
     branches: [master, main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/**"
+      - "docs/fixtures/**"
+      - "!LICENSE-*"
+
+# A new push to the same PR cancels its older, now-stale run so it stops
+# holding runner slots. Runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
+# Jobs are deliberately few: with several PRs open at once, the runner
+# concurrency limit (not job duration) dominated wall-clock time. Add new
+# checks as steps of an existing job rather than as new jobs.
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Test (default features)
-        run: cargo test
-      - name: Test (all features)
-        run: cargo test --all-features
-      - name: Build examples
-        run: cargo build --examples
-
-  wasm:
-    name: WASM build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Verify WASM demo lockfile
-        run: cargo metadata --manifest-path wasm-demo/Cargo.toml --locked --format-version 1
-      - name: Build (wasm32, default features)
-        run: cargo build --target wasm32-unknown-unknown
-      - name: Build (wasm32, draw+ocr+flow features)
-        run: cargo build --target wasm32-unknown-unknown --features draw,ocr,flow
-
-  wasm-test:
-    name: WASM test (Node.js)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
-      - name: Test (Node.js runner, no browser needed)
-        run: wasm-pack test --node -- --test wasm_smoke
-
-  wasm-dependency-boundary:
-    name: WASM dependency boundary
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Reject native runtime dependencies from WASM graph
-        run: bash scripts/check-wasm-deps.sh
-
-  svg-dependency-boundary:
-    name: SVG dependency boundary
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Reject unmaintained font parser from SVG graph
-        run: bash scripts/check-svg-dependency-boundary.sh
-
-  clippy:
-    name: Clippy
+    name: Test, Clippy and dependency boundaries
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -96,8 +42,49 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Test (default features)
+        run: cargo test
+      - name: Test (all features)
+        if: ${{ !cancelled() }}
+        run: cargo test --all-features
+      - name: Build examples
+        if: ${{ !cancelled() }}
+        run: cargo build --examples
       - name: Clippy (all features)
+        if: ${{ !cancelled() }}
         run: cargo clippy --all-features -- -D warnings
+      - name: Reject unmaintained font parser from SVG graph
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-svg-dependency-boundary.sh
+
+  wasm:
+    name: WASM build, test and dependency boundary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Verify WASM demo lockfile
+        run: cargo metadata --manifest-path wasm-demo/Cargo.toml --locked --format-version 1
+      - name: Reject native runtime dependencies from WASM graph
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-wasm-deps.sh
+      - name: Build (wasm32, default features)
+        if: ${{ !cancelled() }}
+        run: cargo build --target wasm32-unknown-unknown
+      - name: Build (wasm32, draw+ocr+flow features)
+        if: ${{ !cancelled() }}
+        run: cargo build --target wasm32-unknown-unknown --features draw,ocr,flow
+      - name: Test (Node.js runner, no browser needed)
+        if: ${{ !cancelled() }}
+        run: wasm-pack test --node -- --test wasm_smoke
 
   semver:
     name: Semver checks
@@ -108,23 +95,45 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
       - name: Check semver (default features)
         run: cargo semver-checks
       - name: Check semver (all features)
+        if: ${{ !cancelled() }}
         run: cargo semver-checks --all-features
 
-  bulk-extraction-contract:
-    name: Bulk extraction evidence contract
+  fixtures:
+    name: Fixture and renderer contracts
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # The fixture tools are separate workspaces; one shared target dir lets
+      # them reuse the harumi build and keeps it in a single cache.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run fixed bulk extraction corpus
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Poppler utilities
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - name: Bulk extraction evidence contract
+        if: ${{ !cancelled() }}
         run: bash scripts/check-bulk-extraction-fixture.sh
+      - name: PDF specification coverage (Poppler)
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-pdf-spec-coverage-render.sh
+      - name: Report generation renderer artifacts
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-report-generation-fixture.sh
+      - name: SVG visual render contract
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-svg-render-fixture.sh
+      - name: Pdfium runner compile contract
+        if: ${{ !cancelled() }}
+        run: PDFIUM_COMPILE_ONLY=1 bash scripts/check-pdfium-render-fixture.sh
       - name: Upload bulk extraction artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -132,19 +141,6 @@ jobs:
           name: bulk-extraction-corpus
           path: /tmp/harumi-bulk-extraction-fixture
           if-no-files-found: error
-
-  pdf-spec-coverage:
-    name: PDF specification coverage (Poppler)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Poppler utilities
-        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
-      - name: Render specification corpus with Poppler
-        run: bash scripts/check-pdf-spec-coverage-render.sh
       - name: Upload specification corpus artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -152,19 +148,6 @@ jobs:
           name: pdf-spec-coverage-poppler
           path: /tmp/harumi-pdf-spec-coverage
           if-no-files-found: error
-
-  report-generation-contract:
-    name: Report generation renderer artifacts
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Poppler utilities
-        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
-      - name: Generate fixed backend comparison artifacts
-        run: bash scripts/check-report-generation-fixture.sh
       - name: Upload report generation artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -172,19 +155,6 @@ jobs:
           name: report-generation-poppler
           path: /tmp/harumi-report-generation-fixture
           if-no-files-found: error
-
-  svg-render-contract:
-    name: SVG visual render contract
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Poppler utilities
-        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
-      - name: Render SVG visual fixture
-        run: bash scripts/check-svg-render-fixture.sh
       - name: Upload SVG render artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -192,17 +162,6 @@ jobs:
           name: svg-render-poppler
           path: /tmp/harumi-svg-render-fixture
           if-no-files-found: error
-
-  pdfium-contract:
-    name: Pdfium runner compile contract
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check Pdfium runner without unpinned runtime
-        run: PDFIUM_COMPILE_ONLY=1 bash scripts/check-pdfium-render-fixture.sh
 
   pdfium-runtime:
     name: Pdfium pinned runtime artifact

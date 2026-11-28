@@ -1,12 +1,26 @@
 name: Security
 
 on:
+  # PRs and pushes only audit when dependencies change; the weekly schedule
+  # still audits everything against newly published advisories.
   push:
     branches: [master, main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/security.yml"
   pull_request:
     branches: [master, main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/security.yml"
   schedule:
     - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,8 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Audit dependencies
         run: cargo audit --ignore RUSTSEC-2023-0071
