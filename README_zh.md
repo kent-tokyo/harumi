@@ -78,5 +78,10 @@ harumi-mcp
 - PDF 页面渲染需要单独的 renderer。
 - 复杂分栏、旋转、竖排或图像文字应在保存后检查。
 
-文档索引见 [docs/README.md](docs/README.md)，变更见 [CHANGELOG.md](CHANGELOG.md)，
-优先级见 [ROADMAP.md](ROADMAP.md)。许可证为 MIT OR Apache-2.0。
+## 文档与开发
+
+- [文档索引](docs/README.md)
+- [路线图](ROADMAP.md)
+- [变更日志](CHANGELOG.md)
+
+欢迎提交 Issue 和 PR。许可证为 [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)。

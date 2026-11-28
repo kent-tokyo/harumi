@@ -10,7 +10,7 @@ harumiは既存PDFから文字と座標を抽出し、翻訳文・置換文・OC
 
 [![crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
-[![ライセンス](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![ライセンス](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
 [English](README.md) | [한국어](README_kr.md) | [中文](README_zh.md)
 
@@ -98,4 +98,4 @@ harumi-mcp
 - [ロードマップ](ROADMAP.md)
 - [変更履歴](CHANGELOG.md)
 
-IssueとPRを歓迎します。ライセンスはMIT OR Apache-2.0です。
+IssueとPRを歓迎します。ライセンスは[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)です。

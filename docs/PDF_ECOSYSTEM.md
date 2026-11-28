@@ -43,7 +43,9 @@ differences are diagnostic; they are not pixel-parity evidence across renderers.
 | Report generation | [`docs/fixtures/report-generation.json`](fixtures/report-generation.json) |
 | Domain comparison | [`docs/fixtures/competitive-domains.json`](fixtures/competitive-domains.json) |
 | Poppler rendering | [`scripts/check-poppler-render-fixture.sh`](../scripts/check-poppler-render-fixture.sh) |
-| Pdfium probe | [`scripts/check-pdfium-render-fixture.sh`](../scripts/check-pdfium-render-fixture.sh) |
+| Pdfium probe | [`scripts/check-pdfium-render-fixture.sh`](../scripts/check-pdfium-render-fixture.sh), [`docs/fixtures/pdfium-render.json`](fixtures/pdfium-render.json) |
+| Render comparison | [`scripts/compare-render-artifacts.py`](../scripts/compare-render-artifacts.py), [`docs/fixtures/render-compatibility.json`](fixtures/render-compatibility.json) |
+| Flow benchmark | [`scripts/check-flow-benchmark.sh`](../scripts/check-flow-benchmark.sh), [`docs/fixtures/flow-benchmark.json`](fixtures/flow-benchmark.json) |
 
 When updating a result, record the input, version, host, build profile, repetitions,
 renderer, and whether memory was measured. The fixture and runner are the primary

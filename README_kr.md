@@ -80,5 +80,10 @@ harumi-mcp
 - PDF 페이지 렌더링은 별도 renderer가 필요합니다.
 - 복잡한 다단, 회전, 세로쓰기, 이미지 기반 문서는 저장 후 확인하세요.
 
-문서 목록은 [docs/README.md](docs/README.md), 변경 내역은 [CHANGELOG.md](CHANGELOG.md),
-우선순위는 [ROADMAP.md](ROADMAP.md)를 참조하세요. 라이선스는 MIT OR Apache-2.0입니다.
+## 문서와 개발
+
+- [문서 목록](docs/README.md)
+- [로드맵](ROADMAP.md)
+- [변경 내역](CHANGELOG.md)
+
+Issue와 PR을 환영합니다. 라이선스는 [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)입니다.
