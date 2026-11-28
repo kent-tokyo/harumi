@@ -142,6 +142,14 @@ struct EmbedState {
 use helpers::add_ext_gstate_to_resources;
 
 impl Document {
+    /// Returns [`Error::InvalidInput`] with `message` once the document has been saved.
+    fn ensure_not_finalized(&self, message: &str) -> Result<()> {
+        if self.finalized {
+            return Err(Error::InvalidInput(message.into()));
+        }
+        Ok(())
+    }
+
     /// Loads a PDF from a file path.
     ///
     /// # Errors
@@ -208,11 +216,7 @@ impl Document {
     /// # Errors
     /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
     pub fn set_encryption(&mut self, user_password: &str, owner_password: &str) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "set_encryption() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("set_encryption() called after save(); create a new Document")?;
         self.pending_encryption = Some((
             user_password.to_owned(),
             owner_password.to_owned(),
@@ -243,11 +247,9 @@ impl Document {
         user_password: &str,
         owner_password: &str,
     ) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "set_encryption_aes256() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "set_encryption_aes256() called after save(); create a new Document",
+        )?;
         self.pending_encryption = Some((
             user_password.to_owned(),
             owner_password.to_owned(),
@@ -464,11 +466,9 @@ impl Document {
     /// with a new empty stream and reported; nested stream contents are never
     /// guessed at or rewritten.
     pub fn repair_page_contents(&mut self, page: u32) -> Result<crate::document::RepairReport> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "cannot repair page contents after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "cannot repair page contents after save(); create a new Document",
+        )?;
         let page_id = self
             .inner
             .get_pages()
@@ -545,11 +545,9 @@ impl Document {
     /// replaced with an empty dictionary and reported; nested resource entries
     /// are never guessed at.
     pub fn repair_page_resources(&mut self, page: u32) -> Result<crate::document::RepairReport> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "cannot repair page resources after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "cannot repair page resources after save(); create a new Document",
+        )?;
         let page_id = self
             .inner
             .get_pages()
@@ -667,11 +665,7 @@ impl Document {
     /// Returns [`Error::PageNotFound`] if `number` is greater than
     /// [`page_count`](Document::page_count) or zero.
     pub fn page(&mut self, number: u32) -> Result<PageHandle<'_>> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "cannot add content after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("cannot add content after save(); create a new Document")?;
         let page_ids = self.inner.get_pages();
         let page_id = page_ids
             .get(&number)
@@ -702,11 +696,9 @@ impl Document {
     /// [`Error::InvalidInput`] if `degrees` is not a multiple of 90 or [`save`](Document::save)
     /// has already been called.
     pub fn rotate_page(&mut self, number: u32, degrees: i32) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "page manipulation after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "page manipulation after save() is not supported; create a new Document",
+        )?;
         if degrees % 90 != 0 {
             return Err(Error::InvalidInput(format!(
                 "degrees must be a multiple of 90, got {degrees}"
@@ -751,11 +743,9 @@ impl Document {
     /// [`Error::InvalidInput`] if the document has only one page or [`save`](Document::save)
     /// has already been called.
     pub fn remove_page(&mut self, number: u32) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "page manipulation after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "page manipulation after save() is not supported; create a new Document",
+        )?;
         let page_ids = self.inner.get_pages();
         let target_id = page_ids
             .get(&number)
@@ -819,11 +809,9 @@ impl Document {
     /// Returns [`Error::InvalidInput`] if `after > page_count()` or [`save`](Document::save)
     /// has already been called.
     pub fn insert_blank_page(&mut self, after: u32, size: (f32, f32)) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "page manipulation after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "page manipulation after save() is not supported; create a new Document",
+        )?;
         check_finite(&[size.0, size.1], "insert_blank_page")?;
         if size.0 <= 0.0 || size.1 <= 0.0 {
             return Err(Error::InvalidInput(format!(
@@ -900,11 +888,9 @@ impl Document {
     /// duplicates, [`Error::PageNotFound`] if any entry is 0 or out of range, or
     /// [`Error::InvalidInput`] if [`save`](Document::save) has already been called.
     pub fn reorder_pages(&mut self, new_order: &[u32]) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "page manipulation after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "page manipulation after save() is not supported; create a new Document",
+        )?;
         let count = self.page_count();
         if new_order.len() != count as usize {
             return Err(Error::InvalidInput(format!(
@@ -978,11 +964,9 @@ impl Document {
     /// Returns [`Error::InvalidInput`] if this document has been finalized via
     /// [`save`](Document::save) or if `other` has unflushed pending operations.
     pub fn merge_from(&mut self, other: Document) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "merge_from after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "merge_from after save() is not supported; create a new Document",
+        )?;
         if !other.pending.is_empty() {
             return Err(Error::InvalidInput(
                 "other has unflushed pending operations; call save_to_bytes()+from_bytes() first"
@@ -1062,11 +1046,9 @@ impl Document {
     }
 
     fn overlay_from_internal(&mut self, other: Document, opacity: Option<f32>) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "overlay_from after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "overlay_from after save() is not supported; create a new Document",
+        )?;
         if !other.pending.is_empty() {
             return Err(Error::InvalidInput(
                 "other has unflushed pending operations; call save_to_bytes()+from_bytes() first"
@@ -1291,11 +1273,7 @@ impl Document {
     /// # Errors
     /// Returns [`Error::InvalidInput`] if the document has already been saved.
     pub fn set_metadata(&mut self, meta: &PdfMetadata) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "set_metadata() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("set_metadata() called after save(); create a new Document")?;
         use lopdf::{Object, StringFormat};
 
         let mut dict = lopdf::Dictionary::new();
@@ -1369,11 +1347,7 @@ impl Document {
     /// # Errors
     /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save).
     pub fn fill_form(&mut self, values: &[(&str, &str)]) -> Result<usize> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "fill_form() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("fill_form() called after save(); create a new Document")?;
         if values.is_empty() {
             return Ok(0);
         }
@@ -1437,11 +1411,7 @@ impl Document {
         rect: [f32; 4],
         options: &TextFieldOptions,
     ) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_text_field() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("add_text_field() called after save(); create a new Document")?;
 
         let page_id = *self
             .inner
@@ -1532,11 +1502,7 @@ impl Document {
         rect: [f32; 4],
         checked: bool,
     ) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_checkbox() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("add_checkbox() called after save(); create a new Document")?;
 
         let page_id = *self
             .inner
@@ -1618,11 +1584,7 @@ impl Document {
         buttons: &[(&str, [f32; 4])],
         selected: Option<&str>,
     ) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_radio_group() called after save(); create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized("add_radio_group() called after save(); create a new Document")?;
 
         if buttons.is_empty() {
             return Err(Error::InvalidInput(
@@ -1753,11 +1715,7 @@ impl Document {
         rect: [f32; 4],
         options: &crate::SignatureFieldOptions,
     ) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_signature_field() called after save()".into(),
-            ));
-        }
+        self.ensure_not_finalized("add_signature_field() called after save()")?;
 
         check_finite(&rect, "signature field rect")?;
 
@@ -1870,11 +1828,9 @@ impl Document {
     /// Returns [`Error::PageNotFound`] if `page` is 0 or exceeds the page count,
     /// or [`Error::InvalidInput`] if [`save`](Document::save) has already been called.
     pub fn add_bookmark(&mut self, title: &str, page: u32, y: f32) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_bookmark after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "add_bookmark after save() is not supported; create a new Document",
+        )?;
         let count = self.page_count();
         if page == 0 || page > count {
             return Err(Error::PageNotFound(page));
@@ -1898,11 +1854,9 @@ impl Document {
     /// Returns [`Error::PageNotFound`] if `page` is 0 or exceeds the page count,
     /// or [`Error::InvalidInput`] if [`save`](Document::save) has already been called.
     pub fn add_outline_item(&mut self, title: &str, page: u32, y: f32, level: u8) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "add_outline_item after save() is not supported; create a new Document".into(),
-            ));
-        }
+        self.ensure_not_finalized(
+            "add_outline_item after save() is not supported; create a new Document",
+        )?;
         let count = self.page_count();
         if page == 0 || page > count {
             return Err(Error::PageNotFound(page));
@@ -1947,11 +1901,7 @@ impl Document {
     /// Returns [`Error::InvalidInput`] if called after [`save`](Document::save) or if
     /// `filename` is empty.
     pub fn attach_file(&mut self, filename: &str, data: &[u8], mime_type: &str) -> Result<()> {
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "attach_file after save() is not supported".into(),
-            ));
-        }
+        self.ensure_not_finalized("attach_file after save() is not supported")?;
         if filename.is_empty() {
             return Err(Error::InvalidInput("filename must not be empty".into()));
         }
@@ -4042,11 +3992,7 @@ impl Document {
         pairs: &[(&str, &str)],
     ) -> Result<usize> {
         // SECURITY: Check finalized state before any operations.
-        if self.finalized {
-            return Err(Error::InvalidInput(
-                "batch_replace_text_preserve_font called after save()".into(),
-            ));
-        }
+        self.ensure_not_finalized("batch_replace_text_preserve_font called after save()")?;
 
         // Validate page exists once, upfront.
         let page_id = self

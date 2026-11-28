@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::path::{Component, Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 
-const MCP_VERSION: &str = "2024-11-25";
+/// MCP protocol revisions this server speaks; the first is preferred.
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_PDF_SIZE: u64 = 100_000_000; // 100 MB
 const MAX_FONT_SIZE: u64 = 25_000_000; // 25 MB
 const MAX_COORDINATE: f32 = 100_000.0;
@@ -65,7 +66,9 @@ impl ReplaceMode {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
+    #[serde(default)]
     jsonrpc: String,
+    #[serde(default)]
     id: Option<serde_json::Value>,
     method: String,
     params: Option<serde_json::Value>,
@@ -81,6 +84,7 @@ struct Tool {
 
 fn error_response(code: &str, message: &str) -> serde_json::Value {
     json!({
+        "success": false,
         "error": message,
         "code": code
     })
@@ -1351,65 +1355,123 @@ fn page_info(params: Option<serde_json::Value>) -> serde_json::Value {
     }))
 }
 
-fn send_response(id: Option<serde_json::Value>, result: serde_json::Value) {
-    let response = json!({
-        "jsonrpc": "2.0",
-        "id": id.unwrap_or(serde_json::Value::Null),
-        "result": result
-    });
+// JSON-RPC 2.0 error codes.
+const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
+const METHOD_NOT_FOUND: i64 = -32601;
+const INVALID_PARAMS: i64 = -32602;
 
-    println!("{}", response);
+fn rpc_result(id: serde_json::Value, result: serde_json::Value) -> serde_json::Value {
+    json!({"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+fn rpc_error(id: serde_json::Value, code: i64, message: &str) -> serde_json::Value {
+    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+}
+
+/// Wrap a tool's JSON payload as an MCP `tools/call` result.
+///
+/// The payload keeps the documented `success` / `result` / `error` / `code`
+/// shape and is delivered as a text content block; `isError` mirrors failure.
+fn tool_call_result(payload: serde_json::Value) -> serde_json::Value {
+    let is_error = payload.get("success") != Some(&serde_json::Value::Bool(true));
+    json!({
+        "content": [{"type": "text", "text": payload.to_string()}],
+        "isError": is_error
+    })
+}
+
+fn initialize_result(params: Option<&serde_json::Value>) -> serde_json::Value {
+    let requested = params
+        .and_then(|p| p.get("protocolVersion"))
+        .and_then(|v| v.as_str());
+    let version = requested
+        .filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v))
+        .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0]);
+    json!({
+        "protocolVersion": version,
+        "capabilities": {"tools": {}},
+        "serverInfo": {
+            "name": "harumi-mcp",
+            "version": env!("CARGO_PKG_VERSION")
+        }
+    })
+}
+
+fn call_tool(name: &str, args: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    Some(match name {
+        "pdf_extract_text" => extract_text(args),
+        "pdf_extract_all_pages" => extract_all_pages(args),
+        "pdf_extract_text_structured" => extract_text_structured(args),
+        "pdf_replace_text" => replace_text(args),
+        "pdf_rotate_page" => rotate_page(args),
+        "pdf_add_invisible_text" => add_invisible_text(args),
+        "pdf_html_to_pdf" => html_to_pdf(args),
+        "pdf_merge" => merge_pdfs(args),
+        "pdf_page_info" => page_info(args),
+        _ => return None,
+    })
+}
+
+/// Handle one line of input. Returns `None` for notifications, which get no reply.
+fn handle_line(line: &str) -> Option<serde_json::Value> {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(rpc_error(
+                serde_json::Value::Null,
+                PARSE_ERROR,
+                &format!("Parse error: {e}"),
+            ));
+        }
+    };
+    let req: JsonRpcRequest = match serde_json::from_value(value) {
+        Ok(r) => r,
+        Err(e) => {
+            return Some(rpc_error(
+                serde_json::Value::Null,
+                INVALID_REQUEST,
+                &format!("Invalid request: {e}"),
+            ));
+        }
+    };
+    // JSON-RPC notifications (no id), e.g. `notifications/initialized`.
+    let id = req.id?;
+
+    Some(match req.method.as_str() {
+        "initialize" => rpc_result(id, initialize_result(req.params.as_ref())),
+        "ping" => rpc_result(id, json!({})),
+        "tools/list" => rpc_result(id, json!({"tools": list_tools()})),
+        "tools/call" => {
+            let params = req.params.as_ref();
+            let Some(tool_name) = params.and_then(|p| p.get("name")).and_then(|n| n.as_str())
+            else {
+                return Some(rpc_error(id, INVALID_PARAMS, "Missing tool name"));
+            };
+            let args = params.and_then(|p| p.get("arguments")).cloned();
+            match call_tool(tool_name, args) {
+                Some(payload) => rpc_result(id, tool_call_result(payload)),
+                None => rpc_error(id, INVALID_PARAMS, &format!("Unknown tool: {tool_name}")),
+            }
+        }
+        other => rpc_error(id, METHOD_NOT_FOUND, &format!("Method not found: {other}")),
+    })
 }
 
 fn main() {
     let stdin = io::stdin();
-    let reader = stdin.lock();
+    let mut stdout = io::stdout().lock();
 
-    for line in reader.lines().map_while(Result::ok) {
-        if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&line) {
-            let result = match req.method.as_str() {
-                "initialize" => success_response(json!({
-                    "protocolVersion": MCP_VERSION,
-                    "capabilities": {},
-                    "serverInfo": {
-                        "name": "harumi-mcp",
-                        "version": "0.1.0"
-                    }
-                })),
-                "tools/list" => success_response(json!({"tools": list_tools()})),
-                "tools/call" => {
-                    let tool_name = req
-                        .params
-                        .as_ref()
-                        .and_then(|p| p.get("name"))
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("unknown");
-
-                    let args = req
-                        .params
-                        .as_ref()
-                        .and_then(|p| p.get("arguments"))
-                        .cloned();
-
-                    match tool_name {
-                        "pdf_extract_text" => extract_text(args),
-                        "pdf_extract_all_pages" => extract_all_pages(args),
-                        "pdf_extract_text_structured" => extract_text_structured(args),
-                        "pdf_replace_text" => replace_text(args),
-                        "pdf_rotate_page" => rotate_page(args),
-                        "pdf_add_invisible_text" => add_invisible_text(args),
-                        "pdf_html_to_pdf" => html_to_pdf(args),
-                        "pdf_merge" => merge_pdfs(args),
-                        "pdf_page_info" => page_info(args),
-                        _ => {
-                            error_response("UNKNOWN_TOOL", &format!("Unknown tool: {}", tool_name))
-                        }
-                    }
-                }
-                _ => error_response("UNKNOWN_METHOD", &format!("Unknown method: {}", req.method)),
-            };
-
-            send_response(req.id, result);
+    for line in stdin.lock().lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(response) = handle_line(&line)
+            && writeln!(stdout, "{response}")
+                .and_then(|_| stdout.flush())
+                .is_err()
+        {
+            break;
         }
     }
 }
@@ -1419,8 +1481,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_initialize_negotiates_version_and_declares_tools() {
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+        )
+        .unwrap();
+        assert_eq!(resp["id"], 1);
+        assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
+        assert!(resp["result"]["capabilities"]["tools"].is_object());
+        assert_eq!(
+            resp["result"]["serverInfo"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resp["result"]["protocolVersion"],
+            SUPPORTED_PROTOCOL_VERSIONS[0]
+        );
+    }
+
+    #[test]
+    fn test_notifications_get_no_response() {
+        assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+    }
+
+    #[test]
+    fn test_tools_list_is_top_level_result() {
+        let resp = handle_line(r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#).unwrap();
+        assert!(resp["result"]["tools"].as_array().unwrap().len() >= 9);
+    }
+
+    #[test]
+    fn test_tools_call_wraps_payload_as_content() {
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pdf_page_info","arguments":{"pdf_path":""}}}"#,
+        )
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["code"], "INVALID_PARAMS");
+    }
+
+    #[test]
+    fn test_protocol_errors_use_jsonrpc_error_object() {
+        let resp = handle_line("not json").unwrap();
+        assert_eq!(resp["error"]["code"], PARSE_ERROR);
+        assert!(resp["id"].is_null());
+
+        let resp = handle_line(r#"{"jsonrpc":"2.0","id":5,"method":"nope"}"#).unwrap();
+        assert_eq!(resp["error"]["code"], METHOD_NOT_FOUND);
+
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"nope"}}"#,
+        )
+        .unwrap();
+        assert_eq!(resp["error"]["code"], INVALID_PARAMS);
+    }
+
+    #[test]
     fn test_error_response_shape() {
         let err = error_response("TEST_ERROR", "Test message");
+        assert_eq!(err["success"], false);
         assert_eq!(err["error"], "Test message");
         assert_eq!(err["code"], "TEST_ERROR");
     }

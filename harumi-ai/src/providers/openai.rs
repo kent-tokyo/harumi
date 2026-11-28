@@ -33,6 +33,7 @@ pub struct OpenAiTranslatorBuilder {
     api_key: Option<String>,
     model: Option<String>,
     system_prompt_template: Option<String>,
+    timeout: Option<std::time::Duration>,
 }
 
 impl OpenAiTranslatorBuilder {
@@ -53,6 +54,12 @@ impl OpenAiTranslatorBuilder {
         self
     }
 
+    /// Overall timeout for each API request (default: 300 seconds).
+    pub fn timeout(mut self, t: std::time::Duration) -> Self {
+        self.timeout = Some(t);
+        self
+    }
+
     /// Override the system prompt template.
     ///
     /// Available placeholders:
@@ -65,7 +72,7 @@ impl OpenAiTranslatorBuilder {
 
     pub fn build(self) -> OpenAiTranslator {
         OpenAiTranslator {
-            client: reqwest::Client::new(),
+            client: super::http_client(self.timeout.unwrap_or(super::DEFAULT_REQUEST_TIMEOUT)),
             endpoint: self.endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
             api_key: self.api_key.unwrap_or_default(),
             model: self.model.unwrap_or_else(|| DEFAULT_MODEL.to_owned()),
