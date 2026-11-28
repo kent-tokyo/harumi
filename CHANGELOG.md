@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SigningContext::from_cert_and_key` rejects a key that does not match the
   certificate. The test certificate fixture was an unrelated ECDSA certificate
   and is replaced by one for the RSA test key.
-- Deprecate the internal helpers `sign_hash`, `hash_pdf_content`,
-  `hash_pdf_content_with_byte_range` and `calculate_byte_range`.
+- The old public helpers `sign_hash`, `hash_pdf_content`,
+  `hash_pdf_content_with_byte_range` and `calculate_byte_range` are kept for
+  compatibility but are no longer used by `sign_document`; `sign_hash` now
+  uses the `rsa` crate with blinding.
 
 ## [1.23.8] — 2026-10-26
 

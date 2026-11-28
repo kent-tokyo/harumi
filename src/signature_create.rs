@@ -298,10 +298,9 @@ pub mod inner {
     /// Hash the PDF content using SHA-256 over a ByteRange.
     ///
     /// Segments that fall outside `content` are skipped.
-    #[deprecated(
-        since = "1.24.0",
-        note = "internal helper; Document::sign_document computes the ByteRange digest itself"
-    )]
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn hash_pdf_content_with_byte_range(content: &[u8], byte_range: [u32; 4]) -> Vec<u8> {
         let mut hasher = Sha256::new();
         let [s1, l1, s2, l2] = byte_range.map(|v| v as usize);
@@ -315,19 +314,17 @@ pub mod inner {
     }
 
     /// Hash the whole PDF content using SHA-256.
-    #[deprecated(
-        since = "1.24.0",
-        note = "a PDF signature digest must cover the ByteRange, not the whole file"
-    )]
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn hash_pdf_content(content: &[u8]) -> Vec<u8> {
         Sha256::digest(content).to_vec()
     }
 
     /// Create an RSA PKCS#1 v1.5 signature over a SHA-256 `hash` (with blinding).
-    #[deprecated(
-        since = "1.24.0",
-        note = "internal helper; use Document::sign_document to produce a CMS signature"
-    )]
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn sign_hash(private_key: &RsaPrivateKey, hash: &[u8]) -> Result<Vec<u8>> {
         private_key
             .sign_with_rng(&mut rand::thread_rng(), Pkcs1v15Sign::new::<Sha256>(), hash)
@@ -335,10 +332,9 @@ pub mod inner {
     }
 
     /// Calculate a PDF signature ByteRange `[0, X, Y, Z]`.
-    #[deprecated(
-        since = "1.24.0",
-        note = "internal helper; Document::sign_document computes the ByteRange itself"
-    )]
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn calculate_byte_range(
         pre_contents_offset: u32,
         hex_string_length: u32,
