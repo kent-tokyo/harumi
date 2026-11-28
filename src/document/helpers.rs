@@ -557,21 +557,17 @@ pub(super) fn set_page_box(
 /// Returns a 16-byte pseudo-random document ID using system time + PID.
 /// Used as the /ID trailer entry required by PDF encryption (RC4/AES).
 pub(super) fn generate_file_id() -> [u8; 16] {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id() as u128;
-    // LCG mix so that docs saved at the same nanosecond differ.
-    // Mix time + PID using Knuth's MMIX LCG constants (a=6364136223846793005,
-    // c=1442695040888963407) so that docs saved in the same process at similar
-    // times produce distinct IDs. Not cryptographically secure, but sufficient
-    // for PDF's /ID uniqueness requirement (PDF spec §14.4).
-    let mixed = nanos
-        .wrapping_mul(6364136223846793005u128)
-        .wrapping_add(pid.wrapping_mul(1442695040888963407u128));
+    // PDF §14.4 only needs /ID to be unique; the OS RNG gives that without the
+    // clock (which panics on wasm32-unknown-unknown) or a hand-rolled mixer.
     let mut id = [0u8; 16];
-    id.copy_from_slice(&mixed.to_le_bytes());
+    if getrandom::fill(&mut id).is_ok() {
+        return id;
+    }
+    // Fallback if no entropy source is available: a per-process counter keeps
+    // IDs from one process distinct.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    id[..8].copy_from_slice(&n.to_le_bytes());
     id
 }
 

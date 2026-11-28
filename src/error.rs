@@ -26,10 +26,6 @@ pub enum Error {
     #[cfg(feature = "image")]
     ImageDecode(String),
 
-    #[cfg(not(feature = "image"))]
-    #[doc(hidden)]
-    _ImageDecode,
-
     /// A caller-supplied parameter is invalid (e.g. NaN coordinate, zero-size box).
     InvalidInput(String),
 
@@ -44,33 +40,17 @@ pub enum Error {
     #[cfg(feature = "digital-signature")]
     InvalidCertificate(String),
 
-    #[cfg(not(feature = "digital-signature"))]
-    #[doc(hidden)]
-    _InvalidCertificate,
-
     /// A private key could not be parsed (requires the `digital-signature` feature).
     #[cfg(feature = "digital-signature")]
     InvalidPrivateKey(String),
-
-    #[cfg(not(feature = "digital-signature"))]
-    #[doc(hidden)]
-    _InvalidPrivateKey,
 
     /// PKCS#12 file could not be parsed (requires the `digital-signature` feature).
     #[cfg(feature = "digital-signature")]
     Pkcs12Parse(String),
 
-    #[cfg(not(feature = "digital-signature"))]
-    #[doc(hidden)]
-    _Pkcs12Parse,
-
     /// Signature operation failed (requires the `digital-signature` feature).
     #[cfg(feature = "digital-signature")]
     SignatureFailed(String),
-
-    #[cfg(not(feature = "digital-signature"))]
-    #[doc(hidden)]
-    _SignatureFailed,
 }
 
 impl fmt::Display for Error {
@@ -87,8 +67,6 @@ impl fmt::Display for Error {
             Error::InvalidFont(handle) => write!(f, "font handle {} is invalid", handle),
             #[cfg(feature = "image")]
             Error::ImageDecode(msg) => write!(f, "image decode error: {}", msg),
-            #[cfg(not(feature = "image"))]
-            Error::_ImageDecode => unreachable!(),
             Error::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
             Error::FontCharNotMapped { ch, font_name } => {
                 write!(
@@ -100,20 +78,12 @@ impl fmt::Display for Error {
             Error::WrongPassword => write!(f, "wrong password for encrypted PDF"),
             #[cfg(feature = "digital-signature")]
             Error::InvalidCertificate(msg) => write!(f, "invalid certificate: {}", msg),
-            #[cfg(not(feature = "digital-signature"))]
-            Error::_InvalidCertificate => unreachable!(),
             #[cfg(feature = "digital-signature")]
             Error::InvalidPrivateKey(msg) => write!(f, "invalid private key: {}", msg),
-            #[cfg(not(feature = "digital-signature"))]
-            Error::_InvalidPrivateKey => unreachable!(),
             #[cfg(feature = "digital-signature")]
             Error::Pkcs12Parse(msg) => write!(f, "PKCS#12 parse error: {}", msg),
-            #[cfg(not(feature = "digital-signature"))]
-            Error::_Pkcs12Parse => unreachable!(),
             #[cfg(feature = "digital-signature")]
             Error::SignatureFailed(msg) => write!(f, "signature failed: {}", msg),
-            #[cfg(not(feature = "digital-signature"))]
-            Error::_SignatureFailed => unreachable!(),
         }
     }
 }

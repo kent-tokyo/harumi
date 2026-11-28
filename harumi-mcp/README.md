@@ -50,8 +50,12 @@ crate. Prefer the MCP client's tool schema over copied examples in this document
 
 ## Response and errors
 
-Successful responses contain `success: true` and a `result` object. Failures contain
-`success: false`, an error code, and a message. Common codes are:
+Each `tools/call` returns a standard MCP result: one `text` content block holding
+a JSON payload, with `isError` set on failure. Successful payloads contain
+`success: true` and a `result` object. Failures contain `success: false`, an
+error `code`, and an `error` message. Protocol-level problems (malformed JSON,
+unknown method or tool) are returned as JSON-RPC error objects instead, and
+notifications receive no response. Common tool error codes are:
 
 `INVALID_PARAMS`, `FILE_READ_ERROR`, `INVALID_PDF`, `NO_PAGES`,
 `PAGE_OUT_OF_BOUNDS`, and `EXTRACTION_ERROR`.
