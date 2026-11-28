@@ -2,14 +2,40 @@
 //!
 //! This module provides functionality to create PKCS#7/CMS signatures for PDF documents.
 //! Requires the `digital-signature` feature.
+//!
+//! Signatures are built with the RustCrypto crates (`cms`, `x509-cert`, `rsa`):
+//! the CMS `SignedData` is detached (`adbe.pkcs7.detached`), carries the signing
+//! certificate, and signs a set of signed attributes (content type, message digest
+//! and, where a clock is available, signing time) with RSA PKCS#1 v1.5 / SHA-256.
 
 #[cfg(feature = "digital-signature")]
 pub mod inner {
     use crate::Result;
+    use der::asn1::{ObjectIdentifier, OctetString, SetOfVec};
+    use der::{Any, Decode, Encode};
     use pkcs1::DecodeRsaPrivateKey;
     use pkcs8::DecodePrivateKey;
-    use rsa::RsaPrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
     use sha2::{Digest, Sha256};
+    use x509_cert::Certificate;
+    use x509_cert::der::DecodePem;
+
+    pub(crate) const OID_DATA: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+    pub(crate) const OID_SIGNED_DATA: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
+    pub(crate) const OID_CONTENT_TYPE: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
+    pub(crate) const OID_MESSAGE_DIGEST: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
+    pub(crate) const OID_SIGNING_TIME: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
+    pub(crate) const OID_SHA256: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+    pub(crate) const OID_RSA_ENCRYPTION: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+    pub(crate) const OID_COMMON_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
 
     /// Input format for X.509 certificates.
     pub enum CertificateInput {
@@ -35,46 +61,70 @@ pub mod inner {
         pub reason: Option<String>,
         /// Contact information (stored in `/ContactInfo`).
         pub contact_info: Option<String>,
-        /// Whether to lock the document after signing.
+        /// Reserved for certification (DocMDP) signatures. Currently not applied.
         pub lock_permissions: bool,
     }
 
     /// Context for signing PDF documents.
     pub struct SigningContext {
         cert_der: Vec<u8>,
+        certificate: Certificate,
         private_key: RsaPrivateKey,
         signer_name: String,
     }
 
     impl SigningContext {
         /// Create a signing context from a certificate and private key.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::InvalidCertificate`](crate::Error::InvalidCertificate) if the
+        ///   certificate cannot be parsed or does not hold an RSA public key.
+        /// - [`Error::InvalidPrivateKey`](crate::Error::InvalidPrivateKey) if the key cannot
+        ///   be parsed or does not match the certificate's public key.
         pub fn from_cert_and_key(cert: CertificateInput, key: PrivateKeyInput) -> Result<Self> {
-            let cert_der = match cert {
-                CertificateInput::Pem(pem_bytes) => parse_pem_to_der(&pem_bytes, "CERTIFICATE")?,
-                CertificateInput::Der(der_bytes) => der_bytes,
-            };
+            let certificate = match &cert {
+                CertificateInput::Pem(pem) => Certificate::from_pem(pem),
+                CertificateInput::Der(der) => Certificate::from_der(der),
+            }
+            .map_err(|e| crate::Error::InvalidCertificate(e.to_string()))?;
+            let cert_der = certificate
+                .to_der()
+                .map_err(|e| crate::Error::InvalidCertificate(e.to_string()))?;
 
-            let key_der = match key {
-                PrivateKeyInput::Pem(pem_bytes) => parse_pem_to_der(&pem_bytes, "PRIVATE KEY")
-                    .or_else(|_| parse_pem_to_der(&pem_bytes, "RSA PRIVATE KEY"))?,
-                PrivateKeyInput::Der(der_bytes) => der_bytes,
-            };
+            let private_key = match &key {
+                PrivateKeyInput::Pem(pem) => {
+                    let pem = std::str::from_utf8(pem)
+                        .map_err(|e| crate::Error::InvalidPrivateKey(e.to_string()))?;
+                    RsaPrivateKey::from_pkcs8_pem(pem)
+                        .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem))
+                }
+                PrivateKeyInput::Der(der) => RsaPrivateKey::from_pkcs8_der(der)
+                    .or_else(|_| RsaPrivateKey::from_pkcs1_der(der)),
+            }
+            .map_err(|e| crate::Error::InvalidPrivateKey(e.to_string()))?;
 
-            let signer_name = extract_subject_cn_from_der(&cert_der)
-                .unwrap_or_else(|| "Unknown Signer".to_string());
+            let cert_key = rsa_public_key_from_cert(&certificate).ok_or_else(|| {
+                crate::Error::InvalidCertificate("certificate does not hold an RSA key".into())
+            })?;
+            if cert_key != private_key.to_public_key() {
+                return Err(crate::Error::InvalidPrivateKey(
+                    "private key does not match the certificate's public key".into(),
+                ));
+            }
 
-            let private_key = RsaPrivateKey::from_pkcs8_der(&key_der)
-                .or_else(|_| RsaPrivateKey::from_pkcs1_der(&key_der))
-                .map_err(|e| crate::Error::InvalidPrivateKey(format!("{}", e)))?;
+            let signer_name =
+                subject_common_name(&certificate).unwrap_or_else(|| "Unknown Signer".to_string());
 
             Ok(SigningContext {
                 cert_der,
+                certificate,
                 private_key,
                 signer_name,
             })
         }
 
-        /// Get the signer's name.
+        /// Get the signer's name (the certificate subject's common name).
         pub fn signer_name(&self) -> &str {
             &self.signer_name
         }
@@ -90,244 +140,201 @@ pub mod inner {
         }
     }
 
-    /// Parse PEM format to DER.
-    fn parse_pem_to_der(pem_bytes: &[u8], block_name: &str) -> Result<Vec<u8>> {
-        let pem_str = std::str::from_utf8(pem_bytes)
-            .map_err(|e| crate::Error::InvalidCertificate(format!("Invalid UTF-8: {}", e)))?;
-
-        let begin = format!("-----BEGIN {}-----", block_name);
-        let end = format!("-----END {}-----", block_name);
-
-        let start_idx = pem_str.find(&begin).ok_or_else(|| {
-            crate::Error::InvalidCertificate(format!("No {} block found in PEM", block_name))
-        })?;
-
-        let end_idx = pem_str.find(&end).ok_or_else(|| {
-            crate::Error::InvalidCertificate(format!("No {} block found in PEM", block_name))
-        })?;
-
-        let content = &pem_str[start_idx + begin.len()..end_idx];
-        let base64_str = content
-            .lines()
-            .map(|line| line.trim())
-            .filter(|line| !line.is_empty())
-            .collect::<String>();
-
-        base64_decode(&base64_str)
+    /// Extract the RSA public key from a certificate's SubjectPublicKeyInfo.
+    pub(crate) fn rsa_public_key_from_cert(cert: &Certificate) -> Option<RsaPublicKey> {
+        use pkcs8::DecodePublicKey;
+        let spki = cert.tbs_certificate.subject_public_key_info.to_der().ok()?;
+        RsaPublicKey::from_public_key_der(&spki).ok()
     }
 
-    /// Simple base64 decoder.
-    fn base64_decode(input: &str) -> Result<Vec<u8>> {
-        const BASE64_CHARS: &str =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-        let mut result = Vec::new();
-        let input: String = input
-            .chars()
-            .filter(|c| !matches!(c, '\n' | '\r' | ' '))
-            .collect();
-
-        for chunk in input.as_bytes().chunks(4) {
-            if chunk.len() < 2 {
-                continue;
-            }
-
-            let b1 = BASE64_CHARS
-                .find(chunk[0] as char)
-                .ok_or_else(|| crate::Error::InvalidCertificate("Invalid base64 char".into()))?
-                as u8;
-
-            let b2 = BASE64_CHARS
-                .find(chunk[1] as char)
-                .ok_or_else(|| crate::Error::InvalidCertificate("Invalid base64 char".into()))?
-                as u8;
-
-            result.push((b1 << 2) | (b2 >> 4));
-
-            if chunk.len() > 2 && chunk[2] as char != '=' {
-                let b3 = BASE64_CHARS
-                    .find(chunk[2] as char)
-                    .ok_or_else(|| crate::Error::InvalidCertificate("Invalid base64 char".into()))?
-                    as u8;
-
-                result.push((b2 << 4) | (b3 >> 2));
-
-                if chunk.len() > 3 && chunk[3] as char != '=' {
-                    let b4 = BASE64_CHARS.find(chunk[3] as char).ok_or_else(|| {
-                        crate::Error::InvalidCertificate("Invalid base64 char".into())
-                    })? as u8;
-
-                    result.push((b3 << 6) | b4);
-                }
-            }
-        }
-
-        Ok(result)
+    /// Return the subject common name (CN) of a certificate, if present.
+    pub(crate) fn subject_common_name(cert: &Certificate) -> Option<String> {
+        cert.tbs_certificate
+            .subject
+            .0
+            .iter()
+            .flat_map(|rdn| rdn.0.iter())
+            .find(|atv| atv.oid == OID_COMMON_NAME)
+            .and_then(|atv| {
+                atv.value
+                    .decode_as::<der::asn1::Utf8StringRef<'_>>()
+                    .map(|s| s.to_string())
+                    .or_else(|_| {
+                        atv.value
+                            .decode_as::<der::asn1::PrintableStringRef<'_>>()
+                            .map(|s| s.to_string())
+                    })
+                    .ok()
+            })
     }
 
-    /// Extract CN (Common Name) from X.509 DER certificate.
-    /// Simple parsing without full X.509 library dependency.
-    fn extract_subject_cn_from_der(der_bytes: &[u8]) -> Option<String> {
-        // Very basic DER parsing for CN extraction
-        // In production, use x509-cert crate, but this is a fallback
-        let cn_oid = &[0x06, 0x03, 0x55, 0x04, 0x03]; // 2.5.4.3 (CN OID)
-
-        // The OID is immediately followed by the value's tag (offset +5),
-        // its length (offset +6), and then the UTF-8/printable bytes.
-        let pos = find_subsequence(der_bytes, cn_oid)?;
-        if pos + 6 >= der_bytes.len() {
-            return None;
-        }
-
-        // Only UTF8String (0x0C) and PrintableString (0x13) carry a CN here.
-        let tag = der_bytes[pos + 5];
-        if tag != 0x13 && tag != 0x0C {
-            return None;
-        }
-
-        let len = der_bytes[pos + 6] as usize;
-        let value = der_bytes.get(pos + 7..pos + 7 + len)?;
-        std::str::from_utf8(value).ok().map(str::to_string)
-    }
-
-    /// Find a subsequence in a byte array.
-    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack.windows(needle.len()).position(|w| w == needle)
-    }
-
-    /// Hash the PDF content using SHA-256.
-    /// Per PDF spec ISO 32000-2, the signature hash is calculated over the ByteRange only:
-    /// - bytes [0, start2) and bytes [start2 + length2, EOF)
+    /// SHA-256 over the two ByteRange segments `[start1, start1+len1)` and
+    /// `[start2, start2+len2)`.
     ///
-    /// The /Contents placeholder itself (between start2 and length2) is excluded.
+    /// Returns `None` when a segment lies outside `content`.
+    pub(crate) fn digest_byte_range(content: &[u8], byte_range: [usize; 4]) -> Option<Vec<u8>> {
+        let [s1, l1, s2, l2] = byte_range;
+        let seg1 = content.get(s1..s1.checked_add(l1)?)?;
+        let seg2 = content.get(s2..s2.checked_add(l2)?)?;
+        let mut hasher = Sha256::new();
+        hasher.update(seg1);
+        hasher.update(seg2);
+        Some(hasher.finalize().to_vec())
+    }
+
+    fn attribute(oid: ObjectIdentifier, value: Any) -> Result<x509_cert::attr::Attribute> {
+        let mut values = SetOfVec::new();
+        values
+            .insert(value)
+            .map_err(|e| crate::Error::SignatureFailed(e.to_string()))?;
+        Ok(x509_cert::attr::Attribute { oid, values })
+    }
+
+    fn der_err(e: der::Error) -> crate::Error {
+        crate::Error::SignatureFailed(e.to_string())
+    }
+
+    /// Build a detached CMS `SignedData` (DER) over `content_digest` (SHA-256).
+    pub(crate) fn build_cms_signed_data(
+        context: &SigningContext,
+        content_digest: &[u8],
+        signing_time: Option<der::DateTime>,
+    ) -> Result<Vec<u8>> {
+        use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
+        use cms::content_info::{CmsVersion, ContentInfo};
+        use cms::signed_data::{
+            EncapsulatedContentInfo, SignatureValue, SignedAttributes, SignedData,
+            SignerIdentifier, SignerInfo, SignerInfos,
+        };
+        use spki::AlgorithmIdentifierOwned;
+
+        let sha256 = AlgorithmIdentifierOwned {
+            oid: OID_SHA256,
+            parameters: None,
+        };
+
+        let mut attrs = vec![
+            attribute(
+                OID_CONTENT_TYPE,
+                Any::encode_from(&OID_DATA).map_err(der_err)?,
+            )?,
+            attribute(
+                OID_MESSAGE_DIGEST,
+                Any::encode_from(&OctetString::new(content_digest).map_err(der_err)?)
+                    .map_err(der_err)?,
+            )?,
+        ];
+        if let Some(dt) = signing_time {
+            let time = x509_cert::time::Time::UtcTime(
+                der::asn1::UtcTime::from_date_time(dt).map_err(der_err)?,
+            );
+            attrs.push(attribute(
+                OID_SIGNING_TIME,
+                Any::encode_from(&time).map_err(der_err)?,
+            )?);
+        }
+        let signed_attrs = SignedAttributes::try_from(attrs).map_err(der_err)?;
+
+        // RFC 5652 §5.4: the signature covers the DER encoding of the signed
+        // attributes as a SET OF (tag 0x31), not the [0] IMPLICIT form.
+        let signed_attrs_der = signed_attrs.to_der().map_err(der_err)?;
+        let attrs_digest = Sha256::digest(&signed_attrs_der);
+        let signature = context
+            .private_key
+            .sign_with_rng(
+                &mut rand::thread_rng(),
+                Pkcs1v15Sign::new::<Sha256>(),
+                &attrs_digest,
+            )
+            .map_err(|e| crate::Error::SignatureFailed(e.to_string()))?;
+        debug_assert_eq!(signature.len(), context.private_key.size());
+
+        let tbs = &context.certificate.tbs_certificate;
+        let signer_info = SignerInfo {
+            version: CmsVersion::V1,
+            sid: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+                issuer: tbs.issuer.clone(),
+                serial_number: tbs.serial_number.clone(),
+            }),
+            digest_alg: sha256.clone(),
+            signed_attrs: Some(signed_attrs),
+            signature_algorithm: AlgorithmIdentifierOwned {
+                oid: OID_RSA_ENCRYPTION,
+                parameters: Some(der::asn1::Null.into()),
+            },
+            signature: SignatureValue::new(signature).map_err(der_err)?,
+            unsigned_attrs: None,
+        };
+
+        let mut signer_infos = SetOfVec::new();
+        signer_infos.insert(signer_info).map_err(der_err)?;
+        let mut digest_algorithms = SetOfVec::new();
+        digest_algorithms.insert(sha256).map_err(der_err)?;
+        let mut certificates = SetOfVec::new();
+        certificates
+            .insert(CertificateChoices::Certificate(context.certificate.clone()))
+            .map_err(der_err)?;
+
+        let signed_data = SignedData {
+            version: CmsVersion::V1,
+            digest_algorithms,
+            encap_content_info: EncapsulatedContentInfo {
+                econtent_type: OID_DATA,
+                econtent: None,
+            },
+            certificates: Some(certificates.into()),
+            crls: None,
+            signer_infos: SignerInfos::from(signer_infos),
+        };
+
+        ContentInfo {
+            content_type: OID_SIGNED_DATA,
+            content: Any::encode_from(&signed_data).map_err(der_err)?,
+        }
+        .to_der()
+        .map_err(der_err)
+    }
+
+    /// Hash the PDF content using SHA-256 over a ByteRange.
+    ///
+    /// Segments that fall outside `content` are skipped.
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn hash_pdf_content_with_byte_range(content: &[u8], byte_range: [u32; 4]) -> Vec<u8> {
         let mut hasher = Sha256::new();
-        let start1 = byte_range[0] as usize;
-        let length1 = byte_range[1] as usize;
-        let start2 = byte_range[2] as usize;
-        let length2 = byte_range[3] as usize;
-
-        // Hash [start1, start1 + length1)
-        if start1 + length1 <= content.len() {
-            hasher.update(&content[start1..start1 + length1]);
+        let [s1, l1, s2, l2] = byte_range.map(|v| v as usize);
+        if let Some(seg) = content.get(s1..s1.saturating_add(l1)) {
+            hasher.update(seg);
         }
-
-        // Hash [start2, start2 + length2)
-        if start2 + length2 <= content.len() {
-            hasher.update(&content[start2..start2 + length2]);
+        if let Some(seg) = content.get(s2..s2.saturating_add(l2)) {
+            hasher.update(seg);
         }
-
         hasher.finalize().to_vec()
     }
 
-    /// Hash the PDF content using SHA-256.
-    /// NOTE: This hashes the entire PDF. For proper signature verification,
-    /// use `hash_pdf_content_with_byte_range` after the ByteRange is known.
+    /// Hash the whole PDF content using SHA-256.
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn hash_pdf_content(content: &[u8]) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        hasher.finalize().to_vec()
+        Sha256::digest(content).to_vec()
     }
 
-    /// Create an RSA signature using PKCS#1 v1.5 with SHA-256 digest info.
+    /// Create an RSA PKCS#1 v1.5 signature over a SHA-256 `hash` (with blinding).
+    ///
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn sign_hash(private_key: &RsaPrivateKey, hash: &[u8]) -> Result<Vec<u8>> {
-        use num_bigint::BigUint;
-        use rsa::traits::{PrivateKeyParts, PublicKeyParts};
-
-        // Build DigestInfo with SHA-256 OID and hash
-        let sha256_oid = vec![0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
-
-        // AlgorithmIdentifier SEQUENCE for SHA-256
-        let mut alg_id = vec![0x30]; // SEQUENCE tag
-        let alg_content_len = 2 + sha256_oid.len() + 2;
-        encode_der_length(&mut alg_id, alg_content_len);
-        alg_id.push(0x06); // OID tag
-        encode_der_length(&mut alg_id, sha256_oid.len());
-        alg_id.extend_from_slice(&sha256_oid);
-        alg_id.push(0x05); // NULL tag
-        alg_id.push(0x00);
-
-        // DigestInfo SEQUENCE
-        let mut digest_info = vec![0x30]; // SEQUENCE tag
-        let digest_info_content_len = alg_id.len() + 2 + hash.len();
-        encode_der_length(&mut digest_info, digest_info_content_len);
-        digest_info.extend_from_slice(&alg_id);
-        digest_info.push(0x04); // OCTET STRING tag
-        encode_der_length(&mut digest_info, hash.len());
-        digest_info.extend_from_slice(hash);
-
-        // Apply PKCS#1 v1.5 signature padding
-        let modulus_size = private_key.size();
-        let padded = build_pkcs1v15_signature_padding(&digest_info, modulus_size)?;
-
-        // Perform RSA operation: signature = padded_message^d mod n
-        let m = BigUint::from_bytes_be(&padded);
-        let d = BigUint::from_bytes_be(&private_key.d().to_bytes_be());
-        let n = BigUint::from_bytes_be(&private_key.n().to_bytes_be());
-
-        let signature_int = m.modpow(&d, &n);
-
-        // Convert back to bytes, padding with zeros to match modulus size
-        let mut signature = signature_int.to_bytes_be();
-        if signature.len() < modulus_size {
-            let mut padded_sig = vec![0u8; modulus_size - signature.len()];
-            padded_sig.extend_from_slice(&signature);
-            signature = padded_sig;
-        }
-
-        Ok(signature)
+        private_key
+            .sign_with_rng(&mut rand::thread_rng(), Pkcs1v15Sign::new::<Sha256>(), hash)
+            .map_err(|e| crate::Error::SignatureFailed(e.to_string()))
     }
 
-    /// Build PKCS#1 v1.5 signature padding.
-    /// Format: 0x00 || 0x01 || PS || 0x00 || DigestInfo
-    /// where PS is 0xFF bytes (padding string)
-    fn build_pkcs1v15_signature_padding(
-        digest_info: &[u8],
-        modulus_size: usize,
-    ) -> Result<Vec<u8>> {
-        if digest_info.len() + 11 > modulus_size {
-            return Err(crate::Error::SignatureFailed(
-                "Digest too large for PKCS#1 v1.5 padding".into(),
-            ));
-        }
-
-        let mut padded = Vec::with_capacity(modulus_size);
-        padded.push(0x00);
-        padded.push(0x01);
-
-        // Padding string: 0xFF bytes
-        let ps_len = modulus_size - digest_info.len() - 3;
-        padded.extend(std::iter::repeat_n(0xFF, ps_len));
-
-        padded.push(0x00); // Separator
-        padded.extend_from_slice(digest_info);
-
-        Ok(padded)
-    }
-
-    /// Encode a length value in DER format.
-    /// Supports both short form (length < 128) and long form (multi-byte).
-    fn encode_der_length(result: &mut Vec<u8>, len: usize) {
-        if len < 128 {
-            result.push(len as u8);
-        } else {
-            let be = len.to_be_bytes();
-            let significant = &be[be.iter().take_while(|&&b| b == 0).count()..];
-            result.push(0x80 | significant.len() as u8);
-            result.extend_from_slice(significant);
-        }
-    }
-
-    /// Calculate PDF signature ByteRange [0, X, Y, Z]
+    /// Calculate a PDF signature ByteRange `[0, X, Y, Z]`.
     ///
-    /// Per PDF spec ISO 32000-2, ByteRange is [start1, length1, start2, length2]:
-    /// - start1=0, length1=bytes before /Contents hex placeholder
-    /// - start2=bytes at which hex placeholder starts, length2=bytes after placeholder
-    ///
-    /// For PDF incremental update with signature:
-    /// - [0, X] = bytes before /Contents hex placeholder
-    /// - [X, Y] = length of hex placeholder (2 × DER signature size)
-    /// - [Y, Z] = remaining bytes after placeholder (xref + trailer)
+    /// Kept for compatibility; [`Document::sign_document`](crate::Document::sign_document)
+    /// no longer uses it.
     pub fn calculate_byte_range(
         pre_contents_offset: u32,
         hex_string_length: u32,
@@ -338,14 +345,11 @@ pub mod inner {
                 "ByteRange offset and length must be > 0".into(),
             ));
         }
-
-        // ByteRange format: [start1, length1, start2, length2]
-        let start1 = 0;
-        let length1 = pre_contents_offset;
-        let start2 = pre_contents_offset + hex_string_length;
-        let length2 = total_pdf_size - start2;
-
-        Ok([start1, length1, start2, length2])
+        let start2 = pre_contents_offset
+            .checked_add(hex_string_length)
+            .filter(|s| *s <= total_pdf_size)
+            .ok_or_else(|| crate::Error::InvalidInput("ByteRange exceeds PDF size".into()))?;
+        Ok([0, pre_contents_offset, start2, total_pdf_size - start2])
     }
 }
 

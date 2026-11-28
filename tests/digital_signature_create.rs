@@ -105,3 +105,103 @@ fn test_sign_document_with_content() {
     assert!(signed_bytes.len() > 1000); // Should have substantial content
     assert!(signed_bytes.starts_with(b"%PDF"));
 }
+
+fn sign_simple(field: &str) -> Vec<u8> {
+    let mut doc = Document::new((612.0, 792.0)).expect("Create document");
+    let options = SignatureFieldOptions {
+        field_name: field.into(),
+        reason: Some("Approval".into()),
+        contact_info: None,
+        lock_permissions: false,
+    };
+    doc.add_signature_field(1, [50.0, 600.0, 200.0, 50.0], &options)
+        .expect("Add signature field");
+    let (cert_der, key_der) = generate_test_cert_and_key();
+    let ctx = SigningContext::from_cert_and_key(
+        CertificateInput::Der(cert_der),
+        PrivateKeyInput::Der(key_der),
+    )
+    .expect("Create signing context");
+    doc.sign_document(&ctx, field).expect("Sign document")
+}
+
+#[test]
+fn signed_document_keeps_pages_and_verifies() {
+    let signed = sign_simple("Sig1");
+
+    let doc = Document::from_bytes(&signed).expect("Reopen signed PDF");
+    assert_eq!(doc.page_count(), 1, "signing must not break the page tree");
+
+    let sigs = doc.verify_signatures(&signed).expect("Verify");
+    assert_eq!(sigs.len(), 1);
+    assert_eq!(sigs[0].field_name, "Sig1");
+    assert_eq!(sigs[0].reason.as_deref(), Some("Approval"));
+    assert!(sigs[0].signer_name.is_some());
+    assert!(sigs[0].signing_time.is_some());
+    assert!(sigs[0].is_valid, "freshly signed PDF must verify");
+}
+
+#[test]
+fn byte_range_excludes_exactly_the_contents_string() {
+    let signed = sign_simple("Sig1");
+    let doc = lopdf::Document::load_mem(&signed).expect("load");
+    let range: Vec<usize> = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .find_map(|d| d.get(b"ByteRange").ok())
+        .and_then(|r| r.as_array().ok())
+        .expect("ByteRange")
+        .iter()
+        .map(|o| o.as_i64().unwrap() as usize)
+        .collect();
+    assert_eq!(range[0], 0);
+    assert_eq!(signed[range[1]], b'<');
+    assert_eq!(signed[range[2] - 1], b'>');
+    assert_eq!(range[2] + range[3], signed.len());
+}
+
+#[test]
+fn tampered_document_fails_verification() {
+    let mut signed = sign_simple("Sig1");
+    // Flip a byte inside the signed range (the PDF header comment).
+    signed[5] = if signed[5] == b'1' { b'2' } else { b'1' };
+    let doc = Document::from_bytes(&signed).expect("Reopen");
+    let sigs = doc.verify_signatures(&signed).expect("Verify");
+    assert_eq!(sigs.len(), 1);
+    assert!(
+        !sigs[0].is_valid,
+        "modified bytes must invalidate the signature"
+    );
+}
+
+#[test]
+fn appended_bytes_fail_verification() {
+    let mut signed = sign_simple("Sig1");
+    signed.extend_from_slice(b"\n% appended after signing\n");
+    let doc = Document::from_bytes(&signed).expect("Reopen");
+    let sigs = doc.verify_signatures(&signed).expect("Verify");
+    assert!(
+        !sigs[0].is_valid,
+        "bytes outside the ByteRange must be detected"
+    );
+}
+
+#[test]
+fn signing_unknown_field_is_an_error() {
+    let mut doc = Document::new((612.0, 792.0)).expect("Create document");
+    let (cert_der, key_der) = generate_test_cert_and_key();
+    let ctx = SigningContext::from_cert_and_key(
+        CertificateInput::Der(cert_der),
+        PrivateKeyInput::Der(key_der),
+    )
+    .expect("Create signing context");
+    assert!(doc.sign_document(&ctx, "Missing").is_err());
+}
+
+#[test]
+fn signed_pdf_written_for_external_check() {
+    if let Ok(path) = std::env::var("HARUMI_SIGNED_PDF_OUT") {
+        std::fs::write(path, sign_simple("Sig1")).unwrap();
+    }
+}

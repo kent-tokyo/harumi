@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+- Rebuild digital signatures on the RustCrypto `cms`, `x509-cert` and `rsa`
+  crates. `sign_document` previously overwrote object `1 0` (leaving signed PDFs
+  with no pages), wrote a `/ByteRange` that did not match `/Contents`, hashed the
+  wrong bytes and used a fixed signing time; it now writes a detached CMS
+  `SignedData` with signed attributes over the real `/ByteRange` (validated with
+  poppler's `pdfsig`), using RSA blinding instead of a hand-rolled `modpow`.
+- `verify_signatures` now parses CMS/X.509 properly, checks `messageDigest`,
+  rejects ranges that do not cover the whole file, and documents that the
+  signer certificate is not checked against a trust anchor.
+- `SigningContext::from_cert_and_key` rejects a key that does not match the
+  certificate. The test certificate fixture was an unrelated ECDSA certificate
+  and is replaced by one for the RSA test key.
+- The old public helpers `sign_hash`, `hash_pdf_content`,
+  `hash_pdf_content_with_byte_range` and `calculate_byte_range` are kept for
+  compatibility but are no longer used by `sign_document`; `sign_hash` now
+  uses the `rsa` crate with blinding.
+
 ## [1.23.8] — 2026-10-26
 
 - Inherit presentation attributes and inline styles from the root `<svg>` element.

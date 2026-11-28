@@ -24,11 +24,19 @@ fn dict_string(dict: &Dictionary, key: &[u8]) -> Option<String> {
 pub struct SignatureInfo {
     /// The signature field name (from `/T` in the signature dictionary).
     pub field_name: String,
-    /// Signer name extracted from the certificate's CN attribute, if available.
+    /// Signer name from the signature's `/Name` entry, or else the signing
+    /// certificate's subject common name (CN), if available.
     pub signer_name: Option<String>,
-    /// Signing time from the signature or CMS metadata, if available.
+    /// Signing time from the signature dictionary's `/M` entry, if available.
     pub signing_time: Option<String>,
-    /// Whether the signature is valid (hash matches + certificate chain validates).
+    /// Whether the signature is cryptographically valid: the `/ByteRange` covers the
+    /// whole file except `/Contents`, its SHA-256 digest matches the signed
+    /// `messageDigest`, and the RSA PKCS#1 v1.5 signature verifies against the
+    /// certificate embedded in the CMS blob.
+    ///
+    /// The certificate itself is **not** checked against any trust anchor,
+    /// revocation list or validity period; callers that need signer trust must
+    /// validate the certificate chain separately.
     pub is_valid: bool,
     /// Reason for signing, from the `/Reason` field if present.
     pub reason: Option<String>,
@@ -116,302 +124,153 @@ impl Document {
     }
 
     /// Extracts signature information from a signature field dictionary.
-    /// v1.2.2: Implements cryptographic validation with ByteRange hashing
     fn extract_signature_info(
         &self,
         field: &Dictionary,
         pdf_bytes: &[u8],
     ) -> Option<SignatureInfo> {
         let field_name = dict_string(field, b"T").unwrap_or_else(|| "unknown".to_string());
-        let reason = dict_string(field, b"Reason");
-        let signing_time = dict_string(field, b"M");
 
         // Resolve the signature dictionary referenced by /V.
         let sig_dict_ref = field.get(b"V").ok()?.as_reference().ok()?;
         let sig_dict = self.inner.get_object(sig_dict_ref).ok()?.as_dict().ok()?;
 
-        // Extract the hex-encoded /Contents
-        let contents_hex = dict_string(sig_dict, b"Contents")?;
+        let reason = dict_string(sig_dict, b"Reason").or_else(|| dict_string(field, b"Reason"));
+        let signing_time = dict_string(sig_dict, b"M");
 
-        // Validate and extract /ByteRange
-        let byte_range = match sig_dict.get(b"ByteRange") {
-            Ok(Object::Array(arr)) => arr
-                .iter()
-                .filter_map(|obj| obj.as_i64().ok().map(|n| n as u32))
-                .collect::<Vec<u32>>(),
+        // lopdf has already decoded the hex string into raw DER bytes.
+        let contents = match sig_dict.get(b"Contents") {
+            Ok(Object::String(bytes, _)) => bytes.as_slice(),
             _ => return None,
         };
-        if byte_range.len() != 4 || byte_range[0] != 0 {
-            return None;
-        }
 
-        // Extract signer name from /Name field if present
-        let signer_name =
-            dict_string(sig_dict, b"Name").or_else(|| Some(format!("Signed by {}", field_name)));
+        let byte_range = match sig_dict.get(b"ByteRange") {
+            Ok(Object::Array(arr)) if arr.len() == 4 => {
+                let mut out = [0usize; 4];
+                for (slot, obj) in out.iter_mut().zip(arr) {
+                    *slot = usize::try_from(obj.as_i64().ok()?).ok()?;
+                }
+                out
+            }
+            _ => return None,
+        };
 
-        // Verify the signature cryptographically
-        let is_valid = self.verify_signature_crypto(&contents_hex, &byte_range, pdf_bytes);
+        let verification = verify_cms(contents, byte_range, pdf_bytes);
+        let signer_name = dict_string(sig_dict, b"Name")
+            .or_else(|| verification.as_ref().and_then(|v| v.signer_name.clone()));
 
         Some(SignatureInfo {
             field_name,
             signer_name,
             signing_time,
-            is_valid,
+            is_valid: verification.is_some_and(|v| v.is_valid),
             reason,
         })
     }
-
-    /// Verifies a signature cryptographically using RSA and ByteRange validation.
-    /// Returns true if the signature is valid, false otherwise.
-    #[cfg(feature = "digital-signature")]
-    fn verify_signature_crypto(
-        &self,
-        contents_hex: &str,
-        byte_range: &[u32],
-        pdf_bytes: &[u8],
-    ) -> bool {
-        use num_bigint::BigUint;
-
-        // Convert hex-encoded contents to bytes
-        let cms_bytes = match hex_to_bytes(contents_hex) {
-            Some(b) => b,
-            None => return false,
-        };
-
-        // Calculate hash over ByteRange areas per PDF spec
-        let hash = hash_pdf_byte_range(pdf_bytes, byte_range);
-
-        // Extract signature and certificate from PKCS#7 structure
-        let (signature_bytes, cert_der) = match extract_signature_and_cert_from_pkcs7(&cms_bytes) {
-            Some((sig, cert)) => (sig, cert),
-            None => return false,
-        };
-
-        // Parse certificate to extract public key (simplified - extract RSA modulus and exponent)
-        let (n_bytes, e_bytes) = match extract_rsa_public_key_from_cert(&cert_der) {
-            Some((n, e)) => (n, e),
-            None => return false,
-        };
-
-        // Construct public key
-        let n = BigUint::from_bytes_be(&n_bytes);
-        let e = BigUint::from_bytes_be(&e_bytes);
-
-        // Build DigestInfo with the hash (same format as signing)
-        let digest_info = build_digest_info_for_verification(&hash);
-
-        // Apply PKCS#1 v1.5 padding to the digest
-        let modulus_size = n.bits().div_ceil(8) as usize;
-        let padded_expected = match build_pkcs1v15_signature_padding(&digest_info, modulus_size) {
-            Some(p) => p,
-            None => return false,
-        };
-
-        // Decrypt the signature using the public key: original = sig^e mod n
-        let sig_int = BigUint::from_bytes_be(&signature_bytes);
-        let decrypted_int = sig_int.modpow(&e, &n);
-
-        // Convert back to bytes and compare with expected padded message
-        let mut decrypted = decrypted_int.to_bytes_be();
-        if decrypted.len() < modulus_size {
-            let mut padded_dec = vec![0u8; modulus_size - decrypted.len()];
-            padded_dec.extend_from_slice(&decrypted);
-            decrypted = padded_dec;
-        }
-
-        decrypted == padded_expected
-    }
-
-    #[cfg(not(feature = "digital-signature"))]
-    fn verify_signature_crypto(
-        &self,
-        _contents_hex: &str,
-        _byte_range: &[u32],
-        _pdf_bytes: &[u8],
-    ) -> bool {
-        false
-    }
 }
 
-/// Convert hex string to bytes
-#[cfg(feature = "digital-signature")]
-fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
-    let hex = hex.trim();
-    if !hex.len().is_multiple_of(2) {
-        return None;
-    }
-
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for chunk in hex.as_bytes().chunks(2) {
-        let hex_str = std::str::from_utf8(chunk).ok()?;
-        let byte = u8::from_str_radix(hex_str, 16).ok()?;
-        bytes.push(byte);
-    }
-    Some(bytes)
+/// Outcome of checking one CMS signature.
+struct CmsVerification {
+    is_valid: bool,
+    signer_name: Option<String>,
 }
 
-/// Hash PDF content according to ByteRange per PDF spec ISO 32000-2
+#[cfg(not(feature = "digital-signature"))]
+fn verify_cms(_contents: &[u8], _byte_range: [usize; 4], _pdf: &[u8]) -> Option<CmsVerification> {
+    None
+}
+
+/// Verify a detached CMS `SignedData` against the PDF bytes covered by `byte_range`.
+///
+/// Returns `None` when the blob cannot be parsed at all.
 #[cfg(feature = "digital-signature")]
-fn hash_pdf_byte_range(pdf_bytes: &[u8], byte_range: &[u32]) -> Vec<u8> {
+fn verify_cms(contents: &[u8], byte_range: [usize; 4], pdf: &[u8]) -> Option<CmsVerification> {
+    use crate::signature_create::inner::{
+        OID_MESSAGE_DIGEST, OID_SHA256, digest_byte_range, rsa_public_key_from_cert,
+        subject_common_name,
+    };
+    use cms::cert::CertificateChoices;
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::{SignedData, SignerIdentifier};
+    use der::{Decode, Encode, SliceReader};
+    use rsa::Pkcs1v15Sign;
     use sha2::{Digest, Sha256};
 
-    let mut hasher = Sha256::new();
+    // /Contents is zero-padded after the DER value: decode exactly one value.
+    let mut reader = SliceReader::new(contents).ok()?;
+    let content_info = ContentInfo::decode(&mut reader).ok()?;
+    let signed_data: SignedData = content_info.content.decode_as().ok()?;
+    let signer = signed_data.signer_infos.0.iter().next()?;
 
-    let start1 = byte_range[0] as usize;
-    let length1 = byte_range[1] as usize;
-    let start2 = byte_range[2] as usize;
-    let length2 = byte_range[3] as usize;
-
-    // Hash [0, start1 + length1)
-    if start1 + length1 <= pdf_bytes.len() {
-        hasher.update(&pdf_bytes[start1..start1 + length1]);
-    }
-
-    // Hash [start2, start2 + length2)
-    if start2 + length2 <= pdf_bytes.len() {
-        hasher.update(&pdf_bytes[start2..start2 + length2]);
-    }
-
-    hasher.finalize().to_vec()
-}
-
-/// Extract signature and certificate from PKCS#7 SignedData structure
-/// For v1.2.2: Simplified parsing - extracts from our known structure
-#[cfg(feature = "digital-signature")]
-fn extract_signature_and_cert_from_pkcs7(cms_bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    // PKCS#7 structure (simplified parsing for our generated format):
-    // SEQUENCE { OID signedData, [0] SignedData }
-    // SignedData { version, digestAlgorithms SET, contentInfo, certs [0], signerInfos SET }
-    // SignerInfo { version, digestAlgorithm, encryptionAlgorithm, encryptedDigest OCTET STRING }
-
-    // For v1.2.2: Extract certificate from [0] and signature from last OCTET STRING
-    // This is a simplified heuristic that works for our generated PKCS#7
-
-    let mut sig_bytes = Vec::new();
-    let mut cert_bytes = Vec::new();
-
-    let mut i = 0;
-    while i < cms_bytes.len() {
-        // Look for certificate marker [0] tag (0xa0)
-        if cms_bytes[i] == 0xa0 && i + 1 < cms_bytes.len() {
-            let cert_len = cms_bytes[i + 1] as usize;
-            if i + 2 + cert_len <= cms_bytes.len() {
-                // Extract certificate data (skip tag and length)
-                cert_bytes = cms_bytes[i + 2..i + 2 + cert_len].to_vec();
-                i += 2 + cert_len;
-                continue;
+    let certificate = signed_data
+        .certificates
+        .as_ref()?
+        .0
+        .iter()
+        .filter_map(|c| match c {
+            CertificateChoices::Certificate(cert) => Some(cert),
+            _ => None,
+        })
+        .find(|cert| match &signer.sid {
+            SignerIdentifier::IssuerAndSerialNumber(ias) => {
+                cert.tbs_certificate.issuer == ias.issuer
+                    && cert.tbs_certificate.serial_number == ias.serial_number
             }
-        }
+            SignerIdentifier::SubjectKeyIdentifier(_) => true,
+        })?;
+    let signer_name = subject_common_name(certificate);
+    let invalid = || {
+        Some(CmsVerification {
+            is_valid: false,
+            signer_name: signer_name.clone(),
+        })
+    };
 
-        // Look for OCTET STRING tags (0x04) that likely contain signature
-        if cms_bytes[i] == 0x04 && i + 1 < cms_bytes.len() {
-            let len = cms_bytes[i + 1] as usize;
-            if i + 2 + len <= cms_bytes.len() && len > 4 {
-                // Only accept substantial OCTET STRINGs (likely the signature)
-                sig_bytes = cms_bytes[i + 2..i + 2 + len].to_vec();
+    // The signed ranges must be in order and cover the whole file except /Contents;
+    // anything appended later would otherwise go unnoticed.
+    let [s1, l1, s2, l2] = byte_range;
+    if s1 != 0 || l1 > s2 || s2.checked_add(l2) != Some(pdf.len()) {
+        return invalid();
+    }
+    if signer.digest_alg.oid != OID_SHA256 {
+        return invalid();
+    }
+    let Some(content_digest) = digest_byte_range(pdf, byte_range) else {
+        return invalid();
+    };
+    let Some(public_key) = rsa_public_key_from_cert(certificate) else {
+        return invalid();
+    };
+
+    let signed_digest = match &signer.signed_attrs {
+        Some(attrs) => {
+            let message_digest = attrs
+                .iter()
+                .find(|a| a.oid == OID_MESSAGE_DIGEST)
+                .and_then(|a| a.values.iter().next())
+                .and_then(|v| v.decode_as::<der::asn1::OctetString>().ok());
+            if message_digest.as_ref().map(|d| d.as_bytes()) != Some(content_digest.as_slice()) {
+                return invalid();
             }
+            let Ok(attrs_der) = attrs.to_der() else {
+                return invalid();
+            };
+            Sha256::digest(&attrs_der).to_vec()
         }
+        None => content_digest,
+    };
 
-        i += 1;
-    }
-
-    if !sig_bytes.is_empty() && !cert_bytes.is_empty() {
-        Some((sig_bytes, cert_bytes))
-    } else {
-        None
-    }
-}
-
-/// Extract RSA public key (n, e) from X.509 certificate DER
-/// For v1.2.2: Simplified parsing - finds SEQUENCE containing modulus and exponent
-#[cfg(feature = "digital-signature")]
-fn extract_rsa_public_key_from_cert(cert_der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    // X.509 structure contains SubjectPublicKeyInfo with RSA key
-    // For v1.2.2: Heuristic search for INTEGER sequences (modulus and exponent)
-
-    let mut integers = Vec::new();
-    let mut i = 0;
-
-    while i < cert_der.len() {
-        if cert_der[i] == 0x02 && i + 1 < cert_der.len() {
-            // INTEGER tag found
-            let len = cert_der[i + 1] as usize;
-            if i + 2 + len <= cert_der.len() && len > 32 {
-                // Extract substantial integers (likely RSA components)
-                integers.push(cert_der[i + 2..i + 2 + len].to_vec());
-                i += 2 + len;
-                continue;
-            }
-        }
-        i += 1;
-    }
-
-    // For RSA, modulus (n) should be first large integer, exponent (e) second
-    if integers.len() >= 2 {
-        Some((integers[0].clone(), integers[1].clone()))
-    } else {
-        None
-    }
-}
-
-/// Build DigestInfo for verification (same format as signing)
-#[cfg(feature = "digital-signature")]
-fn build_digest_info_for_verification(hash: &[u8]) -> Vec<u8> {
-    let sha256_oid = vec![0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
-
-    // AlgorithmIdentifier SEQUENCE
-    let mut alg_id = vec![0x30];
-    let alg_content_len = 2 + sha256_oid.len() + 2;
-    encode_der_length_for_verify(&mut alg_id, alg_content_len);
-    alg_id.push(0x06);
-    encode_der_length_for_verify(&mut alg_id, sha256_oid.len());
-    alg_id.extend_from_slice(&sha256_oid);
-    alg_id.push(0x05);
-    alg_id.push(0x00);
-
-    // DigestInfo SEQUENCE
-    let mut digest_info = vec![0x30];
-    let digest_info_content_len = alg_id.len() + 2 + hash.len();
-    encode_der_length_for_verify(&mut digest_info, digest_info_content_len);
-    digest_info.extend_from_slice(&alg_id);
-    digest_info.push(0x04);
-    encode_der_length_for_verify(&mut digest_info, hash.len());
-    digest_info.extend_from_slice(hash);
-
-    digest_info
-}
-
-/// Encode DER length for verification
-#[cfg(feature = "digital-signature")]
-fn encode_der_length_for_verify(result: &mut Vec<u8>, len: usize) {
-    if len < 128 {
-        result.push(len as u8);
-    } else {
-        let be = len.to_be_bytes();
-        let significant = &be[be.iter().take_while(|&&b| b == 0).count()..];
-        result.push(0x80 | significant.len() as u8);
-        result.extend_from_slice(significant);
-    }
-}
-
-/// Build PKCS#1 v1.5 padding for verification
-#[cfg(feature = "digital-signature")]
-fn build_pkcs1v15_signature_padding(message: &[u8], modulus_size: usize) -> Option<Vec<u8>> {
-    if message.len() + 11 > modulus_size {
-        return None;
-    }
-
-    let mut padded = Vec::with_capacity(modulus_size);
-    padded.push(0x00);
-    padded.push(0x01);
-
-    let ps_len = modulus_size - message.len() - 3;
-    padded.extend(std::iter::repeat_n(0xFF, ps_len));
-
-    padded.push(0x00);
-    padded.extend_from_slice(message);
-
-    Some(padded)
+    let is_valid = public_key
+        .verify(
+            Pkcs1v15Sign::new::<Sha256>(),
+            &signed_digest,
+            signer.signature.as_bytes(),
+        )
+        .is_ok();
+    Some(CmsVerification {
+        is_valid,
+        signer_name,
+    })
 }
 
 #[cfg(test)]

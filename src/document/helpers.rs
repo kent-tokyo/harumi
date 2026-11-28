@@ -1764,6 +1764,46 @@ pub(super) fn inherited_resources(doc: &lopdf::Document, page_id: ObjectId) -> O
     None
 }
 
+/// Current UTC time for signatures, or `None` where no clock is available
+/// (`wasm32-unknown-unknown` has no `SystemTime`).
+#[cfg(feature = "digital-signature")]
+pub(super) fn signing_time_now() -> Option<der::DateTime> {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        None
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        der::DateTime::from_system_time(std::time::SystemTime::now()).ok()
+    }
+}
+
+/// Format a UTC time as a PDF date string (`D:YYYYMMDDHHmmSSZ`).
+#[cfg(feature = "digital-signature")]
+pub(super) fn pdf_date(dt: &der::DateTime) -> String {
+    format!(
+        "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
+        dt.year(),
+        dt.month(),
+        dt.day(),
+        dt.hour(),
+        dt.minutes(),
+        dt.seconds()
+    )
+}
+
+/// Position of `needle` in `haystack` when it occurs exactly once.
+#[cfg(feature = "digital-signature")]
+pub(super) fn find_unique(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let mut hits = haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, w)| *w == needle)
+        .map(|(i, _)| i);
+    let first = hits.next()?;
+    hits.next().is_none().then_some(first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::Document;
