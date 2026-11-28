@@ -29,8 +29,9 @@ jobs:
         with:
           workspaces: wasm-demo
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
 
       - name: Build
         working-directory: wasm-demo
