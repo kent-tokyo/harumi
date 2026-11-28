@@ -36,5 +36,8 @@ ocr-backend = ["dep:ocrs-cjk"]
 name = "translate_pdf"
 required-features = ["anthropic"]
 
+[[example]]
+name = "translate_dict"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

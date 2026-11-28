@@ -336,6 +336,22 @@ pub struct ReplaceOptions {
     /// expands it.  `0 Tc` is automatically restored after the replacement.
     /// `None` (the default) emits no `Tc` operator.
     pub char_spacing_override: Option<f32>,
+    /// Scale the replacement relative to the font size found in the content
+    /// stream (`1.0` = same visual size as the original text).
+    ///
+    /// Unlike [`font_size_override`](Self::font_size_override), which is written
+    /// verbatim as the `Tf` operand, this is correct when the PDF scales text
+    /// through the text matrix (e.g. `10 0 0 10 x y Tm` with `/F1 1 Tf`): the
+    /// visual size equals `Tf × Tm scale`, so an absolute override would be
+    /// multiplied by the matrix again.  Takes precedence over
+    /// `font_size_override` when both are set.
+    pub font_scale_override: Option<f32>,
+    /// Character spacing as a fraction of the visual font size (em units).
+    ///
+    /// Converted to text-space `Tc` using the stream font size, so it is
+    /// independent of text-matrix scaling.  Takes precedence over
+    /// `char_spacing_override` when both are set.
+    pub char_spacing_em_override: Option<f32>,
 }
 
 /// Placement options for [`PageHandle::replace_text_fragments_opts`].

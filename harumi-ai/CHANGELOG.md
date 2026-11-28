@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### Fixed — layout preservation
+
+- Form and table rows (label · `：` · value on one baseline) are no longer merged into one
+  translation unit. Wide horizontal gaps and standalone separators split a line into cells,
+  so each cell is translated and placed in its own column instead of being squeezed into
+  the label's width and shrunk to an unreadable size.
+- Each cell may extend only up to the next cell on the same baseline; the last cell may use
+  the free space up to the page's text edge instead of the narrow inferred region.
+- Translated text is never enlarged beyond the source glyph size (the 1.4× heading boost
+  and forced bold for heuristic headings were removed).
+- `InPlace` mode no longer produces giant glyphs on PDFs that scale text through `Tm`
+  (`/F1 1 Tf` + `10 0 0 10 … Tm`); sizes and `Tc` are now passed relative to the source run.
+
+### Added
+
+- `providers::SegmentAdapter` / `SegmentTranslator` for plain-text machine-translation
+  engines (DeepL, Google, Azure, in-house MT). The adapter unpacks the JSON batch protocol
+  into a list of segments and answers layout-correction prompts with no corrections, so the
+  layout is fitted purely by geometry.
+- `translate_dict` example: offline layout test harness that translates from a
+  `replacements.json` dictionary (or a length-realistic pseudo-translation) without an API key.
+
 ## [0.10.1] — 2026-09-06
 
 - Preserved source run color, opacity, bold, and italic boundaries in overlay rendering.
