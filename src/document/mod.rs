@@ -42,6 +42,8 @@ use helpers::{
     inherited_resources, lopdf_string_to_rust, map_lopdf_password_err, pdf_text_string,
     realize_page_inherited_attrs, root_pages_id, wrap_page_contents_in_q_q,
 };
+#[cfg(feature = "digital-signature")]
+use helpers::{find_unique, pdf_date, signing_time_now};
 use types::{EncAlgorithm, PendingBookmark, PendingOp, PendingPage, RawFont};
 
 fn count_content_streams(doc: &lopdf::Document, object: Option<&Object>) -> usize {
@@ -2921,22 +2923,6 @@ impl Document {
         Ok(())
     }
 
-    /// Finalizes and returns the document as an in-memory `Vec<u8>`.
-    ///
-    /// Equivalent to calling [`save_to_writer`](Document::save_to_writer) with a
-    /// `Vec<u8>` buffer. Useful in Tauri commands or any context where writing to
-    /// a file is inconvenient.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use harumi::Document;
-    /// # fn main() -> harumi::Result<()> {
-    /// let mut doc = Document::from_file("input.pdf")?;
-    /// let bytes = doc.save_to_bytes()?;
-    /// // e.g. return bytes from a Tauri command or HTTP handler
-    /// # Ok(())
-    /// # }
-    /// ```
     /// Signs the document with a digital signature (requires `digital-signature` feature).
     ///
     /// The signature is embedded into the specified signature field. The field must have been
@@ -2949,7 +2935,20 @@ impl Document {
     ///
     /// # Returns
     ///
-    /// Signed PDF bytes as a `Vec<u8>`.
+    /// Signed PDF bytes as a `Vec<u8>`. The signature is a detached CMS (PKCS#7)
+    /// `SignedData` with RSA PKCS#1 v1.5 / SHA-256 over the `/ByteRange`, and can
+    /// be checked with [`verify_signatures`](Document::verify_signatures).
+    ///
+    /// The whole document is written out (not as an incremental update), so any
+    /// signature already present in a loaded PDF is invalidated. Like
+    /// [`save`](Document::save), this finalizes the document.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::InvalidInput`] if no signature field named `field_name` exists,
+    ///   the document was already saved, or encryption is pending.
+    /// - [`Error::SignatureFailed`] if signing fails or the CMS blob exceeds the
+    ///   space reserved in `/Contents` (8 KiB).
     ///
     /// # Example
     /// ```no_run
@@ -2984,42 +2983,159 @@ impl Document {
         context: &crate::SigningContext,
         field_name: &str,
     ) -> Result<Vec<u8>> {
-        use crate::cms_builder::CmsSignedDataBuilder;
-        use crate::pdf_incremental::IncrementalUpdateBuilder;
-        use crate::signature_create::inner::{hash_pdf_content, sign_hash};
+        use crate::signature_create::inner::{build_cms_signed_data, digest_byte_range};
+
+        /// Bytes reserved for the DER CMS blob inside `/Contents`.
+        const CONTENTS_CAPACITY: usize = 8192;
+        /// Placeholder ByteRange value; wide enough for any offset harumi can write.
+        const BYTE_RANGE_PLACEHOLDER: i64 = 9_999_999_999;
 
         if self.finalized {
             return Err(Error::InvalidInput(
                 "sign_document() called after save()".into(),
             ));
         }
+        if self.pending_encryption.is_some() {
+            return Err(Error::InvalidInput(
+                "sign_document() cannot be combined with encryption".into(),
+            ));
+        }
 
-        // Phase 5 Implementation (v1.2.1):
-        // 1. Generate base PDF
-        let base_pdf = self.save_to_bytes()?;
+        let sig_id = self.find_signature_value_id(field_name)?;
+        let signing_time = signing_time_now();
 
-        // 2. Hash PDF content for signing
-        let hash = hash_pdf_content(&base_pdf);
+        {
+            let sig = self.inner.get_object_mut(sig_id)?.as_dict_mut()?;
+            sig.set("Type", Object::Name(b"Sig".to_vec()));
+            sig.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
+            sig.set("SubFilter", Object::Name(b"adbe.pkcs7.detached".to_vec()));
+            sig.set(
+                "ByteRange",
+                Object::Array(vec![Object::Integer(BYTE_RANGE_PLACEHOLDER); 4]),
+            );
+            sig.set(
+                "Contents",
+                Object::String(vec![0u8; CONTENTS_CAPACITY], StringFormat::Hexadecimal),
+            );
+            sig.set(
+                "Name",
+                Object::String(
+                    context.signer_name().as_bytes().to_vec(),
+                    StringFormat::Literal,
+                ),
+            );
+            if let Some(dt) = signing_time {
+                sig.set(
+                    "M",
+                    Object::String(pdf_date(&dt).into_bytes(), StringFormat::Literal),
+                );
+            }
+        }
+        // SigFlags: SignaturesExist (1) | AppendOnly (2).
+        let acroform_id = ensure_acroform(&mut self.inner)?;
+        self.inner
+            .get_object_mut(acroform_id)?
+            .as_dict_mut()?
+            .set("SigFlags", Object::Integer(3));
 
-        // 3. Generate RSA signature
-        let sig_bytes = sign_hash(context.private_key(), &hash)?;
+        let mut pdf = self.save_to_bytes()?;
 
-        // 4. Build PKCS#7/CMS SignedData
-        let cms_builder = CmsSignedDataBuilder::new(context.cert_der().to_vec(), sig_bytes, hash);
-        let cms_hex = cms_builder.to_hex_string()?;
+        // Locate the placeholders written by lopdf.
+        let contents_hex = format!("<{}>", "00".repeat(CONTENTS_CAPACITY));
+        let contents_start = find_unique(&pdf, contents_hex.as_bytes()).ok_or_else(|| {
+            Error::SignatureFailed("signature /Contents placeholder not found".into())
+        })?;
+        let contents_end = contents_start + contents_hex.len();
+        let range_placeholder = format!("[{0} {0} {0} {0}]", BYTE_RANGE_PLACEHOLDER);
+        let range_start = find_unique(&pdf, range_placeholder.as_bytes()).ok_or_else(|| {
+            Error::SignatureFailed("signature /ByteRange placeholder not found".into())
+        })?;
 
-        // 5. Build PDF incremental update section with metadata
-        let incremental_builder = IncrementalUpdateBuilder::new(
-            base_pdf,
-            field_name.to_string(),
-            cms_hex,
-            Some(context.signer_name().to_string()),
+        let byte_range = [0, contents_start, contents_end, pdf.len() - contents_end];
+        let mut range_text = format!(
+            "[{} {} {} {}]",
+            byte_range[0], byte_range[1], byte_range[2], byte_range[3]
         );
-        let signed_pdf = incremental_builder.build()?;
+        // Pad inside the brackets so every following byte offset stays the same.
+        let pad = range_placeholder.len() - range_text.len();
+        range_text.insert_str(range_text.len() - 1, &" ".repeat(pad));
+        pdf[range_start..range_start + range_placeholder.len()]
+            .copy_from_slice(range_text.as_bytes());
 
-        Ok(signed_pdf)
+        let digest = digest_byte_range(&pdf, byte_range)
+            .ok_or_else(|| Error::SignatureFailed("ByteRange outside the PDF".into()))?;
+        let cms = build_cms_signed_data(context, &digest, signing_time)?;
+        if cms.len() > CONTENTS_CAPACITY {
+            return Err(Error::SignatureFailed(format!(
+                "CMS signature is {} bytes; at most {} bytes fit in /Contents",
+                cms.len(),
+                CONTENTS_CAPACITY
+            )));
+        }
+        let hex: String = cms.iter().map(|b| format!("{b:02X}")).collect();
+        let hex_start = contents_start + 1;
+        pdf[hex_start..hex_start + hex.len()].copy_from_slice(hex.as_bytes());
+
+        Ok(pdf)
     }
 
+    /// Resolve the `/V` signature dictionary of the signature field named `field_name`,
+    /// creating an empty one when the field has none.
+    #[cfg(feature = "digital-signature")]
+    fn find_signature_value_id(&mut self, field_name: &str) -> Result<ObjectId> {
+        let fields: Vec<ObjectId> = self
+            .inner
+            .catalog()
+            .ok()
+            .and_then(|c| c.get(b"AcroForm").ok())
+            .and_then(|a| self.inner.dereference(a).ok())
+            .and_then(|(_, a)| a.as_dict().ok())
+            .and_then(|a| a.get(b"Fields").ok())
+            .and_then(|f| f.as_array().ok())
+            .map(|arr| arr.iter().filter_map(|o| o.as_reference().ok()).collect())
+            .unwrap_or_default();
+
+        for field_id in fields {
+            let Ok(field) = self.inner.get_dictionary(field_id) else {
+                continue;
+            };
+            let is_sig = matches!(field.get(b"FT"), Ok(Object::Name(n)) if n == b"Sig");
+            let name_matches =
+                matches!(field.get(b"T"), Ok(Object::String(t, _)) if t == field_name.as_bytes());
+            if !(is_sig && name_matches) {
+                continue;
+            }
+            if let Ok(Object::Reference(id)) = field.get(b"V") {
+                return Ok(*id);
+            }
+            let sig_id = self.inner.add_object(Dictionary::new());
+            self.inner
+                .get_object_mut(field_id)?
+                .as_dict_mut()?
+                .set("V", Object::Reference(sig_id));
+            return Ok(sig_id);
+        }
+        Err(Error::InvalidInput(format!(
+            "signature field '{field_name}' not found; call add_signature_field() first"
+        )))
+    }
+
+    /// Finalizes and returns the document as an in-memory `Vec<u8>`.
+    ///
+    /// Equivalent to calling [`save_to_writer`](Document::save_to_writer) with a
+    /// `Vec<u8>` buffer. Useful in Tauri commands or any context where writing to
+    /// a file is inconvenient.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use harumi::Document;
+    /// # fn main() -> harumi::Result<()> {
+    /// let mut doc = Document::from_file("input.pdf")?;
+    /// let bytes = doc.save_to_bytes()?;
+    /// // e.g. return bytes from a Tauri command or HTTP handler
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         self.save_to_writer(&mut buf)?;
