@@ -427,6 +427,8 @@ impl<'doc> PageHandle<'doc> {
                 new_text: new_text.to_owned(),
                 font_size_override: None,
                 char_spacing: None,
+                font_scale: None,
+                char_spacing_em: None,
             }));
         }
         Ok(count)
@@ -473,6 +475,8 @@ impl<'doc> PageHandle<'doc> {
                 new_text: new_text.to_owned(),
                 font_size_override: opts.font_size_override,
                 char_spacing: opts.char_spacing_override,
+                font_scale: opts.font_scale_override,
+                char_spacing_em: opts.char_spacing_em_override,
             }));
         }
         Ok(count)

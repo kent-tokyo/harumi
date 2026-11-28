@@ -3145,6 +3145,8 @@ impl Document {
                 font_idx: u32,
                 font_size_override: Option<f32>,
                 char_spacing: Option<f32>,
+                font_scale: Option<f32>,
+                char_spacing_em: Option<f32>,
             }
             struct ReplaceWork {
                 page_id: ObjectId,
@@ -3165,6 +3167,8 @@ impl Document {
                                     font_idx: r.font.0,
                                     font_size_override: r.font_size_override,
                                     char_spacing: r.char_spacing,
+                                    font_scale: r.font_scale,
+                                    char_spacing_em: r.char_spacing_em,
                                 })
                             } else {
                                 None
@@ -3198,6 +3202,8 @@ impl Document {
                         units_per_em: state.units_per_em,
                         font_size_override: op.font_size_override,
                         char_spacing: op.char_spacing,
+                        font_scale: op.font_scale,
+                        char_spacing_em: op.char_spacing_em,
                     });
                 }
 

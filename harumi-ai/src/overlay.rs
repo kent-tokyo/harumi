@@ -278,6 +278,49 @@ fn translation_style_runs(
     runs
 }
 
+/// True when `frag` starts a new table/form cell on the same baseline as `last`.
+///
+/// Form-style PDFs (SDS, invoices, specification sheets) place a label, a
+/// separator such as `：`, and a value on one baseline with wide gaps between
+/// them.  Merging them into one translation unit destroys the column
+/// alignment: the whole string is squeezed into the label's narrow region and
+/// shrunk to an unreadable size.  A horizontal gap wider than ~1.5 em, or a
+/// standalone separator glyph, splits the line into independent cells.
+fn is_cell_break(last: &RawLine, frag: &TextFragment) -> bool {
+    cell_break_between(
+        last.right,
+        last.font_size,
+        &last.text,
+        frag.x,
+        frag.font_size,
+        &frag.text,
+    )
+}
+
+fn cell_break_between(
+    left_right: f32,
+    left_fs: f32,
+    left_text: &str,
+    right_x: f32,
+    right_fs: f32,
+    right_text: &str,
+) -> bool {
+    let gap = right_x - left_right;
+    let em = right_fs.max(left_fs).max(1.0);
+    if gap > em * 1.5 || gap < -em * 0.5 {
+        return true;
+    }
+    is_separator_text(right_text) || is_separator_text(left_text)
+}
+
+/// A fragment consisting only of a label/value separator (`：`, `:`, `|`).
+pub(crate) fn is_separator_text(text: &str) -> bool {
+    let t = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}');
+    !t.is_empty()
+        && t.chars().all(|c| matches!(c, '：' | ':' | '|' | '｜'))
+        && t.chars().count() <= 2
+}
+
 /// Group a slice of fragments (already sorted top-to-bottom within a column)
 /// into text lines using a Y-tolerance merge, then return `RawLine`s.
 fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine> {
@@ -288,7 +331,8 @@ fn group_into_raw_lines(frags: &[&TextFragment], col_right: f32) -> Vec<RawLine>
         if let Some(last) = raw_lines.last_mut()
             && ((rotation_is_vertical(frag.rotation_degrees) && (frag.x - last.x).abs() <= Y_TOL)
                 || (!rotation_is_vertical(frag.rotation_degrees)
-                    && (frag.y - last.y).abs() <= Y_TOL))
+                    && (frag.y - last.y).abs() <= Y_TOL
+                    && !is_cell_break(last, frag)))
             && (frag.rotation_degrees - last.rotation_degrees).abs() < 1.0
         {
             if !last.text.is_empty() && needs_fragment_space(last, frag) {
@@ -524,9 +568,47 @@ pub(crate) fn extract_overlay_pages(
             })
             .collect();
 
+        // Cells sharing a baseline must not run into each other: cap each
+        // cell's usable right edge at the next cell's left edge.
+        let mut lines = lines;
+        let caps: Vec<Option<f32>> = lines
+            .iter()
+            .map(|l| {
+                if rotation_is_vertical(l.rotation_degrees) {
+                    return None;
+                }
+                lines
+                    .iter()
+                    .filter(|o| {
+                        !rotation_is_vertical(o.rotation_degrees)
+                            && (o.y - l.y).abs() <= 2.0
+                            && o.x >= l.right - 0.5
+                    })
+                    .map(|o| o.x - (l.font_size * 0.5).max(2.0))
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            })
+            .collect();
+        // Right edge of the page's text area (ignoring rotated text). The last
+        // cell on a baseline may use the free space up to that edge instead of
+        // the narrow inferred region, which only hugs the source glyphs.
+        let text_right = lines
+            .iter()
+            .filter(|l| !rotation_is_vertical(l.rotation_degrees))
+            .map(|l| l.right)
+            .fold(0.0_f32, f32::max);
+        for (line, cap) in lines.iter_mut().zip(caps) {
+            match cap {
+                Some(cap) => line.region_usable_right = cap.max(line.right),
+                None if !rotation_is_vertical(line.rotation_degrees) => {
+                    let limit = text_right.min(line.col_right).max(line.right);
+                    line.region_usable_right = line.region_usable_right.max(limit);
+                }
+                None => {}
+            }
+        }
+
         // Second pass: compute per-role medians and populate normalized_font_size.
         let role_medians = crate::font_sizing::compute_role_medians(&lines);
-        let mut lines = lines;
         for line in &mut lines {
             line.normalized_font_size = crate::font_sizing::resolve_font_size(
                 line,
@@ -701,11 +783,14 @@ async fn run_correction_loop(
                 } else {
                     global_body_fs
                 };
-                let desired = if line.is_heading {
-                    (fs * 1.4).min(max_fs)
+                // Never enlarge text beyond the source glyph size: the translated
+                // run must occupy the same visual slot as the original.
+                let source_fs = if line.font_size > 0.0 {
+                    line.font_size
                 } else {
-                    fs.min(max_fs)
+                    fs
                 };
+                let desired = fs.min(source_fs).min(max_fs.max(source_fs * 0.8));
                 let avail_w = available_width(line);
                 let text_w = measure_text_width(text, face, desired);
                 let actual_fs = fit_font_size(text, face, desired, avail_w, min_fs);
@@ -1953,11 +2038,14 @@ fn apply_overlay(
                 } else {
                     global_body_fs
                 };
-                let desired = if line.is_heading {
-                    (fs * 1.4).min(max_fs)
+                // Never enlarge text beyond the source glyph size: the translated
+                // run must occupy the same visual slot as the original.
+                let source_fs = if line.font_size > 0.0 {
+                    line.font_size
                 } else {
-                    fs.min(max_fs)
+                    fs
                 };
+                let desired = fs.min(source_fs).min(max_fs.max(source_fs * 0.8));
                 // Use region_usable_right (from extract_layout_regions) for a more
                 // precise column-right boundary than the heuristic col_right.
                 let avail_w = if rotation_is_vertical(line.rotation_degrees) {
@@ -2005,7 +2093,7 @@ fn apply_overlay(
                 let mut run_x = line.x;
                 let mut run_y = line.y;
                 for (style_text, style) in style_runs {
-                    let bold = line.is_heading || style.is_bold;
+                    let bold = style.is_bold;
                     for (run_text, fidx) in split_by_font(&style_text, all_faces) {
                         // Embed fallback font on first use.
                         if font_handles[fidx].is_none() {
@@ -2114,6 +2202,35 @@ pub async fn translate_pdf_bilingual_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn form_label_separator_and_value_are_separate_cells() {
+        // "　製品名" … "：" … "(+)-ジ-…" on one baseline, 10pt text.
+        assert!(cell_break_between(
+            90.0,
+            10.0,
+            "　製品名",
+            197.0,
+            10.0,
+            "："
+        ));
+        assert!(cell_break_between(207.0, 10.0, "：", 212.0, 10.0, "(+)-ジ"));
+        // Adjacent glyph runs of one phrase stay together.
+        assert!(!cell_break_between(100.0, 10.0, "製品", 101.0, 10.0, "名"));
+        // A normal word space does not split.
+        assert!(!cell_break_between(
+            100.0, 10.0, "Product", 103.0, 10.0, "name"
+        ));
+    }
+
+    #[test]
+    fn separator_detection() {
+        assert!(is_separator_text("："));
+        assert!(is_separator_text(" : "));
+        assert!(!is_separator_text("：値"));
+        assert!(!is_separator_text("・"));
+        assert!(!is_separator_text(""));
+    }
 
     fn narrow_line() -> OverlayLine {
         OverlayLine {

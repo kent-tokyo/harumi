@@ -121,11 +121,13 @@ pub(crate) async fn translate_pdf_inplace_inner(
             } else {
                 global_body_fs
             };
-            let desired_fs = if line.is_heading {
-                (base_fs * 1.4).min(max_fs_cap)
+            // Never enlarge beyond the source glyph size (see overlay::apply_overlay).
+            let source_fs = if line.font_size > 0.0 {
+                line.font_size
             } else {
-                base_fs.min(max_fs_cap)
+                base_fs
             };
+            let desired_fs = base_fs.min(source_fs).min(max_fs_cap.max(source_fs * 0.8));
             let avail_w = overlay::available_width(line);
             let text_w = overlay::measure_text_width(text, &face, desired_fs);
 
@@ -146,9 +148,22 @@ pub(crate) async fn translate_pdf_inplace_inner(
                 (Some(desired_fs), None)
             };
 
+            // The extracted `line.font_size` is the *visual* size (Tf × text
+            // matrix scale).  Many generators write `/F1 1 Tf` with a scaled
+            // `Tm`, so an absolute Tf override would be multiplied by the matrix
+            // again and produce giant glyphs.  Express size and spacing relative
+            // to the source run instead.
             let mut replace_opts = ReplaceOptions::default();
-            replace_opts.font_size_override = font_size_override;
-            replace_opts.char_spacing_override = char_spacing_override;
+            if source_fs > 0.0 {
+                replace_opts.font_scale_override = font_size_override.map(|fs| fs / source_fs);
+                replace_opts.char_spacing_em_override = char_spacing_override.map(|tc| {
+                    let fs = font_size_override.unwrap_or(source_fs).max(0.1);
+                    tc / fs
+                });
+            } else {
+                replace_opts.font_size_override = font_size_override;
+                replace_opts.char_spacing_override = char_spacing_override;
+            }
 
             let count = doc.page(page_num)?.replace_text_opts(
                 &line.text,
@@ -221,7 +236,7 @@ pub(crate) async fn translate_pdf_inplace_inner(
             };
 
             let runs = overlay::split_by_font(&display_text, &all_faces);
-            let bold = line.is_heading || line.is_bold;
+            let bold = line.is_bold;
             let mut run_x = line.x;
             for (run_text, fidx) in runs {
                 if font_handles[fidx].is_none() {

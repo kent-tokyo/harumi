@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+- Added `ReplaceOptions::font_scale_override` and `char_spacing_em_override`. They size
+  in-place replacements relative to the content stream's `Tf`, so text drawn with
+  `/F1 1 Tf` inside a scaled `Tm` (e.g. `10 0 0 10 x y Tm`) keeps its visual size instead
+  of being multiplied by the text matrix a second time.
+
 ## [1.23.8] — 2026-10-26
 
 - Inherit presentation attributes and inline styles from the root `<svg>` element.

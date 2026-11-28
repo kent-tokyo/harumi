@@ -61,6 +61,27 @@ OCR JSON can come from [ocrs-cjk](https://crates.io/crates/ocrs-cjk), PaddleOCR,
 
 Implement the `Translator` trait to use any other LLM.
 
+### Plain machine-translation engines (DeepL, Google, Azure, …)
+
+`Translator` receives the LLM JSON batch protocol. For an engine that only maps strings to
+strings, implement `SegmentTranslator` and wrap it in `SegmentAdapter`:
+
+```rust
+use harumi_ai::providers::{SegmentAdapter, SegmentTranslator};
+
+let opts = TranslateOptions::new("en", SegmentAdapter::new(MyMtEngine), font);
+```
+
+### Checking layout without an API key
+
+```bash
+cargo run -p harumi-ai --example translate_dict -- \
+  input.pdf output.pdf NotoSansJP-Regular.ttf replacements.json overlay
+```
+
+`replacements.json` is `[{"old_text": "…", "new_text": "…"}]`; untranslated CJK strings are
+replaced by a pseudo-translation of realistic English length to stress the layout.
+
 ## Quality gate
 
 `TranslateOutput` includes per-page layout quality scores. `QualityResult::Pass` / `Warn` / `Fail` indicate whether the implemented geometry checks found overflow or collision issues. A pass is not a guarantee of visual identity; review complex, rotated, vertical, or image-backed pages.
