@@ -12,7 +12,7 @@ viewer. Complex, rotated, vertical, or image-backed pages still need visual revi
 [![crates.io](https://img.shields.io/crates/v/harumi.svg)](https://crates.io/crates/harumi)
 [![docs.rs](https://docs.rs/harumi/badge.svg)](https://docs.rs/harumi)
 [![Codecov](https://codecov.io/gh/kent-tokyo/harumi/branch/main/graph/badge.svg)](https://codecov.io/gh/kent-tokyo/harumi)
-[![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 [日本語](README_ja.md) | [한국어](README_kr.md) | [中文](README_zh.md)
 
@@ -118,4 +118,4 @@ Issues and pull requests are welcome at
 
 ## License
 
-MIT OR Apache-2.0
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)
