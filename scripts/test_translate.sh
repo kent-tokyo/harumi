@@ -1,6 +1,6 @@
 #!/bin/bash
 # Translate a few test PDFs and report results.
-# Usage: ANTHROPIC_API_KEY=sk-ant-xxx bash test_translate.sh
+# Usage (from repo root): ANTHROPIC_API_KEY=sk-ant-xxx bash scripts/test_translate.sh
 
 set -euo pipefail
 
